@@ -13,7 +13,6 @@ flowchart TD
     Core --> SQLite[(SQLite)]
     Core --> Profile[Markdown profile and Git]
     Core --> Model[Configured model provider]
-    Core --> OpenCode[OpenCode project exploration]
     Core --> Graph[Microsoft Graph / Azure CLI]
     Core --> CTX[Local ctx history]
 ```
@@ -43,7 +42,7 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 
 **Profile note.** Check authorization, serialize incorporation, and ask the model for Markdown changes. Validate a temporary copy, recheck the note and profile revisions, then write, verify, and commit under the profile lock. Failed or conflicting updates remain pending.
 
-**Project discovery.** Enumerate repositories and compare local fingerprints. OpenCode edits a temporary profile-document draft. Validate protected content and source stability before applying and committing it. See [project discovery](project-discovery.md).
+**Project discovery.** Enumerate repositories and compare local fingerprints. The configured model explores one repository with the shared read-only file tools and returns a structured summary. Application code inserts it into an in-memory draft. Validate protected content and source stability before applying and committing it. See [project discovery](project-discovery.md).
 
 **People sync.** Read all Graph pages, normalize and validate records, then replace the profile and tenant's directory in one SQLite transaction. A failed refresh retains the previous snapshot.
 
@@ -70,13 +69,14 @@ Local storage does not mean local model processing. Requests can send:
 
 - Capture text, core and relevant profile documents, related items, and current commitments.
 - Additional profile files, discovered-project files, and CTX evidence retrieved during capture refinement.
+- The existing generated project summary and repository evidence retrieved during project discovery; personal notes and profile metadata are not included in discovery requests.
 - The **full Markdown profile**, note text, and capture date when incorporating a note.
 - Recent conversation messages and selected people candidates. Manual CTX search results require explicit sharing in Conversation.
 
-Model requests set `store: false`; provider retention policies still apply. Keys stay on the server. OpenCode uses its own provider credentials and may retain its own local session history.
+Model requests, including project discovery, use the configured endpoint and credentials with `store: false`; provider retention policies still apply. Keys stay on the server.
 
 Research tools are read-only and exclude symlinks, paths outside configured roots, common credential files, and generated directories. Normal source files can still contain secrets. Configure only trusted roots.
 
 Capture refinement permits 100 tool calls over 15 minutes, up to 400,000 accumulated context characters, plus a two-minute finalization allowance. File reads use 12,000-character pages and reject files larger than 2 MiB. Unresolved evidence gaps require review and cannot authorize a profile update.
 
-The service binds to `127.0.0.1` for one local user. General-purpose shell execution and MCP are not connected to capture research. OpenCode's separate permissions are described in [project discovery](project-discovery.md#exploration-and-updates).
+The service binds to `127.0.0.1` for one local user. General-purpose shell execution and MCP are not connected to capture research or project discovery. Discovery exposes only file listing, content search, and reading within the selected repository; it has no history or file-editing tools. See [project discovery](project-discovery.md#exploration-and-updates).

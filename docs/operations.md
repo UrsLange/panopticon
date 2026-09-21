@@ -69,7 +69,7 @@ Stop older instances before upgrading. Install locked dependencies with `mise ru
 
 **No projects appear.** Roots must directly contain Git repositories. Nested repositories and symlinked child folders are not selected.
 
-**Project review fails.** Check OpenCode's own provider configuration and model match, then inspect **Diagnostics** in Settings. Preserve generated-section markers and retry one project or all failures. An unavailable root does not delete existing knowledge.
+**Project review fails.** Check the endpoint, API key, and selected model in Settings, then inspect **Diagnostics** in Settings. Preserve generated-section markers and retry one project or all failures. An unavailable root does not delete existing knowledge.
 
 **People sync fails.** Check the tenant, credentials, Graph read permissions, and administrator consent. For CLI access, ensure `az` is on the backend's PATH. Inspect **Hierarchy needs attention** for organizational gaps and confirm your email matches Entra's `mail` field.
 

@@ -1,14 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mockProvider } from "./mock-provider.js";
 
-const bin = mkdtempSync(join(tmpdir(), "pa-fake-opencode-"));
-writeFileSync(
-  join(bin, "opencode"),
-  `#!${process.execPath}\n${readFileSync(new URL("./fake-opencode.mjs", import.meta.url), "utf8")}`,
-  { mode: 0o700 },
-);
+const bin = mkdtempSync(join(tmpdir(), "pa-fake-cli-"));
 process.env.PATH = `${bin}:${process.env.PATH}`;
 writeFileSync(
   join(bin, "az"),

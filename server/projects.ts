@@ -3,22 +3,19 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   renameSync,
-  rmSync,
   type Stats,
   writeFileSync,
 } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ProjectExploration } from "./application/exploration.js";
 import type { DiscoveryPorts } from "./application/project-ports.js";
 import { ProjectScanner, type ScanStatus } from "./application/projects.js";
-import { exploreProject } from "./opencode.js";
 import { Profile } from "./profile.js";
+import { exploreProject } from "./project-exploration.js";
 import type { SettingsStore } from "./settings.js";
 
 const execute = promisify(execFile);
@@ -49,7 +46,7 @@ export async function repositorySnapshot(path: string) {
   ].sort();
   if (files.length > 50000) throw new Error("Repository exceeds the 50,000-file scan limit.");
   const hash = createHash("sha256")
-    .update("opencode-discovery-v1")
+    .update("project-discovery-v2")
     .update(commit)
     .update(await git(path, ["ls-files", "--stage", "-z"]));
   for (const file of files) {
@@ -72,7 +69,8 @@ export async function repositorySnapshot(path: string) {
 
 export function createProjectScanner(
   settings: SettingsStore,
-  explorer: (request: ProjectExploration) => Promise<void> = exploreProject,
+  explorer: (request: ProjectExploration) => Promise<string> = (request) =>
+    exploreProject(request, settings.credentials()),
   now = () => new Date(),
 ) {
   return new ProjectScanner(settings, projectAdapters(settings.dataDir, explorer), now);
@@ -80,7 +78,7 @@ export function createProjectScanner(
 
 export function projectAdapters(
   dataDir: string,
-  explorer: (request: ProjectExploration) => Promise<void> = exploreProject,
+  explorer: (request: ProjectExploration) => Promise<string>,
 ): DiscoveryPorts {
   const stateFile = join(dataDir, "project-scan.json");
   const identity = (root: string, name: string) => {
@@ -119,20 +117,7 @@ export function projectAdapters(
       return (await realpath(path)) === (await realpath(profile));
     },
     snapshot: repositorySnapshot,
-    async explore({ repository, document, model, onProgress }) {
-      const staging = mkdtempSync(join(tmpdir(), "pa-project-review-"));
-      const draft = join(staging, basename(document.path));
-      try {
-        writeFileSync(draft, document.content, { flag: "wx", mode: 0o600 });
-        await explorer({ repository, document: draft, model, onProgress });
-        onProgress({ phase: "validating" });
-        if (!(await lstat(draft)).isFile())
-          throw new Error("OpenCode replaced the profile draft with a non-regular file.");
-        return readFileSync(draft, "utf8");
-      } finally {
-        rmSync(staging, { recursive: true, force: true });
-      }
-    },
+    explore: explorer,
     profile(root) {
       const profile = new Profile(root);
       return {

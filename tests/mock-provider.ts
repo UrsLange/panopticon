@@ -71,6 +71,24 @@ export function mockProvider() {
     const payload = JSON.parse(
       typeof input.input === "string" ? input.input : input.input[0].content,
     );
+    if (input.text.format.name === "project_summary" && input.input.length === 1) {
+      response.end(
+        JSON.stringify({
+          id: "resp_discovery",
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              type: "function_call",
+              call_id: "call_readme",
+              name: "read_file",
+              arguments: JSON.stringify({ scope: "repository", path: "README.md", offset: 0 }),
+            },
+          ],
+        }),
+      );
+      return;
+    }
     const explicitNote = payload.capture === "note: I prefer browser-tested atomic commits.";
     const implicitNote =
       payload.capture === "My browser-test review preference is a short summary.";
@@ -113,6 +131,16 @@ export function mockProvider() {
               ]
             : []),
         ],
+      };
+    }
+    if (input.text.format.name === "project_summary") {
+      const evidence = input.input.find(
+        (item: { type?: string }) => item.type === "function_call_output",
+      );
+      output = {
+        summary: "## Purpose\nA project for team onboarding\n\n## Sources\n- README.md",
+        sources: ["repository/README.md"],
+        complete: !!JSON.parse(evidence.output).content,
       };
     }
     response.end(

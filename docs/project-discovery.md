@@ -6,14 +6,13 @@ Project discovery turns local repositories into profile documents describing the
 
 ## Configure
 
-1. Configure OpenCode's own provider credentials with `mise exec -- opencode auth login` or its configuration file. Panopticon does not pass its API key or endpoint to OpenCode.
-2. Make the model selected in Panopticon available in OpenCode. An exact provider/model match wins; otherwise the model name must match exactly one provider.
-3. In **Settings → Development environment & projects**, enter absolute paths to folders directly containing repositories, one per line.
-4. Save and click **Scan now**.
+1. Configure and validate the endpoint, API key, and model in **Settings**. Discovery uses this same connection and exact model ID, with no separate agent installation or credentials. The model must support the Responses API, tool calling, and structured JSON outputs.
+2. In **Settings → Development environment & projects**, enter absolute paths to folders directly containing repositories, one per line.
+3. Save and click **Scan now**.
 
 Saving roots authorizes source inspection and profile-document updates. No roots are selected automatically. Use only trusted repositories.
 
-Settings shows progress, accepted results, unavailable repositories, and failures. **Diagnostics** includes attempt times, model, session ID, and failure category. Retry an individual project or all failed projects. Automatic scans run daily at 8 a.m.; [install the background schedule](operations.md#project-schedule) for checks without manually starting the app.
+Settings shows progress, accepted results, unavailable repositories, and failures. **Diagnostics** includes attempt times, model, latest model response ID, files read, and failure category. Retry an individual project or all failed projects. Automatic scans run daily at 8 a.m.; [install the background schedule](operations.md#project-schedule) for checks without manually starting the app.
 
 ## Selection and change detection
 
@@ -21,15 +20,17 @@ Only direct child directories with their own `.git` entry are included. Worktree
 
 Fingerprints combine HEAD, staged entries, and paths, modes, sizes, and modification times of tracked and nonignored untracked files. Dependency/generated folders and credential-like filenames are excluded from working-file inspection. Scanning is capped at 50,000 files.
 
-Unchanged repositories require no model request. Ignored untracked files and remote-only changes do not trigger review. This is local change detection, not a content audit: an edit preserving both size and modification time can evade detection.
+Unchanged repositories require no model request. The built-in explorer uses a new fingerprint version, so the first scan after this upgrade reviews existing projects once, even if their files have not changed. Ignored untracked files and remote-only changes do not trigger review. This is local change detection, not a content audit: an edit preserving both size and modification time can evade detection.
 
 Repository identity is based on its local path. Moving a checkout creates a new entry; separate worktrees have separate entries. Missing repositories retain their knowledge and become unavailable. Unreadable roots report errors, and removing a configured root preserves its documents.
 
 ## Exploration and updates
 
-OpenCode runs sequentially with `opencode run --pure` and a ten-minute timeout per repository. It reads source and documentation, then edits a temporary copy of the project's profile document.
+Repositories are reviewed sequentially with at most 100 tool calls, ten minutes per repository, and 400,000 accumulated context characters. Each model request has a two-minute timeout within that overall deadline. Discovery uses the existing generated summary and reads source and documentation through the shared research tools. File reads use 12,000-character pages and reject files larger than 2 MiB.
 
-The discovery agent allows file discovery, restricted reads, and edits only to the draft. Shell commands, subagents, network tools, and content search are denied. Plugins, formatters, language servers, and sharing are disabled. These are OpenCode permissions, not an operating-system sandbox; higher-priority organizational policies still apply.
+The model receives only `list_files`, `search_files`, and `read_file` for one repository. The tools reject paths outside that scope, symlinks, common credential files, binary files, and generated directories. No shell, history, network, or file-editing tools are exposed. Repository content is treated as untrusted evidence. Model requests use `store: false`; provider retention policies still apply.
+
+The model returns a nonempty Markdown summary, retrieved source IDs, and a completion flag. Discovery rejects unfinished responses, unsupported source IDs, summary markers, and reviews without a successful file read. Exceeding the context or time limit discards the result; at the tool-call limit, only a final answer is allowed. The application assembles the draft in memory, preserving metadata and personal notes. Those protected sections are not sent to the model.
 
 Generated content belongs between `project-summary:start` and `project-summary:end` HTML comments. Keep your own context under **Personal notes**, outside those markers.
 

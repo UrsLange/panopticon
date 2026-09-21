@@ -39,7 +39,7 @@ For a focused test:
 mise exec -- pnpm exec vitest run tests/prompts.test.ts
 ```
 
-Tests use temporary data, repositories, and substitute model/directory/OpenCode services. Browser tests start their own server on port 4318. They do not establish live model quality, real tenant access, or physical reboot/sleep behavior.
+Tests use temporary data, repositories, and substitute model and directory services. Browser tests start their own server on port 4318. They do not establish live model quality, real tenant access, or physical reboot/sleep behavior.
 
 Run checks relevant to your change and report what passed, failed, or was not run. For prompt changes, automated checks establish integration, not answer quality; review representative outputs with a configured provider separately.
 

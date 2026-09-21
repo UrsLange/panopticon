@@ -1,15 +1,15 @@
+import type { ProfileDocument } from "../../shared/schema.js";
+
 export type ExplorationProgress = {
   phase?: "connecting" | "reading" | "updating" | "validating";
   model?: string;
-  sessionId?: string;
+  responseId?: string;
   filesRead?: number;
 };
 export type ExplorationDiagnostic = {
   category: string;
   message: string;
   statusCode?: number;
-  exitCode?: string | number;
-  signal?: string;
 };
 export class ExplorationError extends Error {
   constructor(readonly diagnostic: ExplorationDiagnostic) {
@@ -18,7 +18,7 @@ export class ExplorationError extends Error {
 }
 export type ProjectExploration = {
   repository: string;
-  document: string;
+  document: ProfileDocument;
   model: string;
   onProgress?: (progress: ExplorationProgress) => void;
 };

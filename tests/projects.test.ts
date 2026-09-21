@@ -1,22 +1,19 @@
 import { execFileSync } from "node:child_process";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   renameSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import { ExplorationError, type ProjectExploration } from "../server/application/exploration.js";
 import { dueSlot } from "../server/application/project-documents.js";
 import { createApp } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
-import { resolveProjectModel } from "../server/opencode.js";
 import { Profile } from "../server/profile.js";
 import { createProjectScanner, repositorySnapshot } from "../server/projects.js";
 import { SettingsStore } from "../server/settings.js";
@@ -43,24 +40,11 @@ function fixture() {
   return { root, projects, profile, settings, repo };
 }
 async function explore({ document }: ProjectExploration) {
-  const content = readFileSync(document, "utf8");
-  writeFileSync(
-    document,
-    content.replace(
-      /<!-- project-summary:start -->[\s\S]*?<!-- project-summary:end -->/,
-      "<!-- project-summary:start -->\n## Purpose\nTeam onboarding\n\n## Sources\n- README.md\n<!-- project-summary:end -->",
-    ),
+  return document.content.replace(
+    /<!-- project-summary:start -->[\s\S]*?<!-- project-summary:end -->/,
+    "<!-- project-summary:start -->\n## Purpose\nTeam onboarding\n\n## Sources\n- README.md\n<!-- project-summary:end -->",
   );
 }
-
-it("matches the selected model without guessing a provider", () => {
-  expect(resolveProjectModel("example", ["one/example"])).toBe("one/example");
-  expect(resolveProjectModel("one/example", ["one/example", "two/example"])).toBe("one/example");
-  expect(() => resolveProjectModel("example", ["one/example", "two/example"])).toThrow(
-    "uniquely match",
-  );
-  expect(() => resolveProjectModel("missing", ["one/example"])).toThrow("uniquely match");
-});
 
 it("does not commit external index edits made while a model reviews a project", async () => {
   const { settings, profile, repo } = fixture();
@@ -69,7 +53,7 @@ it("does not commit external index edits made while a model reviews a project", 
   const index = join(profile.root, "index.md");
   const scanner = createProjectScanner(settings, async (request) => {
     writeFileSync(index, `${readFileSync(index, "utf8")}External personal edit\n`);
-    await explore(request);
+    return explore(request);
   });
   await scanner.run();
   expect(scanner.status().error).toBeNull();
@@ -82,24 +66,20 @@ it("does not commit external index edits made while a model reviews a project", 
   ).toBe("M index.md");
 });
 
-it("rejects empty output and discards forged metadata after a failed agent run", async () => {
+it("rejects empty summaries and preserves profile content after a failed model request", async () => {
   const { settings, profile } = fixture();
-  const empty = createProjectScanner(settings, async () => {});
+  const empty = createProjectScanner(settings, async ({ document }) => document.content);
   await empty.run();
   expect(empty.status().projects[0].error).toContain("empty summary");
   expect(readFileSync(join(profile.root, "index.md"), "utf8")).toContain(
     `(${empty.status().projects[0].document})`,
   );
   const before = profile.documents();
-  const failed = createProjectScanner(settings, async ({ document }) => {
-    writeFileSync(
-      document,
-      readFileSync(document, "utf8").replace(
-        "type: Project",
-        "repository_fingerprint: forged\ntype: Project",
-      ),
-    );
-    throw new ExplorationError({ category: "provider", message: "OpenCode provider failed" });
+  const failed = createProjectScanner(settings, async () => {
+    throw new ExplorationError({
+      category: "provider",
+      message: "Project discovery provider failed",
+    });
   });
   await failed.run();
   expect(failed.status().projects[0].diagnostic?.category).toBe("provider");
@@ -115,10 +95,7 @@ it("reports edits outside the summary without accepting the new fingerprint", as
   const before = profile.documents().find((doc) => doc.type === "Project");
   writeFileSync(join(repo, "source.ts"), "new source");
   const scanner = createProjectScanner(settings, async ({ document }) => {
-    writeFileSync(
-      document,
-      readFileSync(document, "utf8").replace("## Personal notes", "## Removed notes"),
-    );
+    return document.content.replace("## Personal notes", "## Removed notes");
   });
   await scanner.run();
   expect(scanner.status().projects[0].error).toContain("protected profile content");
@@ -126,7 +103,7 @@ it("reports edits outside the summary without accepting the new fingerprint", as
   expect(after).toEqual(before);
 });
 
-it.each(["frontmatter", "yaml", "metadata", "markers", "symlink"])(
+it.each(["frontmatter", "yaml", "metadata", "markers"])(
   "rejects invalid %s in a draft without damaging the profile or blocking a retry",
   async (failure) => {
     const { settings, profile, repo } = fixture();
@@ -136,25 +113,12 @@ it.each(["frontmatter", "yaml", "metadata", "markers", "symlink"])(
       encoding: "utf8",
     });
     writeFileSync(join(repo, "new.ts"), "new source");
-    let draft = "";
     const scanner = createProjectScanner(settings, async (request) => {
-      draft = request.document;
-      expect(draft.startsWith(`${profile.root}/`)).toBe(false);
-      await explore(request);
-      const content = readFileSync(draft, "utf8");
-      if (failure === "frontmatter") writeFileSync(draft, "# No frontmatter");
-      if (failure === "yaml") writeFileSync(draft, "---\ntype: [\n---\n");
-      if (failure === "metadata")
-        writeFileSync(draft, content.replace("type: Project", "type: Note"));
-      if (failure === "markers")
-        writeFileSync(
-          draft,
-          content.replace("## Purpose", "<!-- project-summary:start -->\n## Purpose"),
-        );
-      if (failure === "symlink") {
-        unlinkSync(draft);
-        symlinkSync(join(profile.root, "index.md"), draft);
-      }
+      const content = await explore(request);
+      if (failure === "frontmatter") return "# No frontmatter";
+      if (failure === "yaml") return "---\ntype: [\n---\n";
+      if (failure === "metadata") return content.replace("type: Project", "type: Note");
+      return content.replace("## Purpose", "<!-- project-summary:start -->\n## Purpose");
     });
     await scanner.run();
     expect(scanner.status().projects[0]).toMatchObject({
@@ -169,7 +133,6 @@ it.each(["frontmatter", "yaml", "metadata", "markers", "symlink"])(
     expect(
       execFileSync("git", ["-C", profile.root, "status", "--porcelain"], { encoding: "utf8" }),
     ).toBe("");
-    expect(existsSync(dirname(draft))).toBe(false);
     const retry = createProjectScanner(settings, explore);
     await retry.run();
     expect(retry.status().error).toBeNull();
@@ -188,15 +151,10 @@ it("keeps profile reads and edits available during discovery and rejects stale d
   const gate = new Promise<void>((resolve) => {
     resume = resolve;
   });
-  let draft = "";
   const scanner = createProjectScanner(settings, async (request) => {
-    draft = request.document;
-    const original = readFileSync(draft, "utf8");
-    writeFileSync(draft, "# Partial output");
     enter();
     await gate;
-    writeFileSync(draft, original);
-    await explore(request);
+    return explore(request);
   });
   const store = new Store(":memory:");
   const app = createApp({ settings, profile, store, projectScanner: scanner, assistant: null });
@@ -223,7 +181,6 @@ it("keeps profile reads and edits available during discovery and rejects stale d
     await running;
     expect(scanner.status().projects[0].error).toContain("changed during review");
     expect(readFileSync(join(profile.root, document.path), "utf8")).toBe(updated);
-    expect(existsSync(dirname(draft))).toBe(false);
   } finally {
     resume();
     await running;
@@ -338,7 +295,7 @@ it("repairs the index on scheduled checks and with no configured roots", async (
   let calls = 0;
   const scanner = createProjectScanner(settings, async (request) => {
     calls++;
-    await explore(request);
+    return explore(request);
   });
   await scanner.run(true);
   const project = profile.documents().find((doc) => doc.type === "Project");
@@ -449,9 +406,8 @@ it("accepts newline normalization while restoring personal notes byte for byte",
   const { settings, profile } = fixture();
   let original = "";
   const scanner = createProjectScanner(settings, async (request) => {
-    original = readFileSync(request.document, "utf8");
-    await explore(request);
-    writeFileSync(request.document, readFileSync(request.document, "utf8").replace(/\n\n$/, "\n"));
+    original = request.document.content;
+    return (await explore(request)).replace(/\n\n$/, "\n");
   });
   await scanner.run();
   expect(scanner.status().error).toBeNull();
@@ -478,11 +434,11 @@ it("publishes current activity and completed results before a scan finishes", as
   });
   const scanner = createProjectScanner(settings, async (request) => {
     if (request.repository === second) {
-      request.onProgress?.({ phase: "reading", filesRead: 4, sessionId: "session-test" });
+      request.onProgress?.({ phase: "reading", filesRead: 4, responseId: "response-test" });
       enter();
       await release;
     }
-    await explore(request);
+    return explore(request);
   });
   const running = scanner.run();
   await entered;
@@ -491,7 +447,7 @@ it("publishes current activity and completed results before a scan finishes", as
   expect(scanner.status().projects[1]).toMatchObject({
     phase: "reading",
     filesRead: 4,
-    sessionId: "session-test",
+    responseId: "response-test",
   });
   const recovered = createProjectScanner(settings).status();
   expect(recovered.running).toBe(false);
@@ -511,7 +467,7 @@ it("retains provider diagnostics and retries only selected failures", async () =
   const scanner = createProjectScanner(settings, async () => {
     throw new ExplorationError({
       category: "provider",
-      message: "OpenCode provider unavailable",
+      message: "Project discovery provider unavailable",
       statusCode: 503,
     });
   });
@@ -530,7 +486,7 @@ it("retains provider diagnostics and retries only selected failures", async () =
     calls.push(request.repository);
     enter();
     await release;
-    await explore(request);
+    return explore(request);
   });
   const running = retry.run(false, [first.id]);
   await entered;
@@ -559,7 +515,7 @@ it("waits fifteen minutes after a long failed scan finishes before retrying", as
     async () => {
       calls++;
       now = new Date(now.getTime() + 20 * 60000);
-      throw new Error("OpenCode provider unavailable");
+      throw new Error("Project discovery provider unavailable");
     },
     () => now,
   );

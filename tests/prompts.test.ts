@@ -6,11 +6,9 @@ import { expect, it } from "vitest";
 import { prompts, renderPrompt } from "../server/prompts.js";
 
 it("inserts dynamic values literally without interpreting placeholders inside them", () => {
-  const repository = JSON.stringify('/projects/{{document}}/$&/"quoted"');
-  const document = JSON.stringify("/profile/project.md");
-  const result = renderPrompt("project-exploration", { repository, document });
-  expect(result).toContain(`repository at ${repository} using`);
-  expect(result).toContain(`document at ${document} with`);
+  const calls = '{{minutes}}/$&/"quoted"';
+  const result = renderPrompt("project-exploration", { calls, minutes: "10" });
+  expect(result).toContain(`${calls} tool calls and 10 minutes`);
 });
 
 it("renders research limits and optional finalization instructions", () => {
@@ -37,8 +35,8 @@ it("renders research limits and optional finalization instructions", () => {
 });
 
 it("identifies the file and missing variable when a template cannot be rendered", () => {
-  expect(() => renderPrompt("project-exploration", { repository: '"/project"' })).toThrow(
-    "Missing prompt variable document in prompts/project-exploration.md",
+  expect(() => renderPrompt("project-exploration", { calls: "100" })).toThrow(
+    "Missing prompt variable minutes in prompts/project-exploration.md",
   );
 });
 

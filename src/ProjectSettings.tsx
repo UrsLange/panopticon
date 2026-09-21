@@ -6,7 +6,7 @@ import { api } from "./api";
 const phases = {
   queued: "Queued",
   checking: "Checking for changes",
-  connecting: "Connecting to OpenCode",
+  connecting: "Connecting to model provider",
   reading: "Reading repository",
   updating: "Updating summary",
   validating: "Validating summary",
@@ -199,9 +199,8 @@ export function ProjectSettings({
           discovered, including Git worktrees.
         </p>
         <p>
-          OpenCode uses its own provider connection and the model selected in Settings. Install it
-          with mise install and configure its provider before scanning. Repository commands are
-          blocked.
+          Project discovery uses the endpoint, API key and model configured in Settings. It reads
+          repository files to update project summaries. Repository commands are blocked.
         </p>
         <form
           onSubmit={(event) => {
@@ -323,8 +322,8 @@ export function ProjectSettings({
                       <dd>{date(project.finishedAt)}</dd>
                       <dt>Model</dt>
                       <dd>{project.model || "Not recorded"}</dd>
-                      <dt>OpenCode session</dt>
-                      <dd>{project.sessionId || "Not recorded"}</dd>
+                      <dt>Model response</dt>
+                      <dd>{project.responseId || "Not recorded"}</dd>
                       <dt>Files read</dt>
                       <dd>{project.filesRead ?? "Not recorded"}</dd>
                       {project.diagnostic && (
@@ -337,18 +336,6 @@ export function ProjectSettings({
                             <>
                               <dt>Provider status</dt>
                               <dd>HTTP {project.diagnostic.statusCode}</dd>
-                            </>
-                          )}
-                          {project.diagnostic.exitCode !== undefined && (
-                            <>
-                              <dt>Exit status</dt>
-                              <dd>{project.diagnostic.exitCode}</dd>
-                            </>
-                          )}
-                          {project.diagnostic.signal && (
-                            <>
-                              <dt>Signal</dt>
-                              <dd>{project.diagnostic.signal}</dd>
                             </>
                           )}
                         </>

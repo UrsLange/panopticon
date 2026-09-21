@@ -336,7 +336,7 @@ test("configures project roots and discovers project knowledge without onboardin
   ).toContainText("A project for team onboarding");
   await page.getByRole("button", { name: "Close document" }).click();
   await page.getByText("Diagnostics", { exact: true }).click();
-  await expect(page.getByText("ses_test", { exact: true })).toBeVisible();
+  await expect(page.getByText("resp_test", { exact: true })).toBeVisible();
   await page.getByLabel("Errors only").check();
   await expect(page.getByText("No project errors.")).toBeVisible();
   await page.getByLabel("Errors only").uncheck();
@@ -354,8 +354,7 @@ test("shows provider diagnostics and current progress separately from previous e
 }) => {
   const status = await (await request.get("/api/projects")).json();
   const project = status.projects[0];
-  project.error =
-    "The OpenCode provider returned HTTP 503. Check provider availability and access.";
+  project.error = "The model provider returned HTTP 503. Check provider availability and access.";
   project.outcome = "failed";
   project.diagnostic = { category: "provider", message: project.error, statusCode: 503 };
   status.error = "One project could not be updated.";
@@ -367,7 +366,7 @@ test("shows provider diagnostics and current progress separately from previous e
     project.error = null;
     project.outcome = undefined;
     project.diagnostic = undefined;
-    project.sessionId = "ses_retry";
+    project.responseId = "resp_retry";
     project.phase = "reading";
     project.startedAt = new Date().toISOString();
     project.finishedAt = undefined;

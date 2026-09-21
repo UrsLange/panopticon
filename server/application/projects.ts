@@ -24,7 +24,7 @@ export type ProjectStatus = {
   finishedAt?: string;
   previousError?: string | null;
   model?: string;
-  sessionId?: string;
+  responseId?: string;
   filesRead?: number;
   diagnostic?: ExplorationDiagnostic;
 };
@@ -228,7 +228,7 @@ export class ProjectScanner {
       project.outcome = undefined;
       project.startedAt = undefined;
       project.finishedAt = undefined;
-      project.sessionId = undefined;
+      project.responseId = undefined;
       project.diagnostic = undefined;
       project.filesRead = 0;
     }
@@ -275,12 +275,12 @@ export class ProjectScanner {
             current = { ...before, ...parseConcept(draft, file) };
           } catch (error) {
             throw new Error(
-              `OpenCode produced invalid profile content: ${(error as Error).message}`,
+              `Project discovery produced invalid profile content: ${(error as Error).message}`,
             );
           }
           if (JSON.stringify(metadata(current).data) !== JSON.stringify(old.data))
             throw new Error(
-              "OpenCode changed protected profile metadata. The draft was rejected; retry the scan.",
+              "Project discovery changed protected profile metadata. The draft was rejected; retry the scan.",
             );
           this.persist();
           const previousBody = old.body;
@@ -293,7 +293,7 @@ export class ProjectScanner {
             !summary(current)
           )
             throw new Error(
-              "OpenCode changed protected profile content or produced an empty summary. The draft was rejected; retry the scan.",
+              "Project discovery changed protected profile content or produced an empty summary. The draft was rejected; retry the scan.",
             );
           if (previousBody.split(end)[1] !== currentBody.split(end)[1]) {
             const restored =
@@ -323,7 +323,8 @@ export class ProjectScanner {
         project.error =
           error instanceof Error &&
           (error instanceof ProfileCommitError ||
-            /changed during|markers|OpenCode|Profile document/.test(error.message))
+            error instanceof ExplorationError ||
+            /changed during|markers|Project discovery|Profile document/.test(error.message))
             ? error.message
             : "Could not review this project. Check repository access and model settings, then retry.";
         project.outcome = "failed";
@@ -335,7 +336,6 @@ export class ProjectScanner {
                 category:
                   (project as ProjectStatus).phase === "validating" ? "validation" : "review",
                 message: project.error,
-                exitCode: (error as { code?: string | number })?.code,
               };
         problems.push(project.name);
       } finally {

@@ -1,5 +1,5 @@
 import type { ProfileDocument } from "../../shared/schema.js";
-import type { ExplorationProgress } from "./exploration.js";
+import type { ProjectExploration } from "./exploration.js";
 import type { ScanStatus } from "./projects.js";
 
 export interface DiscoverySettings {
@@ -30,10 +30,5 @@ export interface DiscoveryPorts {
   identity(root: string, name: string): RepositoryIdentity;
   isProfileRepository(repository: string, profile: string): Promise<boolean>;
   snapshot(repository: string): Promise<{ fingerprint: string }>;
-  explore(request: {
-    repository: string;
-    document: ProfileDocument;
-    model: string;
-    onProgress: (progress: ExplorationProgress) => void;
-  }): Promise<string>;
+  explore(request: ProjectExploration): Promise<string>;
 }
