@@ -56,6 +56,14 @@ File-backed credentials are used only for the endpoint configured by `PA_MODEL_B
 
 The development proxy targets port 4317 in [vite.config.ts](../vite.config.ts). Changing `PA_PORT` alone does not update it. Reinstall the desktop companion and background schedule after changing the port.
 
+### T3 Code
+
+Run T3 Code on the same machine, with access to the same repository paths. Enable **Network access** in its connection settings and create a pairing token. In **Panopticon Settings → T3 Code**, enter the HTTP or HTTPS endpoint, token, and default provider instance and model IDs from T3 Code, then choose **Connect T3 Code**. Existing projects use their saved model selection; the defaults cover projects without one.
+
+The integration requires T3 Code's environment HTTP API and WebSocket thread/worktree bootstrap support. Connection checks authenticate and read projects without starting an agent. Session credentials stay in owner-only settings storage; reconnect with a fresh pairing token if access expires or is revoked. Disconnect removes Panopticon's saved credential without deleting T3 projects or threads.
+
+Configure [project discovery](project-discovery.md) before [implementing commitments](usage.md#implement-a-commitment).
+
 ## Mac capture companion
 
 ```sh

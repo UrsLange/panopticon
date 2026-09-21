@@ -4,6 +4,7 @@ import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
 import { PeopleSettings } from "./PeopleSettings";
 import { ProjectSettings } from "./ProjectSettings";
+import { T3Settings } from "./T3Settings";
 
 export function Configuration({
   settings,
@@ -266,6 +267,7 @@ export function Configuration({
         <>
           <PeopleSettings key={settings.profilePath} settings={settings} onChange={onChange} />
           <ProjectSettings key={settings.profilePath} settings={settings} onChange={onChange} />
+          <T3Settings />
         </>
       )}
       {settings.profileReady && settings.modelReady && (

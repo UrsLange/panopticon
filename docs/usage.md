@@ -16,6 +16,14 @@ In **Inbox**, open an item to edit its kind, project, status, deadline, priority
 
 **Notebook** holds ideas and pending profile notes. Discovering a repository does not create a commitment or assign it a priority.
 
+## Implement a commitment
+
+After [connecting T3 Code](setup.md#t3-code), open a commitment and save any edits. Complete refinement and resolve processing errors first. Select its discovered repository if project references do not identify one, then choose **Implement**.
+
+Panopticon reuses the T3 project for that repository path or creates one. It immediately submits the refined task, notes, original wording, linked item, resolved references, and cited profile documents to a new thread. Each implementation uses a separate Git worktree from the current commit; uncommitted changes are not included. T3 runs the project's setup script and uses approval-required permissions.
+
+Choose **Open in T3 Code** to follow progress and answer approvals. Sending a task leaves the commitment open. **Retry implementation** checks the original thread and reuses the saved task and command IDs when dispatch is still needed, including after a restart. Later edits are not included in that retry. **Start another implementation** explicitly creates a new thread from the latest saved version. The handoff records submission, not successful agent execution or completion.
+
 ## Add knowledge to your profile
 
 An explicit memory request, such as “remember that I prefer atomic conventional commits,” authorizes automatic incorporation into your profile. Unclear or implicit notes wait for review.

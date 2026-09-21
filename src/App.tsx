@@ -21,6 +21,7 @@ import type { AssistantReply, Item, ItemFields, ProfileDocument, Settings } from
 import { annotatedText } from "../shared/schema";
 import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
+import { Implementation } from "./Implementation";
 import { Configuration } from "./Settings";
 
 type View = "today" | "inbox" | "notebook" | "ask" | "profile" | "settings";
@@ -952,6 +953,9 @@ function ItemEditor({
             {busy ? "Saving…" : "Save changes"}
           </button>
         </div>
+        {item.kind === "commitment" && (
+          <Implementation item={item} dirty={dirty} busy={busy} run={run} />
+        )}
       </form>
     </dialog>
   );

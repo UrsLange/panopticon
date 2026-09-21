@@ -453,3 +453,110 @@ test("configures Entra, syncs the directory outside the profile, and keeps clien
     true,
   );
 });
+
+test("connects T3 Code and implements a saved commitment with recoverable handoff", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByLabel("T3 Code endpoint", { exact: true }).fill("http://127.0.0.1:4321");
+  await page.getByLabel("T3 Code pairing token", { exact: true }).fill("wrong-token");
+  await page.getByLabel("T3 Code default model", { exact: true }).fill("fixture-model");
+  await page.getByRole("button", { name: "Connect T3 Code", exact: true }).click();
+  await expect(page.getByText(/T3 Code rejected access/)).toBeVisible();
+  await page.getByLabel("T3 Code pairing token", { exact: true }).fill("fixture-pairing");
+  await page.getByRole("button", { name: "Connect T3 Code", exact: true }).click();
+  await expect(page.getByText("T3 Code connected and saved.", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("T3 Code pairing token", { exact: true })).toHaveValue("");
+  expect(await (await request.get("/api/settings/t3")).text()).not.toContain("fixture-t3-secret");
+  await page.getByRole("button", { name: "Test T3 Code connection", exact: true }).click();
+  await expect(page.getByText("T3 Code is reachable.", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/t3-settings.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".t3-settings").screenshot({ path: "test-results/t3-settings-mobile.png" });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await page.getByLabel("What’s on your mind?").fill("Implement project search in T3 Code");
+  await page.getByRole("button", { name: "Capture", exact: true }).click();
+  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByRole("button", { name: /Implement project search in T3 Code/ }).click();
+  await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
+    "Expanded description: Implement project search in T3 Code",
+  );
+  await page.getByLabel("Kind", { exact: true }).selectOption("commitment");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.getByRole("button", { name: /Implement project search in T3 Code/ }).click();
+  const projects = await (await request.get("/api/projects")).json();
+  execFileSync(
+    "git",
+    [
+      "-C",
+      projects.projects[0].path,
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "test: initialize implementation workspace",
+    ],
+    { stdio: "ignore" },
+  );
+  await page
+    .getByLabel("Implementation repository", { exact: true })
+    .selectOption(projects.projects[0].id);
+  await page.getByLabel("Description", { exact: true }).fill("Unsaved implementation change");
+  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeDisabled();
+  await page
+    .getByLabel("Description", { exact: true })
+    .fill("Expanded description: Implement project search in T3 Code");
+  await page.getByRole("button", { name: "Implement", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Retry implementation", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Retry implementation", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Open in T3 Code", exact: true })).toHaveAttribute(
+    "href",
+    /http:\/\/127\.0\.0\.1:4321\/fixture\//,
+  );
+  await expect(page.getByLabel("Status", { exact: true })).toHaveValue("open");
+  let commands = await (await request.get("http://127.0.0.1:4321/test/commands")).json();
+  expect(
+    commands.filter((command: { type: string }) => command.type === "project.create"),
+  ).toHaveLength(1);
+  expect(
+    commands.filter((command: { type: string }) => command.type === "thread.turn.start"),
+  ).toHaveLength(1);
+  await page.screenshot({ path: "test-results/t3-implementation.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .locator(".implementation")
+    .screenshot({ path: "test-results/t3-implementation-mobile.png" });
+  expect(
+    await page
+      .locator(".editor-modal")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("button", { name: "Start another implementation", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Start another implementation", exact: true }),
+  ).toBeEnabled();
+  commands = await (await request.get("http://127.0.0.1:4321/test/commands")).json();
+  expect(
+    commands.filter((command: { type: string }) => command.type === "project.create"),
+  ).toHaveLength(1);
+  expect(
+    commands.filter((command: { type: string }) => command.type === "thread.turn.start"),
+  ).toHaveLength(2);
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Disconnect T3 Code", exact: true }).click();
+  await expect(page.getByText("T3 Code disconnected.", { exact: false })).toBeVisible();
+});

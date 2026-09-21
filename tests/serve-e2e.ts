@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mockProvider } from "./mock-provider.js";
+import { mockT3 } from "./mock-t3.js";
 
 const bin = mkdtempSync(join(tmpdir(), "pa-fake-cli-"));
 process.env.PATH = `${bin}:${process.env.PATH}`;
@@ -65,5 +66,8 @@ globalThis.fetch = async (input, init) => {
 };
 const provider = mockProvider();
 await new Promise<void>((resolve) => provider.listen(4320, "127.0.0.1", resolve));
+const t3 = mockT3();
+await new Promise<void>((resolve) => t3.listen(4321, "127.0.0.1", resolve));
 await import("../server/main.js");
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => provider.close());
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => t3.close());

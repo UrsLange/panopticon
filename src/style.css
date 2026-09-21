@@ -790,6 +790,17 @@ footer {
   gap: 10px;
   margin-top: 20px;
 }
+.implementation {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.implementation > p {
+  margin: 10px 0;
+}
+.t3-settings .modal-actions {
+  flex-wrap: wrap;
+}
 .interpretation {
   display: flex;
   align-items: flex-start;
