@@ -5,8 +5,10 @@ import type { createPreferences } from "./preferences.js";
 import type { createProfileService } from "./profile.js";
 import type { createProfileUpdates } from "./profile-updates.js";
 import type { ProjectScanner } from "./projects.js";
+import type { createT3 } from "./t3.js";
 
 export type Application = {
+  t3: ReturnType<typeof createT3>;
   captures: ReturnType<typeof createCaptures>;
   conversation: ReturnType<typeof createConversation>;
   notes: ReturnType<typeof createProfileUpdates>;

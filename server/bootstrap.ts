@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -13,6 +14,7 @@ import { createPreferences } from "./application/preferences.js";
 import { createProfileService } from "./application/profile.js";
 import { createProfileUpdates } from "./application/profile-updates.js";
 import type { ProjectScanner } from "./application/projects.js";
+import { createT3, type T3Client } from "./application/t3.js";
 import { createAssistant } from "./assistant.js";
 import { config } from "./config.js";
 import { ctxAvailable, searchSessions } from "./ctx.js";
@@ -23,8 +25,10 @@ import { createProjectScanner } from "./projects.js";
 import { createResearch } from "./research-tools.js";
 import { SettingsStore, settingsModels } from "./settings.js";
 import { Store } from "./store.js";
+import { createT3Client, implementationWorkspace } from "./t3.js";
 
 export type AppOptions = {
+  t3Client?: T3Client;
   store?: Store;
   profile?: Profile;
   assistant?: Assistant | null;
@@ -86,6 +90,24 @@ export function createApplication(options: AppOptions = {}) {
   const captures = createCaptures({ store, getAssistant, context, notes, today });
   const profiles = createProfileService(() => profileNotes);
   const conversation = createConversation({ store, getAssistant, context, searchSessions });
+  const t3 = createT3({
+    records: store,
+    settings,
+    client: options.t3Client ?? createT3Client(),
+    getProfile: () => profileNotes,
+    repositories: () =>
+      scanner
+        .status()
+        .projects.filter(
+          (project) =>
+            project.availability === "available" &&
+            settings.projectRoots.includes(project.root) &&
+            resolve(project.root, project.name) === resolve(project.path),
+        ),
+    workspace: implementationWorkspace,
+    id: randomUUID,
+    now: () => now().toISOString(),
+  });
 
   const preferences = createPreferences({
     storage: {
@@ -121,6 +143,7 @@ export function createApplication(options: AppOptions = {}) {
     detectTenant: detectEntraTenant,
   });
   return {
+    t3,
     notes,
     captures,
     profiles,
@@ -129,6 +152,7 @@ export function createApplication(options: AppOptions = {}) {
     scanner,
     peopleSync,
     async close() {
+      await t3.close();
       await peopleSync.close();
       await scanner.close();
       await captures.close();

@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { ZodError, z } from "zod";
 import { entraSchema } from "../shared/people.js";
 import { itemPatchSchema } from "../shared/schema.js";
+import { t3ConnectionSchema } from "../shared/t3.js";
 import type { Application } from "./application/application.js";
 import { connectionSchema } from "./application/connection.js";
 import { ApplicationError, ProfileCommitError } from "./application/errors.js";
@@ -54,6 +55,25 @@ export function createHttpApp(services: Application, port: number) {
   });
 
   app.get("/api/settings", async () => preferences.status());
+  app.get("/api/settings/t3", async () => services.t3.status());
+  app.put("/api/settings/t3", async (request) =>
+    services.t3.connect(t3ConnectionSchema.parse(request.body)),
+  );
+  app.post("/api/settings/t3/test", async () => services.t3.test());
+  app.delete("/api/settings/t3", async () => services.t3.disconnect());
+  app.get<{ Params: { id: string } }>("/api/items/:id/implementation", async (request) =>
+    services.t3.options(request.params.id),
+  );
+  app.post<{ Params: { id: string } }>("/api/items/:id/implementation", async (request) => {
+    const input = z
+      .object({
+        revision: z.number().int().nonnegative(),
+        repositoryId: z.string().max(200).optional(),
+        previousAttemptId: z.string().max(200).optional(),
+      })
+      .parse(request.body);
+    return services.t3.implement(request.params.id, input);
+  });
   app.get("/api/people", async () => peopleSync.status());
   app.get("/api/settings/entra/tenant", async () => preferences.detectTenant());
   app.put("/api/settings/entra", async (request) => {

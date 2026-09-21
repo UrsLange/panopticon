@@ -3,12 +3,14 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { join } from "node:path";
 import OpenAI from "openai";
 import { defaultEntra, type EntraConfig, type PublicEntraConfig } from "../shared/people.js";
+import type { T3Connection } from "../shared/t3.js";
 import type { Connection } from "./application/connection.js";
 import { createModelConnection } from "./application/model-connection.js";
 import { createAssistant, validateToolCalling } from "./assistant.js";
 import { config } from "./config.js";
 
 type Saved = {
+  t3?: T3Connection;
   connection?: Connection;
   profilePath?: string;
   timezone?: string;
@@ -41,6 +43,12 @@ export class SettingsStore {
   }
   get dataDir() {
     return this.defaults.dataDir;
+  }
+  t3Connection() {
+    return this.saved.t3;
+  }
+  saveT3(t3: T3Connection | undefined) {
+    this.save({ t3 });
   }
   entraCredentials() {
     return this.saved.entra;

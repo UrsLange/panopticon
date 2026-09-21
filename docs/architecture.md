@@ -15,6 +15,7 @@ flowchart TD
     Core --> Model[Configured model provider]
     Core --> Graph[Microsoft Graph / Azure CLI]
     Core --> CTX[Local ctx history]
+    Core --> T3[T3 Code HTTP / WebSocket API]
 ```
 
 ## Code boundaries
@@ -48,12 +49,14 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 
 **Conversation.** Combine selected profile context, commitments, recent messages, matching people, and explicitly shared session-search results. Return an answer without applying changes.
 
+**Implementation.** Resolve a commitment to a discovered repository, reuse or create its T3 project, and submit a thread/worktree bootstrap command. Persist the task snapshot and command identities before dispatch so retries preserve the original handoff. T3 owns execution and approvals; submission does not complete the commitment.
+
 ## Storage
 
 | Data | Default location |
 | --- | --- |
 | Independent profile Git repository | `~/.local/share/personal-assistant-profile` |
-| Captures, revisions, conversations, people | `~/.local/share/personal-assistant/assistant.sqlite` |
+| Captures, revisions, conversations, people, implementation handoffs | `~/.local/share/personal-assistant/assistant.sqlite` |
 | Credentials and configuration | `~/.local/share/personal-assistant/settings.json` |
 | Discovery and sync status | `project-scan.json` and `people-sync.json` in the data directory |
 
@@ -74,6 +77,8 @@ Local storage does not mean local model processing. Requests can send:
 - Recent conversation messages and selected people candidates. Manual CTX search results require explicit sharing in Conversation.
 
 Model requests, including project discovery, use the configured endpoint and credentials with `store: false`; provider retention policies still apply. Keys stay on the server.
+
+Explicit implementation handoffs send the saved task and linked context to T3 Code's separately configured endpoint. T3 uses its own provider credentials and retention settings. The backend stores pairing-derived session credentials and exposes only connection metadata to the browser.
 
 Research tools are read-only and exclude symlinks, paths outside configured roots, common credential files, and generated directories. Normal source files can still contain secrets. Configure only trusted roots.
 

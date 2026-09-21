@@ -3,6 +3,7 @@ import { chmodSync, existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { type PeopleContext, type Person, peopleColumns } from "../shared/people.js";
 import type { Item, ItemFields } from "../shared/schema.js";
+import type { Implementation } from "../shared/t3.js";
 import {
   assertItemLink,
   assertRevision,
@@ -48,6 +49,11 @@ export class Store {
         rationale TEXT NOT NULL, sourcePaths TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS items_deadlines ON items(status, kind, dueDate);
+      CREATE TABLE IF NOT EXISTS implementations (
+        id TEXT PRIMARY KEY, itemId TEXT NOT NULL REFERENCES items(id),
+        profileRoot TEXT NOT NULL, snapshot TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS implementations_item ON implementations(itemId, profileRoot);
       CREATE TABLE IF NOT EXISTS item_history (
         id INTEGER PRIMARY KEY, itemId TEXT NOT NULL REFERENCES items(id),
         snapshot TEXT NOT NULL, changedAt TEXT NOT NULL
@@ -105,6 +111,22 @@ export class Store {
       .prepare("SELECT syncedAt FROM people_directories WHERE profilePath = ? AND tenantId = ?")
       .get(profilePath, tenantId);
     return row ? String(row.syncedAt) : null;
+  }
+
+  latestImplementation(itemId: string, profileRoot: string): Implementation | null {
+    const row = this.db
+      .prepare(
+        "SELECT snapshot FROM implementations WHERE itemId = ? AND profileRoot = ? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(itemId, profileRoot);
+    return row ? (JSON.parse(String(row.snapshot)) as Implementation) : null;
+  }
+
+  saveImplementation(entry: Implementation) {
+    this.db
+      .prepare(`INSERT INTO implementations (id, itemId, profileRoot, snapshot) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET snapshot = excluded.snapshot`)
+      .run(entry.id, entry.itemId, entry.profileRoot, JSON.stringify(entry));
   }
 
   replacePeople(profilePath: string, tenantId: string, people: Person[], syncedAt: string) {
