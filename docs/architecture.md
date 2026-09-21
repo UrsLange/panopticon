@@ -1,0 +1,82 @@
+# Architecture
+
+[README](../README.md) · [Contributing](../CONTRIBUTING.md)
+
+Panopticon is a TypeScript application with a React/Vite interface, a Fastify backend, SQLite storage, and an optional Electron companion. The browser and companion use the same local HTTP API.
+
+```mermaid
+flowchart TD
+    Browser[React browser interface] --> HTTP[Fastify HTTP API]
+    Desktop[Electron capture companion] --> HTTP
+    HTTP --> Core[Application services]
+    Schedulers[Project and people schedulers] --> Core
+    Core --> SQLite[(SQLite)]
+    Core --> Profile[Markdown profile and Git]
+    Core --> Model[Configured model provider]
+    Core --> OpenCode[OpenCode project exploration]
+    Core --> Graph[Microsoft Graph / Azure CLI]
+    Core --> CTX[Local ctx history]
+```
+
+## Code boundaries
+
+| Location | Responsibility |
+| --- | --- |
+| `src/` | Browser interface and HTTP client |
+| `desktop/` | Menu bar, capture window, backend startup |
+| `shared/` | Transport-neutral schemas and value types |
+| `server/application/` | Use cases, policy, and capability interfaces |
+| `server/app.ts` | Request validation, service calls, HTTP error translation |
+| `server/bootstrap.ts` | Adapter construction, service wiring, shutdown |
+| `server/main.ts` | HTTP startup, static assets, schedulers |
+| Other `server/` modules | SQLite, Git/filesystem, model, directory, and subprocess adapters |
+| `prompts/` | Editable model instructions |
+| `scripts/` | Setup, validation, installation, scheduling |
+
+Dependency direction is **entry points → application services and ports ← infrastructure adapters**. A port is an interface describing an external capability the application needs.
+
+Application services do not import Fastify, SQLite, filesystem/Git operations, provider SDKs, subprocesses, environment configuration, or the composition root. `shared/` cannot import server code. [Architecture tests](../tests/architecture.test.ts) enforce these boundaries.
+
+## Main workflows
+
+**Capture.** Persist the original text, select context, resolve references, and request model interpretation. Research can retrieve more evidence. Save the result without overwriting concurrent manual edits. Failed processing leaves the capture available for retry.
+
+**Profile note.** Check authorization, serialize incorporation, and ask the model for Markdown changes. Validate a temporary copy, recheck the note and profile revisions, then write, verify, and commit under the profile lock. Failed or conflicting updates remain pending.
+
+**Project discovery.** Enumerate repositories and compare local fingerprints. OpenCode edits a temporary profile-document draft. Validate protected content and source stability before applying and committing it. See [project discovery](project-discovery.md).
+
+**People sync.** Read all Graph pages, normalize and validate records, then replace the profile and tenant's directory in one SQLite transaction. A failed refresh retains the previous snapshot.
+
+**Conversation.** Combine selected profile context, commitments, recent messages, matching people, and explicitly shared session-search results. Return an answer without applying changes.
+
+## Storage
+
+| Data | Default location |
+| --- | --- |
+| Independent profile Git repository | `~/.local/share/personal-assistant-profile` |
+| Captures, revisions, conversations, people | `~/.local/share/personal-assistant/assistant.sqlite` |
+| Credentials and configuration | `~/.local/share/personal-assistant/settings.json` |
+| Discovery and sync status | `project-scan.json` and `people-sync.json` in the data directory |
+
+The profile uses OKF v0.2: Markdown concepts with YAML frontmatter and ordinary links. Concept types and filenames are open-ended. Unknown metadata is preserved. Operational state and credentials stay outside the profile.
+
+Profile writes reject stale content and dirty target files, preserve unrelated Git changes, and create local Conventional Commits using existing identity and hooks. Writes across multiple files are not a single atomic transaction: interruptions or commit failures can leave saved changes requiring review. Nothing is automatically pushed.
+
+Switching profiles retains captures. People snapshots are isolated by profile and tenant. The profile alone is not a complete application backup.
+
+## Data and model access
+
+Local storage does not mean local model processing. Requests can send:
+
+- Capture text, core and relevant profile documents, related items, and current commitments.
+- Additional profile files, discovered-project files, and CTX evidence retrieved during capture refinement.
+- The **full Markdown profile**, note text, and capture date when incorporating a note.
+- Recent conversation messages and selected people candidates. Manual CTX search results require explicit sharing in Conversation.
+
+Model requests set `store: false`; provider retention policies still apply. Keys stay on the server. OpenCode uses its own provider credentials and may retain its own local session history.
+
+Research tools are read-only and exclude symlinks, paths outside configured roots, common credential files, and generated directories. Normal source files can still contain secrets. Configure only trusted roots.
+
+Capture refinement permits 100 tool calls over 15 minutes, up to 400,000 accumulated context characters, plus a two-minute finalization allowance. File reads use 12,000-character pages and reject files larger than 2 MiB. Unresolved evidence gaps require review and cannot authorize a profile update.
+
+The service binds to `127.0.0.1` for one local user. General-purpose shell execution and MCP are not connected to capture research. OpenCode's separate permissions are described in [project discovery](project-discovery.md#exploration-and-updates).

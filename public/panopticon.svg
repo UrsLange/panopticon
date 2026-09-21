@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 116" fill="none">
+  <title>Panopticon — Shared viewpoint</title>
+  <g stroke="#f2ede4" stroke-width="16">
+    <path d="M16 44v64M128 44v34" />
+    <circle cx="44" cy="44" r="28" />
+    <circle cx="100" cy="44" r="28" />
+  </g>
+  <circle cx="72" cy="44" r="10" fill="#e7b66b" />
+</svg>

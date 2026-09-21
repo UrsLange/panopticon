@@ -1,0 +1,54 @@
+[tools]
+node = "24.21.0"
+pnpm = "12.4.2"
+opencode = "1.18.31"
+
+[tasks.setup]
+description = "Install dependencies and initialize local storage and profile"
+run = ["pnpm install --frozen-lockfile", "pnpm exec tsx scripts/setup.ts"]
+
+[tasks.dev]
+description = "Stop the existing assistant and run the local API and web interface"
+run = ["pnpm exec tsx scripts/stop-instance.ts", "pnpm exec concurrently -k -n api,web 'tsx watch server/main.ts' 'vite --host 127.0.0.1'"]
+
+[tasks.check]
+description = "Check formatting, lint, types, and behavior"
+run = ["pnpm exec biome check .", "pnpm exec tsc --noEmit", "pnpm exec vitest run"]
+
+[tasks."test:e2e"]
+description = "Test the complete application in Chromium"
+run = ["pnpm exec playwright install chromium", "pnpm exec tsc -p tsconfig.desktop.json", "pnpm exec playwright test"]
+
+[tasks.build]
+description = "Compile the frontend and local server"
+run = ["pnpm exec vite build", "pnpm exec tsc -p tsconfig.server.json"]
+
+[tasks.start]
+description = "Start the built application on localhost"
+run = "node dist/server/server/main.js"
+
+[tasks."profile:check"]
+description = "Validate the independent OKF profile and report links"
+run = "pnpm exec tsx scripts/profile-check.ts"
+
+[tasks.format]
+description = "Format source files and apply safe lint fixes"
+run = "pnpm exec biome check --write ."
+
+[tasks."desktop:install"]
+description = "Build and install the Mac capture companion and text service"
+depends = ["build"]
+run = ["pnpm exec tsc -p tsconfig.desktop.json", "pnpm exec tsx scripts/install-macos.ts"]
+
+[tasks.desktop]
+description = "Launch the installed global capture companion"
+run = "open \"$HOME/Applications/My Mind.app\""
+
+[tasks."projects:scan"]
+description = "Request an immediate project discovery scan"
+run = "pnpm exec tsx scripts/project-scan.ts --now"
+
+[tasks."projects:schedule"]
+description = "Build and install daily project discovery and login catch-up"
+depends = ["build"]
+run = "pnpm exec tsx scripts/install-project-schedule.ts"

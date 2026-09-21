@@ -1,0 +1,156 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { Store } from "../server/store.js";
+import { dayInTimezone } from "../shared/schema.js";
+
+const stores: Store[] = [];
+function store() {
+  const db = new Store(":memory:");
+  stores.push(db);
+  return db;
+}
+afterEach(() => {
+  for (const db of stores.splice(0)) db.db.close();
+});
+
+describe("capture and planning", () => {
+  it("migrates and persists refined descriptions without changing capture text or references", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pa-description-")), "assistant.sqlite");
+    const original = new Store(path);
+    const item = original.capture("Review onboarding");
+    original.db.exec("ALTER TABLE items DROP COLUMN refinedDescription");
+    original.db.close();
+    const migrated = new Store(path);
+    expect(migrated.get(item.id)?.refinedDescription).toBe("");
+    migrated.update(
+      item.id,
+      { refinedDescription: "Verify invitation acceptance in Chromium." },
+      0,
+    );
+    migrated.db.close();
+    const reopened = new Store(path);
+    stores.push(reopened);
+    expect(reopened.get(item.id)).toMatchObject({
+      original: "Review onboarding",
+      body: "Review onboarding",
+      references: [],
+      refinedDescription: "Verify invitation acceptance in Chromium.",
+    });
+    expect(reopened.history(item.id)[0].item.refinedDescription).toBe("");
+    expect(reopened.search("Chromium").map((item) => item.id)).toContain(item.id);
+  });
+  it("reopens legacy completed notes for incorporation and preserves completion after migration", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pa-note-migration-")), "assistant.sqlite");
+    const original = new Store(path);
+    const note = original.capture("Keep commits atomic");
+    original.update(note.id, { kind: "note", status: "done" }, 0);
+    original.db.exec("ALTER TABLE items DROP COLUMN profilePath");
+    original.db.close();
+    const migrated = new Store(path);
+    expect(migrated.get(note.id)).toMatchObject({
+      status: "open",
+      processing: "review",
+      profilePath: null,
+    });
+    expect(migrated.history(note.id)[0].item.status).toBe("done");
+    migrated.update(
+      note.id,
+      { status: "done", profilePath: "/profile", sourcePaths: ["rules.md"] },
+      2,
+    );
+    migrated.db.close();
+    const reopened = new Store(path);
+    stores.push(reopened);
+    expect(reopened.get(note.id)).toMatchObject({
+      status: "done",
+      profilePath: "/profile",
+      sourcePaths: ["rules.md"],
+    });
+  });
+  it("migrates existing captures and persists reference snapshots across restarts", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pa-migration-")), "assistant.sqlite");
+    const original = new Store(path);
+    const item = original.capture("Ask gham");
+    original.db.exec('ALTER TABLE items DROP COLUMN "references"');
+    original.db.close();
+    const migrated = new Store(path);
+    expect(migrated.get(item.id)?.references).toEqual([]);
+    const references = [
+      {
+        start: 4,
+        end: 8,
+        mention: "gham",
+        kind: "project" as const,
+        target: "projects/access.md",
+        label: "GitHub Access Management",
+        source: "aliases.md",
+      },
+    ];
+    migrated.update(item.id, { references }, 0);
+    migrated.db.close();
+    const reopened = new Store(path);
+    stores.push(reopened);
+    expect(reopened.get(item.id)?.references).toEqual(references);
+    expect(reopened.history(item.id)[0].item.original).toBe("Ask gham");
+  });
+  it("preserves original wording and revision history when correcting an interpretation", () => {
+    const db = store();
+    const capture = db.capture("Perhaps we could launch next Friday");
+    const edited = db.update(
+      capture.id,
+      { title: "Launch concept", kind: "idea", dueDate: "2026-09-18" },
+      0,
+    );
+    expect(edited.original).toBe(capture.original);
+    expect(edited.dueDate).toBeNull();
+    expect(db.history(capture.id)[0].item).toEqual(capture);
+    expect(() => db.update(capture.id, { title: "Stale edit" }, 0)).toThrow("changed");
+  });
+
+  it("includes every due or overdue unfinished commitment, including waiting ones", () => {
+    const db = store();
+    for (let i = 0; i < 15; i++) {
+      const item = db.capture(`Task ${i}`);
+      db.update(
+        item.id,
+        {
+          kind: "commitment",
+          dueDate: i < 8 ? "2026-09-16" : "2026-09-17",
+          status: i === 0 ? "waiting" : "open",
+        },
+        0,
+      );
+    }
+    const future = db.capture("Future");
+    db.update(future.id, { kind: "commitment", dueDate: "2026-09-18" }, 0);
+    const done = db.capture("Done");
+    db.update(done.id, { kind: "commitment", dueDate: "2026-09-17", status: "done" }, 0);
+    expect(db.today("2026-09-17").due).toHaveLength(15);
+    expect(db.today("2026-09-17").waiting).toHaveLength(1);
+  });
+
+  it("suggests only undated open commitments and keeps ideas out", () => {
+    const db = store();
+    for (const kind of ["idea", "note", "commitment"] as const) {
+      const item = db.capture(kind);
+      db.update(item.id, { kind }, 0);
+    }
+    expect(db.today("2026-09-17").suggested.map((item) => item.kind)).toEqual(["commitment"]);
+  });
+
+  it("rejects invalid links without modifying the capture", () => {
+    const db = store();
+    const item = db.capture("Idea");
+    expect(() => db.update(item.id, { relatedId: "missing" }, 0)).toThrow("existing");
+    expect(db.get(item.id)?.revision).toBe(0);
+  });
+
+  it("uses the configured timezone rather than UTC for the daily boundary", () => {
+    expect(dayInTimezone(new Date("2026-09-16T23:30:00Z"), "Europe/Berlin")).toBe("2026-09-17");
+    expect(dayInTimezone(new Date("2026-09-17T01:00:00Z"), "America/Los_Angeles")).toBe(
+      "2026-09-16",
+    );
+  });
+});

@@ -1,0 +1,137 @@
+import { createServer } from "node:http";
+
+export function mockProvider() {
+  return createServer(async (request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.headers.authorization !== "Bearer test-key") {
+      response.writeHead(401);
+      response.end(JSON.stringify({ error: { message: "Rejected test-key" } }));
+      return;
+    }
+    if (request.url === "/v1/models") {
+      response.end(
+        JSON.stringify({
+          object: "list",
+          data: [
+            { id: "test-model", object: "model" },
+            { id: "unsupported-model", object: "model" },
+          ],
+        }),
+      );
+      return;
+    }
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    const input = JSON.parse(body);
+    if (input.model === "unsupported-model") {
+      response.writeHead(400);
+      response.end(JSON.stringify({ error: { message: "Unsupported schema" } }));
+      return;
+    }
+    if (input.tool_choice?.name === "read_validation_value") {
+      response.end(
+        JSON.stringify({
+          id: "resp_tool",
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              type: "function_call",
+              call_id: "call_probe",
+              name: "read_validation_value",
+              arguments: "{}",
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (input.text.format.name === "tool_validation") {
+      const result = input.input.find(
+        (item: { type?: string }) => item.type === "function_call_output",
+      );
+      response.end(
+        JSON.stringify({
+          id: "resp_validation",
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              id: "msg_validation",
+              status: "completed",
+              role: "assistant",
+              content: [{ type: "output_text", text: result.output, annotations: [] }],
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    const payload = JSON.parse(
+      typeof input.input === "string" ? input.input : input.input[0].content,
+    );
+    const explicitNote = payload.capture === "note: I prefer browser-tested atomic commits.";
+    const implicitNote =
+      payload.capture === "My browser-test review preference is a short summary.";
+    let output: unknown =
+      input.text.format.name === "capture_interpretation"
+        ? {
+            title: payload.capture,
+            refinedDescription: `Expanded description: ${payload.capture}`,
+            sources: [],
+            kind: explicitNote || implicitNote ? "note" : "idea",
+            project: "",
+            dueDate: null,
+            priority: "normal",
+            relatedId: null,
+            rationale: "Test interpretation",
+            needsClarification: false,
+            updateProfile: explicitNote,
+            referenceIds: payload.context.candidates
+              .filter((alias: { available: boolean }) => alias.available)
+              .map((alias: { id: string }) => alias.id),
+          }
+        : { answer: "Connection works.", sources: [] };
+    if (input.text.format.name === "profile_update") {
+      const path = "browser-test-preferences.md";
+      const existing = payload.documents.find((doc: { path: string }) => doc.path === path);
+      const index = payload.documents.find((doc: { path: string }) => doc.path === "index.md");
+      const content = `${existing?.content ?? "---\ntype: Working rules\ntitle: Browser test preferences\n---\n\n# Browser test preferences\n"}\n${payload.capture.body}\n`;
+      output = {
+        decision: "apply",
+        summary: "Saved your browser test preference.",
+        paths: [path],
+        changes: [
+          { path, content },
+          ...(!existing
+            ? [
+                {
+                  path: index.path,
+                  content: `${index.content}\n- [Browser test preferences](${path})\n`,
+                },
+              ]
+            : []),
+        ],
+      };
+    }
+    response.end(
+      JSON.stringify({
+        id: "resp_test",
+        object: "response",
+        created_at: 0,
+        status: "completed",
+        model: "test-model",
+        output: [
+          {
+            type: "message",
+            id: "msg_test",
+            status: "completed",
+            role: "assistant",
+            content: [{ type: "output_text", text: JSON.stringify(output), annotations: [] }],
+          },
+        ],
+      }),
+    );
+  });
+}

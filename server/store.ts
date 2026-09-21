@@ -1,0 +1,326 @@
+import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { type PeopleContext, type Person, peopleColumns } from "../shared/people.js";
+import type { Item, ItemFields } from "../shared/schema.js";
+import {
+  assertItemLink,
+  assertRevision,
+  capturedItem,
+  dailyCommitments,
+  relatedItems,
+  revisedItem,
+} from "./application/items.js";
+import { peopleRelationships } from "./application/people-relationships.js";
+
+const personPattern = (value: string) =>
+  new RegExp(
+    `(?<![\\p{L}\\p{N}_@.])${value
+      .normalize("NFKC")
+      .toLocaleLowerCase()
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_@])`,
+    "gu",
+  );
+
+export class Store {
+  readonly db: DatabaseSync;
+
+  constructor(path: string) {
+    this.db = new DatabaseSync(path);
+    if (path !== ":memory:") {
+      for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+        if (existsSync(file)) chmodSync(file, 0o600);
+      }
+    }
+    this.db.function("person_match", { deterministic: true }, (value, query) =>
+      Number(personPattern(String(value)).test(String(query))),
+    );
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS items (
+        id TEXT PRIMARY KEY, original TEXT NOT NULL, title TEXT NOT NULL,
+        body TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+        project TEXT NOT NULL, dueDate TEXT, priority TEXT NOT NULL,
+        relatedId TEXT REFERENCES items(id), createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0,
+        processing TEXT NOT NULL, processingError TEXT,
+        rationale TEXT NOT NULL, sourcePaths TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS items_deadlines ON items(status, kind, dueDate);
+      CREATE TABLE IF NOT EXISTS item_history (
+        id INTEGER PRIMARY KEY, itemId TEXT NOT NULL REFERENCES items(id),
+        snapshot TEXT NOT NULL, changedAt TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL,
+        sources TEXT NOT NULL, createdAt TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS people_directories (
+        profilePath TEXT NOT NULL, tenantId TEXT NOT NULL, syncedAt TEXT NOT NULL,
+        PRIMARY KEY (profilePath, tenantId)
+      );
+      CREATE TABLE IF NOT EXISTS people (
+        profilePath TEXT NOT NULL, tenantId TEXT NOT NULL, position INTEGER NOT NULL,
+        prename TEXT NOT NULL, lastname TEXT NOT NULL, email TEXT NOT NULL,
+        role TEXT NOT NULL, team TEXT NOT NULL, unit TEXT NOT NULL,
+        subdivision TEXT NOT NULL, division TEXT NOT NULL, company TEXT NOT NULL,
+        PRIMARY KEY (profilePath, tenantId, email),
+        FOREIGN KEY (profilePath, tenantId) REFERENCES people_directories(profilePath, tenantId)
+      );
+    `);
+    if (
+      !this.db
+        .prepare("PRAGMA table_info(items)")
+        .all()
+        .some((column) => column.name === "refinedDescription")
+    ) {
+      this.db.exec("ALTER TABLE items ADD COLUMN refinedDescription TEXT NOT NULL DEFAULT ''");
+    }
+    if (
+      !this.db
+        .prepare("PRAGMA table_info(items)")
+        .all()
+        .some((column) => column.name === "references")
+    ) {
+      this.db.exec(`ALTER TABLE items ADD COLUMN "references" TEXT NOT NULL DEFAULT '[]'`);
+    }
+    if (
+      !this.db
+        .prepare("PRAGMA table_info(items)")
+        .all()
+        .some((column) => column.name === "profilePath")
+    ) {
+      this.db.exec("ALTER TABLE items ADD COLUMN profilePath TEXT");
+      for (const item of this.list().filter(
+        (item) => item.kind === "note" && item.status === "done",
+      )) {
+        this.update(item.id, { status: "open", processing: "review" }, item.revision);
+      }
+    }
+  }
+
+  peopleSyncedAt(profilePath: string, tenantId: string): string | null {
+    const row = this.db
+      .prepare("SELECT syncedAt FROM people_directories WHERE profilePath = ? AND tenantId = ?")
+      .get(profilePath, tenantId);
+    return row ? String(row.syncedAt) : null;
+  }
+
+  replacePeople(profilePath: string, tenantId: string, people: Person[], syncedAt: string) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(`INSERT INTO people_directories (profilePath, tenantId, syncedAt) VALUES (?, ?, ?)
+          ON CONFLICT (profilePath, tenantId) DO UPDATE SET syncedAt = excluded.syncedAt`)
+        .run(profilePath, tenantId, syncedAt);
+      this.db
+        .prepare("DELETE FROM people WHERE profilePath = ? AND tenantId = ?")
+        .run(profilePath, tenantId);
+      const insert = this.db.prepare(`INSERT INTO people
+        (profilePath, tenantId, position, ${peopleColumns.join(", ")})
+        VALUES (?, ?, ?, ${peopleColumns.map(() => "?").join(", ")})`);
+      people.forEach((person, position) => {
+        insert.run(
+          profilePath,
+          tenantId,
+          position,
+          ...peopleColumns.map((column) => person[column]),
+        );
+      });
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  person(profilePath: string, tenantId: string, email: string): Person | null {
+    return (
+      (this.db
+        .prepare(`SELECT ${peopleColumns.join(", ")} FROM people
+        WHERE profilePath = ? AND tenantId = ? AND email = ?`)
+        .get(profilePath, tenantId, email.toLowerCase()) as Person | undefined) ?? null
+    );
+  }
+
+  peopleContext(
+    profilePath: string,
+    query: string,
+    myEmail: string,
+    tenantId: string,
+  ): PeopleContext | null {
+    const syncedAt = this.peopleSyncedAt(profilePath, tenantId);
+    if (!syncedAt) return null;
+    const normalized = query.normalize("NFKC").toLocaleLowerCase();
+    const exactScore = `CASE WHEN person_match(email, ?) THEN 4
+      WHEN person_match(prename || ' ' || lastname, ?) THEN 3 ELSE 0 END`;
+    const exact = this.db
+      .prepare(`SELECT email, prename, lastname, ${exactScore} AS score
+      FROM people WHERE profilePath = ? AND tenantId = ? AND score > 0 ORDER BY position`)
+      .all(normalized, normalized, profilePath, tenantId);
+    let remaining = normalized;
+    for (const person of exact) {
+      remaining = remaining.replace(
+        personPattern(
+          person.score === 4 ? String(person.email) : `${person.prename} ${person.lastname}`,
+        ),
+        " ",
+      );
+    }
+    const matches = this.db
+      .prepare(`WITH ranked AS (
+      SELECT ${peopleColumns.join(", ")}, position,
+        CASE WHEN person_match(email, ?) THEN 4
+          WHEN person_match(prename || ' ' || lastname, ?) THEN 3
+          WHEN person_match(lastname, ?) THEN 2
+          WHEN person_match(prename, ?) THEN 1 ELSE 0 END AS score
+      FROM people WHERE profilePath = ? AND tenantId = ?
+    ) SELECT ${peopleColumns.join(", ")}, COUNT(*) OVER () AS totalMatches
+      FROM ranked WHERE score > 0 ORDER BY score DESC, position LIMIT 10`)
+      .all(normalized, normalized, remaining, remaining, profilePath, tenantId);
+    const self = this.person(profilePath, tenantId, myEmail);
+    const candidates = matches.map(({ totalMatches, ...person }) => person as Person);
+    return {
+      source: "people",
+      syncedAt,
+      self,
+      candidates,
+      totalMatches: Number(matches[0]?.totalMatches ?? 0),
+      searchTruncated: Number(matches[0]?.totalMatches ?? 0) > candidates.length,
+      relationships: peopleRelationships(self, candidates),
+    };
+  }
+
+  list(): Item[] {
+    return this.db
+      .prepare("SELECT * FROM items ORDER BY createdAt DESC, id")
+      .all()
+      .map((row) => ({
+        ...row,
+        sourcePaths: JSON.parse(String(row.sourcePaths)),
+        references: JSON.parse(String(row.references)),
+      })) as Item[];
+  }
+
+  get(id: string): Item | undefined {
+    const row = this.db.prepare("SELECT * FROM items WHERE id = ?").get(id);
+    return row
+      ? ({
+          ...row,
+          sourcePaths: JSON.parse(String(row.sourcePaths)),
+          references: JSON.parse(String(row.references)),
+        } as Item)
+      : undefined;
+  }
+
+  capture(text: string): Item {
+    const now = new Date().toISOString();
+    const item = capturedItem(text, randomUUID(), now);
+    this.db
+      .prepare(`INSERT INTO items
+      (id, original, title, body, kind, status, project, dueDate, priority, relatedId,
+       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, refinedDescription)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        ...Object.values({
+          ...item,
+          sourcePaths: JSON.stringify(item.sourcePaths),
+          references: JSON.stringify(item.references),
+        }),
+      );
+    return item;
+  }
+
+  update(
+    id: string,
+    fields: Partial<ItemFields> &
+      Partial<
+        Pick<
+          Item,
+          | "processing"
+          | "processingError"
+          | "rationale"
+          | "sourcePaths"
+          | "references"
+          | "profilePath"
+        >
+      >,
+    revision: number,
+  ): Item {
+    const current = this.get(id);
+    assertRevision(current, revision);
+    assertItemLink(id, fields.relatedId, !fields.relatedId || !!this.get(fields.relatedId));
+    const next = revisedItem(current, fields, revision, new Date().toISOString());
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare("INSERT INTO item_history(itemId, snapshot, changedAt) VALUES (?, ?, ?)")
+        .run(id, JSON.stringify(current), next.updatedAt);
+      this.db
+        .prepare(`UPDATE items SET title=?, body=?, kind=?, status=?, project=?, dueDate=?,
+        priority=?, relatedId=?, updatedAt=?, revision=?, processing=?, processingError=?,
+        rationale=?, sourcePaths=?, "references"=?, profilePath=?, refinedDescription=? WHERE id=?`)
+        .run(
+          next.title,
+          next.body,
+          next.kind,
+          next.status,
+          next.project,
+          next.dueDate,
+          next.priority,
+          next.relatedId,
+          next.updatedAt,
+          next.revision,
+          next.processing,
+          next.processingError,
+          next.rationale,
+          JSON.stringify(next.sourcePaths),
+          JSON.stringify(next.references),
+          next.profilePath,
+          next.refinedDescription,
+          id,
+        );
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return next;
+  }
+
+  history(id: string) {
+    return this.db
+      .prepare("SELECT snapshot, changedAt FROM item_history WHERE itemId=? ORDER BY id DESC")
+      .all(id)
+      .map((row) => ({
+        item: JSON.parse(String(row.snapshot)) as Item,
+        changedAt: String(row.changedAt),
+      }));
+  }
+
+  today(date: string) {
+    return dailyCommitments(this.list(), date);
+  }
+  search(query: string, limit = 8) {
+    return relatedItems(this.list(), query, limit);
+  }
+
+  addMessage(role: "user" | "assistant", content: string, sources: string[] = []) {
+    this.db
+      .prepare("INSERT INTO messages(role, content, sources, createdAt) VALUES (?, ?, ?, ?)")
+      .run(role, content, JSON.stringify(sources), new Date().toISOString());
+  }
+
+  messages() {
+    return this.db
+      .prepare("SELECT * FROM messages ORDER BY id")
+      .all()
+      .map((row) => ({
+        id: Number(row.id),
+        role: String(row.role),
+        content: String(row.content),
+        sources: JSON.parse(String(row.sources)) as string[],
+      }));
+  }
+}

@@ -1,0 +1,70 @@
+# Using Panopticon
+
+[Setup](setup.md) · [Project discovery](project-discovery.md) · [Troubleshooting](operations.md#troubleshooting)
+
+## Capture and organize
+
+Capture from any view. **Command–K** focuses the browser capture box; **Command–Enter** saves. The [Mac companion](setup.md#mac-capture-companion) adds a global shortcut and selected-text capture.
+
+A capture is saved before model processing. The assistant classifies it and refines its description using available context. Failed processing retains the capture and can be retried.
+
+In **Inbox**, open an item to edit its kind, project, status, deadline, priority, or related item. **Description** holds the refined text; **Notes** retains the capture text with resolved aliases. Original wording and revision history remain available. Review items with unresolved questions or incomplete research.
+
+## Plan your day
+
+**Today** shows all open or waiting commitments due today or earlier, using your configured timezone. Suggested next actions are the three oldest undated open commitments, with high priority first. The app does not infer deadlines.
+
+**Notebook** holds ideas and pending profile notes. Discovering a repository does not create a commitment or assign it a priority.
+
+## Add knowledge to your profile
+
+An explicit memory request, such as “remember that I prefer atomic conventional commits,” authorizes automatic incorporation into your profile. Unclear or implicit notes wait for review.
+
+For a pending note, open it and choose **Add to profile**. Save any text edits first. Answer clarification questions or use **Retry profile update** after resolving a failure.
+
+After a verified, committed update, the note is marked **Added to profile** and leaves the default queue. Enable **Include completed & archived** to see its original capture, history, and profile links. Editing a completed note reopens it for explicit addition; archiving a pending note dismisses it without incorporating it.
+
+Profile updates use local `docs(profile): ...` commits and never push. Uncommitted edits in a target file block updates; unrelated changes remain untouched. If a commit fails, files may already be saved. Resolve the Git problem and review and commit those changes before retrying.
+
+## Edit personal context
+
+**Your context** edits the profile's Markdown documents. Custom concept types, nested directories, and unknown metadata are supported. External changes are discovered every five seconds; reselect a document to load its latest contents. Stale saves are rejected.
+
+There are no mandatory concept filenames. Settings provides a copyable prompt for a coding agent to enrich company and team context. Project discovery is [configured separately](project-discovery.md).
+
+### Personal aliases
+
+In **Your context → Add aliases**, add one row per explicit mapping:
+
+| Alias | Kind | Target |
+| --- | --- | --- |
+| Alex | person | alex@example.com |
+| Lex | person | alex@example.com |
+| portal | project | projects/customer-portal.md |
+
+Use an existing directory email or a profile-relative Project document path. Use `repository` for a Repository document. Include given names explicitly; uniqueness alone does not establish a lasting identity.
+
+Resolved mentions retain their capture-time target and label. Alias edits and ordinary retries do not rebind them. Use **Resolve aliases again** to correct an old binding. If an email or document path changes, update the registry for future captures; old captures keep their saved targets.
+
+## Conversation and session history
+
+**Conversation** answers questions using personal context and current commitments. It is read-only: choose **Save as capture** to keep an answer, or edit an item to apply a change. It does not send messages or modify company systems.
+
+If `ctx` is installed and on the server's PATH, capture refinement can search indexed sessions automatically. In Conversation, manual search results are shared with the model only after you select the sharing checkbox. Panopticon does not initialize or refresh the index; use `ctx status` to inspect coverage. Historical plans are evidence, not proof of completed work.
+
+## People directory
+
+In **Settings → People & Entra sync**:
+
+1. Choose **Existing Azure CLI login** or **Application client credentials**.
+2. For CLI access, sign in to the intended tenant with `az login --tenant <tenant-id> --allow-no-subscriptions`. Confirm the detected tenant. The server's PATH must include `az`.
+3. For application access, enter the tenant ID, client ID, and client secret **value**. Grant Graph application permissions `User.Read.All` and `GroupMember.Read.All` with administrator consent. CLI credentials also need directory read access.
+4. Enter **Your directory email**, matching Entra's `mail` attribute, enable sync, save, and click **Sync people now**.
+
+The directory stores names, email, role, company, and organizational levels in SQLite, separate from the profile. Only enabled member accounts with first name, last name, and valid email are imported. Guests, disabled accounts, and incomplete records are skipped. Duplicate emails fail the refresh.
+
+Hierarchy comes from `onPremisesDistinguishedName`. Group names classify path nodes using `t_` (team), `u_` (unit), `sd_` (subdivision), and `d_` (division) prefixes in `onPremisesSamAccountName`. These are organization-specific conventions. Membership, job titles, and node position do not establish ancestry or reporting lines. Missing levels stay empty; ambiguous nodes appear under **Hierarchy needs attention**.
+
+Sync reads Entra without modifying it. Successful refreshes replace the current profile and tenant's snapshot; failures preserve the last complete directory. Refresh runs every 24 hours while the server is running. Disabling sync retains local lookup data.
+
+Only matching candidates and your own row are included in model context, not the whole directory. Keep personal relationships and aliases in profile documents. Review ambiguous identities and generated profile changes: structural validation does not establish factual accuracy.

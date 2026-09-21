@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": "dist/desktop",
+    "rootDir": "desktop",
+    "types": ["node"]
+  },
+  "include": ["desktop"]
+}

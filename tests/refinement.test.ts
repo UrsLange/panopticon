@@ -1,0 +1,279 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type OpenAI from "openai";
+import { afterEach, expect, it, vi } from "vitest";
+import type { AssistantContext } from "../server/application/assistant.js";
+import { createAssistant, validateToolCalling } from "../server/assistant.js";
+import { readSessionEvent, searchSessionEvidence } from "../server/ctx.js";
+import { refineCapture, refinementLimits } from "../server/refinement.js";
+import { createResearch, type ResearchTool } from "../server/research-tools.js";
+
+vi.mock("../server/ctx.js", () => ({
+  searchSessionEvidence: vi.fn(async () => ({
+    results: [{ ctx_event_id: "abcdef12", snippet: "Check browser behavior" }],
+  })),
+  readSessionEvent: vi.fn(
+    async () => "The team decided to verify the onboarding flow in a browser.",
+  ),
+}));
+
+const context: AssistantContext = {
+  today: "2026-09-19",
+  candidates: [],
+  references: [],
+  people: null,
+  profile: { directory: [], documents: [{ path: "unused.md", content: "Unrelated preference" }] },
+  related: [],
+  commitments: { date: "2026-09-19", due: [], suggested: [], waiting: [] },
+};
+const interpretation = {
+  title: "Review onboarding",
+  kind: "commitment",
+  project: "Activation",
+  dueDate: null,
+  priority: "normal",
+  relatedId: null,
+  referenceIds: [],
+  rationale: "Supported by prior work.",
+  needsClarification: false,
+  updateProfile: false,
+  refinedDescription: "Review the onboarding invitation flow and verify it in a browser.",
+  sources: ["rules.md", "project:one/README.md", "ctx:abcdef12"],
+};
+const message = (value: unknown) => ({
+  type: "message",
+  id: "msg_result",
+  role: "assistant",
+  status: "completed",
+  content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }],
+});
+const call = (name: string, input: unknown, id: string) => ({
+  type: "function_call",
+  id: `fc_${id}`,
+  name,
+  arguments: JSON.stringify(input),
+  call_id: id,
+  namespace: null,
+});
+type ModelRequest = {
+  input: { type?: string; role?: string; content?: string; output?: string }[];
+  tool_choice: unknown;
+  instructions: string;
+};
+const cleanup: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  for (const close of cleanup.splice(0)) await close();
+});
+async function provider(respond: (request: ModelRequest, index: number) => unknown[]) {
+  const requests: ModelRequest[] = [];
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    const input = JSON.parse(body) as ModelRequest;
+    requests.push(input);
+    response.setHeader("Content-Type", "application/json");
+    response.end(
+      JSON.stringify({
+        id: `resp_${requests.length}`,
+        object: "response",
+        status: "completed",
+        output: respond(input, requests.length - 1),
+      }),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanup.push(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, requests };
+}
+
+it("researches profile, project and CTX evidence over multiple Responses turns with reasoning preserved", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pa-refinement-"));
+  const profile = join(root, "profile"),
+    project = join(root, "project");
+  mkdirSync(profile);
+  mkdirSync(project);
+  writeFileSync(join(profile, "rules.md"), "Verify interactive changes in a browser.");
+  writeFileSync(join(project, "README.md"), "Activation owns the onboarding invitation flow.");
+  const reasoning = {
+    type: "reasoning",
+    id: "rs_test",
+    summary: [],
+    encrypted_content: "encrypted-test-reasoning",
+  };
+  const model = await provider((_request, index) => {
+    expect(_request.input[0]).toMatchObject({ type: "message", role: "user" });
+    if (index === 0)
+      return [reasoning, call("list_files", { scope: "profile", path: "", offset: 0 }, "list")];
+    if (index === 1)
+      return [
+        call("read_file", { scope: "profile", path: "rules.md", offset: 0 }, "profile"),
+        call("read_file", { scope: "project:one", path: "README.md", offset: 0 }, "project"),
+        call(
+          "search_history",
+          { query: "onboarding", project: "project:one", since: null },
+          "search",
+        ),
+      ];
+    if (index === 2) return [call("read_history", { eventId: "abcdef12", offset: 0 }, "history")];
+    return [message(interpretation)];
+  });
+  const assistant = createAssistant("test-key", "test", model.url, () =>
+    createResearch([
+      { id: "profile", name: "Profile", root: profile },
+      { id: "project:one", name: "Activation", root: project },
+    ]),
+  );
+  const result = await assistant?.interpret("Review onboarding", context);
+  expect(result).toEqual(interpretation);
+  expect(result?.sources).not.toContain("unused.md");
+  expect(model.requests).toHaveLength(4);
+  expect(model.requests[1].input).toContainEqual(reasoning);
+  expect(model.requests[1].input.find((item) => item.type === "function_call")).not.toHaveProperty(
+    "namespace",
+  );
+  expect(JSON.stringify(model.requests[3].input)).toContain("Activation owns");
+  expect(JSON.stringify(model.requests[3].input)).toContain("team decided");
+  expect(searchSessionEvidence).toHaveBeenLastCalledWith(
+    "onboarding",
+    project,
+    undefined,
+    expect.any(AbortSignal),
+  );
+  expect(readSessionEvent).toHaveBeenCalled();
+});
+
+it("can correct a missing file path without treating recovered evidence as incomplete", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pa-research-retry-"));
+  writeFileSync(join(root, "rules.md"), "Verify in a browser.");
+  const model = await provider((_request, index) => {
+    if (index === 0)
+      return [call("read_file", { scope: "profile", path: "wrong.md", offset: 0 }, "missing")];
+    if (index === 1)
+      return [call("read_file", { scope: "profile", path: "rules.md", offset: 0 }, "corrected")];
+    return [message({ ...interpretation, sources: ["rules.md"] })];
+  });
+  const assistant = createAssistant("test-key", "test", model.url, () =>
+    createResearch([{ id: "profile", name: "Profile", root }]),
+  );
+  const result = await assistant?.interpret("Review onboarding", context);
+  expect(result).toMatchObject({ needsClarification: false, sources: ["rules.md"] });
+  expect(JSON.stringify(model.requests[1].input)).toContain("locate the correct path");
+});
+
+it("marks unavailable research and fabricated citations for review without authorizing profile writes", async () => {
+  vi.mocked(searchSessionEvidence).mockRejectedValueOnce(new Error("CTX is unavailable"));
+  const model = await provider((_request, index) =>
+    index === 0
+      ? [call("search_history", { query: "unknown", project: null, since: null }, "search")]
+      : [
+          message({
+            ...interpretation,
+            kind: "note",
+            updateProfile: true,
+            sources: ["made-up.md"],
+          }),
+        ],
+  );
+  const assistant = createAssistant("test-key", "test", model.url, () => createResearch([]));
+  const result = await assistant?.interpret("Remember my review preference", context);
+  expect(result).toMatchObject({ needsClarification: true, updateProfile: false, sources: [] });
+  expect(result?.rationale).toContain("search_history could not retrieve");
+  expect(result?.rationale).toContain("citations were not retrieved");
+  expect(JSON.stringify(model.requests[1].input)).toContain("Context lookup failed");
+});
+
+const researchTool: ResearchTool = {
+  name: "lookup",
+  description: "Retrieve context",
+  parameters: { type: "object", properties: {}, additionalProperties: false },
+  execute: async () => ({ data: "Evidence", sources: [] }),
+};
+
+it("allows 100 research calls and then reserves a final response with review status", async () => {
+  const execute = vi.fn(researchTool.execute);
+  const parse = vi.fn(async (request: { tool_choice: string }) =>
+    request.tool_choice === "none"
+      ? { output: [], output_parsed: { ...interpretation, sources: [] } }
+      : { output: [call("lookup", {}, `call_${execute.mock.calls.length}`)], output_parsed: null },
+  );
+  const client = { responses: { parse } } as unknown as OpenAI;
+  const result = await refineCapture(client, "test", "", "Review", context, {
+    scopes: [],
+    tools: [{ ...researchTool, execute }],
+  });
+  expect(execute).toHaveBeenCalledTimes(100);
+  expect(parse).toHaveBeenCalledTimes(101);
+  expect(result.needsClarification).toBe(true);
+  expect(result.rationale).toContain("safety budget");
+});
+
+it("stops research on timeout while allowing finalization after the research signal is aborted", async () => {
+  vi.useFakeTimers();
+  const execute = vi.fn(async (_input: unknown, signal: AbortSignal) => {
+    await new Promise((_resolve, reject) =>
+      signal.addEventListener("abort", () => reject(new Error("Aborted")), { once: true }),
+    );
+    return { data: "", sources: [] };
+  });
+  const parse = vi.fn(
+    async (request: { tool_choice: string }, options: { signal?: AbortSignal }) => {
+      if (request.tool_choice === "none") {
+        expect(options.signal).toBeUndefined();
+        return { output: [], output_parsed: { ...interpretation, sources: [] } };
+      }
+      return { output: [call("lookup", {}, "slow")], output_parsed: null };
+    },
+  );
+  const result = refineCapture(
+    { responses: { parse } } as unknown as OpenAI,
+    "test",
+    "",
+    "Review",
+    context,
+    { scopes: [], tools: [{ ...researchTool, execute }] },
+  );
+  await vi.advanceTimersByTimeAsync(refinementLimits.milliseconds);
+  expect((await result).needsClarification).toBe(true);
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(parse).toHaveBeenCalledTimes(2);
+});
+
+it("stops a growing context before another research turn and refuses unexpected finalization calls", async () => {
+  const large = {
+    ...context,
+    profile: {
+      directory: [],
+      documents: [{ path: "large.md", content: "x".repeat(refinementLimits.contextCharacters) }],
+    },
+  };
+  const parse = vi.fn(async (request: { tool_choice: string }) => {
+    expect(request.tool_choice).toBe("none");
+    return { output: [call("lookup", {}, "unexpected")], output_parsed: null };
+  });
+  await expect(
+    refineCapture({ responses: { parse } } as unknown as OpenAI, "test", "", "Review", large, {
+      scopes: [],
+      tools: [researchTool],
+    }),
+  ).rejects.toThrow("did not finalize");
+  expect(parse).toHaveBeenCalledTimes(1);
+});
+
+it("rejects a provider that ignores a required validation tool call", async () => {
+  const model = await provider((request) => {
+    expect(request.input[0]).toMatchObject({ type: "message", role: "user" });
+    return [message({ value: "invented" })];
+  });
+  await expect(validateToolCalling("test-key", "test", model.url)).rejects.toThrow(
+    "did not perform",
+  );
+});
