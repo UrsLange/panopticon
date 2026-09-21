@@ -23,7 +23,7 @@ export type Research = {
 };
 
 const excluded =
-  /(^|\/)(\.env[^/]*|\.git|\.npmrc|\.netrc|\.pypirc|node_modules|dist|build|vendor|coverage|\.next|\.venv|\.ssh|\.aws|[^/]*(?:secret|credential)[^/]*)(\/|$)|\.(?:pem|key|p12|pfx)$/i;
+  /(^|\/)(\.env[^/]*|\.git|\.npmrc|\.netrc|\.pypirc|node_modules|dist|build|vendor|coverage|\.next|\.venv|\.ssh|\.aws|[^/]*(?:secret|credential|token)[^/]*)(\/|$)|\.(?:pem|key|p12|pfx)$/i;
 const pageSize = 12000;
 const offset = z.number().int().min(0);
 const location = { scope: z.string(), path: z.string().max(4096) };

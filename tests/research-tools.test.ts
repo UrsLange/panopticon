@@ -66,6 +66,7 @@ it("blocks escaped roots, symlinks, credential files, binary data and unknown sc
   const f = fixture();
   writeFileSync(join(f.root, "outside.md"), "Private");
   writeFileSync(join(f.profile, ".env.local"), "SECRET=value");
+  writeFileSync(join(f.profile, "access-token.txt"), "private-token");
   writeFileSync(join(f.profile, ".npmrc"), "//registry.example/:_authToken=private");
   writeFileSync(join(f.profile, "data.bin"), Buffer.from([0, 1, 2]));
   symlinkSync(f.root, join(f.profile, "escape"));
@@ -74,6 +75,7 @@ it("blocks escaped roots, symlinks, credential files, binary data and unknown sc
     join(f.root, "outside.md"),
     "escape/outside.md",
     ".env.local",
+    "access-token.txt",
     ".npmrc",
     "data.bin",
   ]) {
