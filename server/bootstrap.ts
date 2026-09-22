@@ -18,6 +18,7 @@ import { createT3, type T3Client } from "./application/t3.js";
 import { createAssistant } from "./assistant.js";
 import { config } from "./config.js";
 import { ctxAvailable, searchSessions } from "./ctx.js";
+import { chooseDirectory } from "./directory-picker.js";
 import { createPeopleSync, detectEntraTenant } from "./people.js";
 import { Profile } from "./profile.js";
 import { profileAdapter } from "./profile-adapter.js";
@@ -28,6 +29,7 @@ import { Store } from "./store.js";
 import { createT3Client, implementationWorkspace } from "./t3.js";
 
 export type AppOptions = {
+  chooseDirectory?: () => Promise<string | null>;
   t3Client?: T3Client;
   store?: Store;
   profile?: Profile;
@@ -112,6 +114,7 @@ export function createApplication(options: AppOptions = {}) {
   const preferences = createPreferences({
     storage: {
       view: () => ({
+        credentialSources: settings.credentialSources(),
         entra: settings.publicEntra(),
         modelReady: settings.modelReady,
         profileReady: settings.profileReady,
@@ -141,6 +144,7 @@ export function createApplication(options: AppOptions = {}) {
       return path;
     },
     detectTenant: detectEntraTenant,
+    chooseDirectory: options.chooseDirectory ?? chooseDirectory,
   });
   return {
     t3,

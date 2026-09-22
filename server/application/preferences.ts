@@ -18,6 +18,7 @@ export type ProfileSelection = {
 };
 export interface PreferenceStorage {
   view(): {
+    credentialSources: Settings["credentialSources"];
     entra: PublicEntraConfig;
     modelReady: boolean;
     profileReady: boolean;
@@ -48,6 +49,7 @@ export function createPreferences({
   timezone,
   directoryPath,
   detectTenant,
+  chooseDirectory,
 }: {
   storage: PreferenceStorage;
   models: ModelConnection;
@@ -62,11 +64,13 @@ export function createPreferences({
   timezone: () => string;
   directoryPath: (path: string) => Promise<string>;
   detectTenant: () => Promise<string | null>;
+  chooseDirectory: () => Promise<string | null>;
 }) {
   const status = (): Settings => {
     const saved = storage.view();
     const profile = getProfile();
     return {
+      credentialSources: saved.credentialSources,
       entra: saved.entra,
       aiConfigured: assistantConfigured || saved.modelReady,
       model: saved.connection.model,
@@ -104,6 +108,7 @@ export function createPreferences({
     status,
     checkProfileChange,
     detectTenant: async () => ({ tenantId: await detectTenant() }),
+    chooseDirectory: async () => ({ path: await chooseDirectory() }),
     saveEntra(input: EntraConfig) {
       if (peopleSync.status().running)
         throw new ApplicationError(

@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { join } from "node:path";
 import OpenAI from "openai";
 import { defaultEntra, type EntraConfig, type PublicEntraConfig } from "../shared/people.js";
+import type { Settings } from "../shared/schema.js";
 import type { T3Connection } from "../shared/t3.js";
 import type { Connection } from "./application/connection.js";
 import { createModelConnection } from "./application/model-connection.js";
@@ -76,6 +77,26 @@ export class SettingsStore {
   }
   connection(): Connection {
     return this.saved.connection ?? { baseURL: this.defaults.baseURL, model: this.defaults.model };
+  }
+  credentialSources(): Settings["credentialSources"] {
+    const sources: Settings["credentialSources"] = [];
+    if (this.saved.connection?.apiKey)
+      sources.push({ source: "saved", endpoint: this.saved.connection.baseURL });
+    if (this.defaults.apiKey)
+      sources.push({ source: "environment", endpoint: this.defaults.baseURL });
+    if (this.defaults.keyFile) {
+      try {
+        if (readFileSync(this.defaults.keyFile, "utf8").trim())
+          sources.push({
+            source: "file",
+            endpoint: "https://litellm.jobrad.tech/v1",
+            path: this.defaults.keyFile,
+          });
+      } catch {
+        /* Unreadable files are not available credential sources. */
+      }
+    }
+    return sources;
   }
   credentials(input = this.connection()): Connection {
     const baseURL = input.baseURL.replace(/\/+$/, "");

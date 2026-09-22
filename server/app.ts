@@ -55,6 +55,11 @@ export function createHttpApp(services: Application, port: number) {
   });
 
   app.get("/api/settings", async () => preferences.status());
+  app.post("/api/settings/directory", async (request, reply) => {
+    if (!request.headers["content-type"]?.startsWith("application/json"))
+      return reply.code(415).send({ error: "Use a JSON request to open the folder chooser." });
+    return preferences.chooseDirectory();
+  });
   app.get("/api/settings/t3", async () => services.t3.status());
   app.put("/api/settings/t3", async (request) =>
     services.t3.connect(t3ConnectionSchema.parse(request.body)),

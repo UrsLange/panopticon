@@ -81,6 +81,11 @@ export type ProfileDocument = {
 };
 export type AssistantReply = { answer: string; sources: string[] };
 export type Settings = {
+  credentialSources: {
+    source: "saved" | "environment" | "file";
+    endpoint: string;
+    path?: string;
+  }[];
   entra: PublicEntraConfig;
   aiConfigured: boolean;
   model: string;

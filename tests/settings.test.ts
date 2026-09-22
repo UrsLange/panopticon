@@ -72,10 +72,65 @@ it("reads a file-backed default only for its intended endpoint", async () => {
   expect(settings.credentials({ baseURL: "https://model.example/v1", model: "" }).apiKey).toBe(
     "fixture-secret",
   );
+  expect(settings.credentialSources()).toEqual([
+    { source: "file", endpoint: "https://litellm.jobrad.tech/v1", path: keyFile },
+  ]);
   expect(() => settings.credentials({ baseURL: "https://other.example/v1", model: "" })).toThrow(
     "No API key",
   );
   expect(JSON.stringify(settings.connection())).not.toContain("fixture-secret");
+  expect(JSON.stringify(settings.credentialSources())).not.toContain("fixture-secret");
+  writeFileSync(keyFile, "");
+  expect(settings.credentialSources()).toEqual([]);
+});
+
+it("reports credential precedence without exposing keys", async () => {
+  const { settings, defaults } = await fixture();
+  expect(settings.credentialSources()).toEqual([
+    { source: "environment", endpoint: defaults.baseURL },
+  ]);
+  settings.saveValidated(
+    { baseURL: defaults.baseURL, model: "test-model", apiKey: "private-key" },
+    defaults.baseURL,
+  );
+  expect(settings.credentialSources()).toEqual([
+    { source: "saved", endpoint: defaults.baseURL },
+    { source: "environment", endpoint: defaults.baseURL },
+  ]);
+});
+
+it("returns folder selections and cancellation without saving, and rejects cross-origin requests", async () => {
+  const { settings, defaults } = await fixture();
+  let selected: string | null = defaults.profileDir;
+  let calls = 0;
+  const app = createApp({
+    settings,
+    chooseDirectory: async () => {
+      calls++;
+      return selected;
+    },
+  });
+  cleanup.push(() => app.close());
+  const request = {
+    method: "POST" as const,
+    url: "/api/settings/directory",
+    headers: { host: "127.0.0.1:4317" },
+    payload: {},
+  };
+  expect((await app.inject(request)).json()).toEqual({ path: selected });
+  selected = null;
+  expect((await app.inject(request)).json()).toEqual({ path: null });
+  expect(settings.projectRoots).toEqual([]);
+  expect(
+    (
+      await app.inject({
+        ...request,
+        headers: { ...request.headers, origin: "https://example.com" },
+      })
+    ).statusCode,
+  ).toBe(403);
+  expect((await app.inject({ ...request, payload: undefined })).statusCode).toBe(415);
+  expect(calls).toBe(2);
 });
 
 it("onboards an independent profile and never returns the saved API key", async () => {
