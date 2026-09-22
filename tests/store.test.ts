@@ -16,19 +16,47 @@ afterEach(() => {
 });
 
 describe("capture and planning", () => {
+  it("migrates existing descriptions and history to prompts without losing content", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pa-prompt-migration-")), "assistant.sqlite");
+    const original = new Store(path);
+    const item = original.capture("Original input");
+    original.update(item.id, { prompt: "Existing description" }, 0);
+    original.update(item.id, { prompt: "Revised description" }, 1);
+    original.db.exec(`
+      ALTER TABLE items RENAME COLUMN prompt TO refinedDescription;
+      UPDATE item_history SET snapshot = json_remove(
+        json_set(snapshot, '$.refinedDescription', json_extract(snapshot, '$.prompt')),
+        '$.prompt'
+      );
+    `);
+    original.db.close();
+    const migrated = new Store(path);
+    expect(migrated.get(item.id)).toMatchObject({
+      prompt: "Revised description",
+      original: "Original input",
+      body: "Original input",
+      revision: 2,
+    });
+    expect(migrated.get(item.id)).not.toHaveProperty("refinedDescription");
+    expect(migrated.history(item.id).map(({ item }) => item.prompt)).toEqual([
+      "Existing description",
+      "",
+    ]);
+    migrated.db.close();
+    const reopened = new Store(path);
+    stores.push(reopened);
+    expect(reopened.get(item.id)?.prompt).toBe("Revised description");
+    expect(reopened.history(item.id)[0].item.prompt).toBe("Existing description");
+  });
   it("migrates and persists refined descriptions without changing capture text or references", () => {
     const path = join(mkdtempSync(join(tmpdir(), "pa-description-")), "assistant.sqlite");
     const original = new Store(path);
     const item = original.capture("Review onboarding");
-    original.db.exec("ALTER TABLE items DROP COLUMN refinedDescription");
+    original.db.exec("ALTER TABLE items DROP COLUMN prompt");
     original.db.close();
     const migrated = new Store(path);
-    expect(migrated.get(item.id)?.refinedDescription).toBe("");
-    migrated.update(
-      item.id,
-      { refinedDescription: "Verify invitation acceptance in Chromium." },
-      0,
-    );
+    expect(migrated.get(item.id)?.prompt).toBe("");
+    migrated.update(item.id, { prompt: "Verify invitation acceptance in Chromium." }, 0);
     migrated.db.close();
     const reopened = new Store(path);
     stores.push(reopened);
@@ -36,9 +64,9 @@ describe("capture and planning", () => {
       original: "Review onboarding",
       body: "Review onboarding",
       references: [],
-      refinedDescription: "Verify invitation acceptance in Chromium.",
+      prompt: "Verify invitation acceptance in Chromium.",
     });
-    expect(reopened.history(item.id)[0].item.refinedDescription).toBe("");
+    expect(reopened.history(item.id)[0].item.prompt).toBe("");
     expect(reopened.search("Chromium").map((item) => item.id)).toContain(item.id);
   });
   it("reopens legacy completed notes for incorporation and preserves completion after migration", () => {

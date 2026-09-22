@@ -24,7 +24,7 @@ it("uses Responses structured outputs and limits returned citations to supplied 
             needsClarification: false,
             updateProfile: false,
             referenceIds: [],
-            refinedDescription: "Explore inviting a colleague to onboarding.",
+            prompt: "Explore inviting a colleague to onboarding.",
             sources: [],
           }
         : { answer: "You sponsor Activation.", sources: ["profile.md", "invented.md"] };

@@ -33,7 +33,7 @@ function setup() {
       rationale: "Profile context",
       needsClarification: false,
       referenceIds: [],
-      refinedDescription: "",
+      prompt: "",
       sources: [],
       updateProfile: text.startsWith("note:"),
     })),
@@ -152,7 +152,7 @@ it.each(["idea", "commitment", "unclear"])(
       needsClarification: kind === "unclear",
       referenceIds: [],
       updateProfile: true,
-      refinedDescription: "",
+      prompt: "",
       sources: [],
     });
     const note = store.capture("note: ask Benni tomorrow");

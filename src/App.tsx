@@ -143,7 +143,7 @@ export function App() {
     (item) =>
       (showClosed || !["done", "archived"].includes(item.status)) &&
       (view !== "notebook" || ["idea", "note"].includes(item.kind)) &&
-      `${item.title} ${item.body} ${item.refinedDescription} ${item.project}`
+      `${item.title} ${item.body} ${item.prompt} ${item.project}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
@@ -645,7 +645,7 @@ function ItemEditor({
   const [fields, setFields] = useState<ItemFields>({
     title: item.title,
     body: item.body,
-    refinedDescription: item.refinedDescription,
+    prompt: item.prompt,
     kind: item.kind,
     status: item.status,
     project: item.project,
@@ -800,10 +800,10 @@ function ItemEditor({
           <textarea
             aria-label="Description"
             rows={7}
-            value={fields.refinedDescription}
+            value={fields.prompt}
             maxLength={30000}
             placeholder="Supporting details will appear here after refinement."
-            onChange={(event) => setFields({ ...fields, refinedDescription: event.target.value })}
+            onChange={(event) => setFields({ ...fields, prompt: event.target.value })}
           />
         </label>
         <label className="field">
@@ -894,7 +894,7 @@ function ItemEditor({
             history.map((entry) => (
               <div key={entry.item.revision} className="history-entry">
                 <strong>{entry.item.title}</strong>
-                {entry.item.refinedDescription && <pre>{entry.item.refinedDescription}</pre>}
+                {entry.item.prompt && <pre>{entry.item.prompt}</pre>}
                 <p>
                   {entry.item.kind} · {entry.item.status} ·{" "}
                   {new Date(entry.changedAt).toLocaleString()}

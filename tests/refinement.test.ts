@@ -40,7 +40,7 @@ const interpretation = {
   rationale: "Supported by prior work.",
   needsClarification: false,
   updateProfile: false,
-  refinedDescription: "Review the onboarding invitation flow and verify it in a browser.",
+  prompt: "Review the onboarding invitation flow and verify it in a browser.",
   sources: ["rules.md", "project:one/README.md", "ctx:abcdef12"],
 };
 const message = (value: unknown) => ({

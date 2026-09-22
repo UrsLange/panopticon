@@ -135,7 +135,7 @@ describe("local API", () => {
           referenceIds: context.candidates
             .filter((candidate) => candidate.available)
             .map((candidate) => candidate.id),
-          refinedDescription: "",
+          prompt: "",
           sources: [],
         };
       },
@@ -219,7 +219,7 @@ describe("local API", () => {
         needsClarification: false,
         updateProfile: false,
         referenceIds: ["invented"],
-        refinedDescription: "",
+        prompt: "",
         sources: [],
       }),
       ask: async () => ({ answer: "", sources: [] }),
@@ -249,7 +249,7 @@ describe("local API", () => {
         needsClarification: false,
         updateProfile: false,
         referenceIds: context.candidates.map((candidate) => candidate.id),
-        refinedDescription: "",
+        prompt: "",
         sources: [],
       }),
       ask: async () => ({ answer: "", sources: [] }),
@@ -377,7 +377,7 @@ describe("local API", () => {
           needsClarification: false,
           updateProfile: false,
           referenceIds: [],
-          refinedDescription: "",
+          prompt: "",
           sources: [],
         };
       },

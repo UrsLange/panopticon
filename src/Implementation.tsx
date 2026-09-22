@@ -43,7 +43,7 @@ export function Implementation({
   const ready =
     item.processing === "ready" &&
     !item.processingError &&
-    !!item.refinedDescription.trim() &&
+    !!item.prompt.trim() &&
     ["open", "waiting"].includes(item.status);
   const start = () =>
     run(async () => {

@@ -35,7 +35,7 @@ function fixture() {
     {
       kind: "commitment",
       processing: "ready",
-      refinedDescription: "Search titles and show matching results.",
+      prompt: "Search titles and show matching results.",
       references: [
         {
           start: 10,
@@ -108,7 +108,7 @@ it("routes exact references, sends saved context, and leaves the commitment open
   const launched = await service.implement(item.id, { revision: item.revision });
   const entry = store.latestImplementation(item.id, "/profile");
   assert(entry);
-  expect(entry.prompt).toContain(item.refinedDescription);
+  expect(entry.prompt).toContain(item.prompt);
   expect(entry.prompt).toContain("Use the existing search index.");
   expect(entry.prompt).not.toContain("Unrelated personal context");
   expect(launched?.url).toBe("http://127.0.0.1:3773/local/id-1");
@@ -176,7 +176,7 @@ it("resumes the persisted handoff after a restart without changing its task or I
   const pending = store.latestImplementation(item.id, "/profile");
   assert(pending);
   expect(pending.error).not.toContain("private-token");
-  store.update(item.id, { refinedDescription: "A later edit" }, item.revision);
+  store.update(item.id, { prompt: "A later edit" }, item.revision);
   await createT3(ports).implement(item.id, { revision: item.revision });
   const retried = vi.mocked(client.launch).mock.calls[1][1];
   expect(retried.id).toBe(pending.id);
@@ -232,7 +232,7 @@ it("preserves a working connection when reconnection fails and isolates pending 
 it("rechecks the item revision after network reads before authorizing a handoff", async () => {
   const { service, item, client, store } = fixture();
   vi.mocked(client.projects).mockImplementationOnce(async () => {
-    store.update(item.id, { refinedDescription: "Changed during connection" }, item.revision);
+    store.update(item.id, { prompt: "Changed during connection" }, item.revision);
     return [];
   });
   await expect(service.implement(item.id, { revision: item.revision })).rejects.toThrow("changed");

@@ -73,7 +73,7 @@ function fixture() {
       needsClarification: false,
       updateProfile: false,
       referenceIds: [],
-      refinedDescription: "",
+      prompt: "",
       sources: [],
     })),
     updateProfile: vi.fn<Assistant["updateProfile"]>(async () => ({
@@ -217,14 +217,14 @@ it("does not overwrite a concurrent manual edit with an obsolete interpretation"
   const item = f.captures.capture("Original");
   f.captures.edit(
     item.id,
-    { title: "Manual title", refinedDescription: "My manual details" },
+    { title: "Manual title", prompt: "My manual details" },
     item.revision,
   );
   gate.resolve(result);
   await f.captures.close();
   expect(f.store.get(item.id)).toMatchObject({
     title: "Manual title",
-    refinedDescription: "My manual details",
+    prompt: "My manual details",
     original: "Original",
     revision: 1,
     processingError: null,
@@ -239,7 +239,7 @@ it("saves researched descriptions and actual sources while retaining the origina
     ...base,
     kind: "commitment",
     project: "Activation",
-    refinedDescription: "Verify the invitation flow in a browser.",
+    prompt: "Verify the invitation flow in a browser.",
     sources: ["rules.md", "project:activation/README.md", "ctx:abcdef12"],
     needsClarification: true,
     rationale: "Which release should this target?",
@@ -250,18 +250,18 @@ it("saves researched descriptions and actual sources while retaining the origina
     original: "Review onboarding",
     body: "Review onboarding",
     dueDate: null,
-    refinedDescription: "Verify the invitation flow in a browser.",
+    prompt: "Verify the invitation flow in a browser.",
     sourcePaths: ["rules.md", "project:activation/README.md", "ctx:abcdef12"],
     processing: "review",
     rationale: "Which release should this target?",
   });
   const saved = f.store.get(item.id);
   if (!saved) throw new Error("Missing test capture");
-  f.captures.edit(saved.id, { refinedDescription: "My reviewed description" }, saved.revision);
+  f.captures.edit(saved.id, { prompt: "My reviewed description" }, saved.revision);
   const latest = f.store.get(item.id);
   if (!latest) throw new Error("Missing edited capture");
   await f.captures.retry(latest.id, { resetReferences: true, revision: latest.revision });
-  expect(f.store.get(item.id)?.refinedDescription).toBe("My reviewed description");
+  expect(f.store.get(item.id)?.prompt).toBe("My reviewed description");
   expect(f.store.get(item.id)?.sourcePaths).toEqual(saved.sourcePaths);
 });
 

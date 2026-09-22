@@ -14,7 +14,7 @@ export const dateSchema = z
 export const itemFieldsSchema = z.object({
   title: z.string().trim().min(1).max(300),
   body: z.string().max(30000),
-  refinedDescription: z.string().max(30000),
+  prompt: z.string().max(30000),
   kind: kindSchema,
   status: statusSchema,
   project: z.string().max(200),
@@ -57,7 +57,7 @@ export type Item = ItemFields & {
 };
 
 export const interpretationSchema = z.object({
-  refinedDescription: z.string().max(30000),
+  prompt: z.string().max(30000),
   sources: z.array(z.string()),
   referenceIds: z.array(z.string()),
   title: z.string(),

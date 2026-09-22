@@ -35,7 +35,7 @@ export function capturedItem(text: string, id: string, now: string): Item {
     sourcePaths: [],
     references: [],
     profilePath: null,
-    refinedDescription: "",
+    prompt: "",
   };
 }
 export function revisedItem(
@@ -80,7 +80,7 @@ export function relatedItems(items: Item[], query: string, limit = 8) {
         (n, term) =>
           n +
           Number(
-            `${item.title} ${item.body} ${item.refinedDescription} ${item.project} ${item.references.map((reference) => `${reference.target} ${reference.label}`).join(" ")}`
+            `${item.title} ${item.body} ${item.prompt} ${item.project} ${item.references.map((reference) => `${reference.target} ${reference.label}`).join(" ")}`
               .toLowerCase()
               .includes(term),
           ),

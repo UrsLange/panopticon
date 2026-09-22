@@ -573,7 +573,7 @@ it("includes selected people for captures and conversation follow-ups, and recor
         needsClarification: false,
         updateProfile: false,
         referenceIds: [],
-        refinedDescription: "",
+        prompt: "",
         sources: ["people"],
       };
     },
@@ -639,7 +639,7 @@ it("clarifies ambiguous people through existing review and persists a corrected 
         needsClarification: false,
         updateProfile: false,
         referenceIds: context.candidates.slice(0, 1).map((candidate) => candidate.id),
-        refinedDescription: "Discuss onboarding.",
+        prompt: "Discuss onboarding.",
         sources: ["people"],
       };
     },

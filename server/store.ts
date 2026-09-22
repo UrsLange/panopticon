@@ -75,14 +75,18 @@ export class Store {
         FOREIGN KEY (profilePath, tenantId) REFERENCES people_directories(profilePath, tenantId)
       );
     `);
-    if (
-      !this.db
-        .prepare("PRAGMA table_info(items)")
-        .all()
-        .some((column) => column.name === "refinedDescription")
-    ) {
-      this.db.exec("ALTER TABLE items ADD COLUMN refinedDescription TEXT NOT NULL DEFAULT ''");
+    const columns = this.db.prepare("PRAGMA table_info(items)").all();
+    if (!columns.some((column) => column.name === "prompt")) {
+      this.db.exec(
+        columns.some((column) => column.name === "refinedDescription")
+          ? "ALTER TABLE items RENAME COLUMN refinedDescription TO prompt"
+          : "ALTER TABLE items ADD COLUMN prompt TEXT NOT NULL DEFAULT ''",
+      );
     }
+    this.db.exec(`UPDATE item_history SET snapshot = json_remove(
+      json_set(snapshot, '$.prompt', COALESCE(json_extract(snapshot, '$.refinedDescription'), '')),
+      '$.refinedDescription'
+    ) WHERE json_type(snapshot, '$.prompt') IS NULL`);
     if (
       !this.db
         .prepare("PRAGMA table_info(items)")
@@ -242,7 +246,7 @@ export class Store {
     this.db
       .prepare(`INSERT INTO items
       (id, original, title, body, kind, status, project, dueDate, priority, relatedId,
-       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, refinedDescription)
+       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         ...Object.values({
@@ -282,7 +286,7 @@ export class Store {
       this.db
         .prepare(`UPDATE items SET title=?, body=?, kind=?, status=?, project=?, dueDate=?,
         priority=?, relatedId=?, updatedAt=?, revision=?, processing=?, processingError=?,
-        rationale=?, sourcePaths=?, "references"=?, profilePath=?, refinedDescription=? WHERE id=?`)
+        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=? WHERE id=?`)
         .run(
           next.title,
           next.body,
@@ -300,7 +304,7 @@ export class Store {
           JSON.stringify(next.sourcePaths),
           JSON.stringify(next.references),
           next.profilePath,
-          next.refinedDescription,
+          next.prompt,
           id,
         );
       this.db.exec("COMMIT");
