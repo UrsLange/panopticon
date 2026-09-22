@@ -48,9 +48,7 @@ export function implementationPrompt(
     `## Notes\n${item.body}`,
     ...(item.original !== item.body ? [`## Original request\n${item.original}`] : []),
     `## Context\nProject: ${item.project || "Selected repository"}\nPriority: ${item.priority}\nDue date: ${item.dueDate ?? "Not set"}\nPanopticon commitment: ${item.id}, revision ${item.revision}`,
-    ...(related
-      ? [`## Related item: ${related.title}\n${related.prompt}\n${related.body}`]
-      : []),
+    ...(related ? [`## Related item: ${related.title}\n${related.prompt}\n${related.body}`] : []),
     ...(item.references.length
       ? [
           `## Resolved references\n${item.references.map((ref) => `${ref.mention}: ${ref.label} (${ref.kind}, ${ref.target})`).join("\n")}`,

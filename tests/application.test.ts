@@ -215,11 +215,7 @@ it("does not overwrite a concurrent manual edit with an obsolete interpretation"
   const gate = deferred<typeof result>();
   vi.mocked(f.assistant.interpret).mockReturnValue(gate.promise);
   const item = f.captures.capture("Original");
-  f.captures.edit(
-    item.id,
-    { title: "Manual title", prompt: "My manual details" },
-    item.revision,
-  );
+  f.captures.edit(item.id, { title: "Manual title", prompt: "My manual details" }, item.revision);
   gate.resolve(result);
   await f.captures.close();
   expect(f.store.get(item.id)).toMatchObject({
