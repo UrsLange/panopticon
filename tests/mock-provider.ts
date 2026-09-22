@@ -99,7 +99,8 @@ export function mockProvider() {
             prompt: `Implement: ${payload.capture}`,
             sources: [],
             kind: explicitNote || implicitNote ? "note" : "idea",
-            project: "",
+            project:
+              payload.capture === "Implement project search in T3 Code" ? "example-project" : "",
             dueDate: null,
             priority: "normal",
             relatedId: null,

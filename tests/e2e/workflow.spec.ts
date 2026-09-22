@@ -576,9 +576,30 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
     ],
     { stdio: "ignore" },
   );
-  await page
-    .getByLabel("Implementation repository", { exact: true })
-    .selectOption(projects.projects[0].id);
+  await expect(page.getByLabel("Implementation repository", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText(`Implementation repository: ${projects.projects[0].path}`, { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeEnabled();
+  const items = await (await request.get("/api/items")).json();
+  const commitment = items.find(
+    (item: { title: string }) => item.title === "Implement project search in T3 Code",
+  );
+  expect(commitment.repositoryId).toBe(projects.projects[0].id);
+  await request.patch(`/api/items/${commitment.id}`, {
+    data: { revision: commitment.revision, project: "Unresolved project" },
+  });
+  await expect(page.getByLabel("Implementation repository", { exact: true })).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeDisabled();
+  await request.patch(`/api/items/${commitment.id}`, {
+    data: { revision: commitment.revision + 1, project: "example-project" },
+  });
+  await expect(page.getByLabel("Implementation repository", { exact: true })).toHaveCount(0, {
+    timeout: 10000,
+  });
+  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeEnabled();
   await page.getByLabel("Prompt", { exact: true }).fill("Unsaved implementation change");
   await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeDisabled();
   await page

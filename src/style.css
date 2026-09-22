@@ -797,6 +797,7 @@ footer {
 }
 .implementation > p {
   margin: 10px 0;
+  overflow-wrap: anywhere;
 }
 .t3-settings .modal-actions {
   flex-wrap: wrap;

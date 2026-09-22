@@ -985,7 +985,13 @@ function ItemEditor({
           </button>
         </div>
         {item.kind === "commitment" && (
-          <Implementation item={item} dirty={dirty} busy={busy} run={run} />
+          <Implementation
+            key={`${item.id}:${item.revision}`}
+            item={item}
+            dirty={dirty}
+            busy={busy}
+            run={run}
+          />
         )}
       </form>
     </dialog>

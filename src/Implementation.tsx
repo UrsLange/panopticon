@@ -40,6 +40,9 @@ export function Implementation({
   if (!options?.configured && !options?.latest) return null;
   const latest = options.latest;
   const pending = latest?.state === "pending";
+  const resolvedRepository = options.repositories.find(
+    (repository) => repository.id === options.suggestedRepositoryId,
+  );
   const ready =
     item.processing === "ready" &&
     !item.processingError &&
@@ -78,7 +81,10 @@ export function Implementation({
       {latest?.error && <p className="warning-text">{latest.error}</p>}
       {options.configured && (
         <>
-          {!pending && (
+          {!pending && resolvedRepository && (
+            <p className="muted-text">Implementation repository: {resolvedRepository.path}</p>
+          )}
+          {!pending && !resolvedRepository && (
             <label className="field">
               Implementation repository
               <select
