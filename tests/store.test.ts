@@ -16,6 +16,22 @@ afterEach(() => {
 });
 
 describe("capture and planning", () => {
+  it("migrates repository associations and preserves them across restarts and history", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pa-repository-")), "assistant.sqlite");
+    const original = new Store(path);
+    const item = original.capture("Implement portal search");
+    original.db.exec("ALTER TABLE items DROP COLUMN repositoryId");
+    original.db.close();
+    const migrated = new Store(path);
+    expect(migrated.get(item.id)?.repositoryId).toBeNull();
+    migrated.update(item.id, { repositoryId: "portal" }, 0);
+    migrated.update(item.id, { title: "Search" }, 1);
+    migrated.db.close();
+    const reopened = new Store(path);
+    stores.push(reopened);
+    expect(reopened.get(item.id)?.repositoryId).toBe("portal");
+    expect(reopened.history(item.id)[0].item.repositoryId).toBe("portal");
+  });
   it("migrates existing descriptions and history to prompts without losing content", () => {
     const path = join(mkdtempSync(join(tmpdir(), "pa-prompt-migration-")), "assistant.sqlite");
     const original = new Store(path);

@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, assert, expect, it, vi } from "vitest";
+import type { ImplementationRepository } from "../server/application/implementation-repository.js";
 import { createT3, type T3Client } from "../server/application/t3.js";
 import { createApp } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
@@ -70,7 +71,7 @@ function fixture() {
       hash: "2",
     },
   ];
-  const repositories = [
+  const repositories: ImplementationRepository[] = [
     { id: "repo", name: "portal", path: "/repos/portal", document: "portal.md" },
   ];
   const client: T3Client = {
@@ -130,6 +131,40 @@ it("requires selection for ambiguous references and never matches a project by n
   );
   await service.implement(item.id, { revision: item.revision, repositoryId: "second" });
   expect(store.latestImplementation(item.id, "/profile")?.workspaceRoot).toBe("/another/portal");
+});
+
+it.each(["portal", "Portal", "portal.md", "/repos/portal"])(
+  "routes an existing commitment's exact project %s without alias references",
+  async (project) => {
+    const { service, store, item, ports } = fixture();
+    const saved = store.update(item.id, { project, references: [] }, item.revision);
+    expect(service.options(item.id).suggestedRepositoryId).toBe("repo");
+    await service.implement(item.id, { revision: saved.revision });
+    expect(ports.workspace).toHaveBeenCalledWith("/repos/portal");
+  },
+);
+
+it("does not guess between duplicate project names or use a previous handoff after a project change", async () => {
+  const { service, store, item, repositories } = fixture();
+  await service.implement(item.id, { revision: item.revision });
+  repositories.push({ id: "second", name: "portal", path: "/another/portal", document: null });
+  const changed = store.update(item.id, { project: "portal", references: [] }, item.revision);
+  expect(service.options(item.id).suggestedRepositoryId).toBeNull();
+  store.update(item.id, { project: "unknown" }, changed.revision);
+  expect(service.options(item.id).suggestedRepositoryId).toBeNull();
+});
+
+it("uses a persisted repository identity and does not reroute it when unavailable", async () => {
+  const { service, store, item, repositories } = fixture();
+  const saved = store.update(
+    item.id,
+    { repositoryId: "repo", project: "Old name", references: [] },
+    item.revision,
+  );
+  expect(service.options(item.id).suggestedRepositoryId).toBe("repo");
+  await service.implement(item.id, { revision: saved.revision });
+  repositories.splice(0);
+  expect(service.options(item.id).suggestedRepositoryId).toBeNull();
 });
 
 it("reuses a project and its full model selection, including options", async () => {

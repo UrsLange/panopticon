@@ -11,7 +11,13 @@ export type ItemChanges = Partial<ItemFields> &
   Partial<
     Pick<
       Item,
-      "processing" | "processingError" | "rationale" | "sourcePaths" | "references" | "profilePath"
+      | "processing"
+      | "processingError"
+      | "rationale"
+      | "sourcePaths"
+      | "references"
+      | "profilePath"
+      | "repositoryId"
     >
   >;
 

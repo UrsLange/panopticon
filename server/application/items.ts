@@ -36,6 +36,7 @@ export function capturedItem(text: string, id: string, now: string): Item {
     references: [],
     profilePath: null,
     prompt: "",
+    repositoryId: null,
   };
 }
 export function revisedItem(

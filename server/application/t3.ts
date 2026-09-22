@@ -8,6 +8,10 @@ import type {
   T3Status,
 } from "../../shared/t3.js";
 import { ApplicationError } from "./errors.js";
+import {
+  type ImplementationRepository,
+  resolveImplementationRepository,
+} from "./implementation-repository.js";
 import { assertRevision } from "./items.js";
 import type { ProfileNotes } from "./ports.js";
 
@@ -23,12 +27,6 @@ export interface ImplementationRecords {
   latestImplementation(itemId: string, profileRoot: string): Implementation | null;
   saveImplementation(implementation: Implementation): void;
 }
-export type ImplementationRepository = {
-  id: string;
-  name: string;
-  path: string;
-  document: string | null;
-};
 
 export function createT3({
   records,
@@ -78,19 +76,12 @@ export function createT3({
     if (!item) throw new ApplicationError("not-found", "Item not found");
     const latest = records.latestImplementation(itemId, getProfile().root);
     const available = repositories();
-    const targets = new Set(
-      item.references.filter((ref) => ref.kind !== "person").map((ref) => ref.target),
-    );
-    const matches = available.filter((repo) => repo.document && targets.has(repo.document));
     return {
       configured: status().configured,
       repositories: available,
-      suggestedRepositoryId:
-        latest && available.some((repo) => repo.id === latest.repositoryId)
-          ? latest.repositoryId
-          : matches.length === 1
-            ? matches[0].id
-            : null,
+      suggestedRepositoryId: item.repositoryId
+        ? (available.find((repo) => repo.id === item.repositoryId)?.id ?? null)
+        : resolveImplementationRepository(item, available, getProfile().documents()),
       latest: summary(latest),
     };
   };

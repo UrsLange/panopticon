@@ -1,5 +1,5 @@
 import { ZodError } from "zod";
-import { type ItemFields, itemFieldsSchema } from "../../shared/schema.js";
+import { type Item, type ItemFields, itemFieldsSchema } from "../../shared/schema.js";
 import { resolveReferences, retainReferences } from "./aliases.js";
 import type { Assistant } from "./assistant.js";
 import type { createContext } from "./context.js";
@@ -13,12 +13,14 @@ export function createCaptures({
   context,
   notes,
   today,
+  resolveRepository,
 }: {
   store: CaptureStorage;
   getAssistant: () => Assistant | null;
   context: ReturnType<typeof createContext>;
   notes: ReturnType<typeof createProfileUpdates>;
   today: () => string;
+  resolveRepository(item: Pick<Item, "project" | "references">): string | null;
 }) {
   const processing = new Map<string, Promise<void>>();
   const mergeNote = notes.merge;
@@ -76,6 +78,7 @@ export function createCaptures({
           {
             ...(referencesOnly ? {} : fields),
             references,
+            repositoryId: resolveRepository({ ...(referencesOnly ? item : fields), references }),
             processing:
               interpreted.needsClarification ||
               (referencesOnly ? item.kind : fields.kind) === "note"
@@ -145,7 +148,7 @@ export function createCaptures({
         await processing.get(item.id);
         store.update(
           item.id,
-          { references: [], processing: "pending", processingError: null },
+          { references: [], repositoryId: null, processing: "pending", processingError: null },
           input.revision,
         );
       } else if (
@@ -177,6 +180,11 @@ export function createCaptures({
         id,
         {
           ...fields,
+          repositoryId: bodyChanged
+            ? null
+            : fields.project !== undefined && fields.project !== current.project
+              ? resolveRepository({ project: fields.project, references: [] })
+              : current.repositoryId,
           processing: bodyChanged
             ? "pending"
             : (fields.kind ?? current.kind) === "note" &&

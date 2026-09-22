@@ -2,6 +2,7 @@ import { assert, expect, it, vi } from "vitest";
 import type { Assistant, AssistantContext } from "../server/application/assistant.js";
 import { createCaptures } from "../server/application/captures.js";
 import { createConversation } from "../server/application/conversation.js";
+import { resolveImplementationRepository } from "../server/application/implementation-repository.js";
 import { capturedItem, dailyCommitments, revisedItem } from "../server/application/items.js";
 import { createModelConnection } from "../server/application/model-connection.js";
 import type { CaptureStorage, Message, ProfileNotes } from "../server/application/ports.js";
@@ -98,6 +99,15 @@ function fixture() {
     context: contextQuery,
     notes,
     today: () => context.today,
+    resolveRepository: (item) =>
+      resolveImplementationRepository(
+        item,
+        [
+          { id: "activation", name: "Activation", path: "/repos/activation", document: null },
+          { id: "portal", name: "Portal", path: "/repos/portal", document: null },
+        ],
+        [],
+      ),
   });
   const note = (text = "note: keep changes focused") => {
     const item = store.capture(text);
@@ -261,6 +271,30 @@ it("saves researched prompts and actual sources while retaining the original cap
   await f.captures.retry(latest.id, { resetReferences: true, revision: latest.revision });
   expect(f.store.get(item.id)?.prompt).toBe("My reviewed description");
   expect(f.store.get(item.id)?.sourcePaths).toEqual(saved.sourcePaths);
+});
+
+it("persists the refined repository and clears or replaces it when the project changes", async () => {
+  const f = fixture();
+  const base = await f.assistant.interpret("", context);
+  vi.mocked(f.assistant.interpret).mockResolvedValue({
+    ...base,
+    kind: "commitment",
+    project: "Activation",
+    prompt: "Implement activation",
+  });
+  const item = f.captures.capture("Implement activation");
+  await f.captures.close();
+  const saved = f.store.get(item.id);
+  assert(saved);
+  expect(saved.repositoryId).toBe("activation");
+  const edited = f.captures.edit(item.id, { project: "Portal" }, saved.revision);
+  expect(edited.repositoryId).toBe("portal");
+  const unresolved = f.captures.edit(item.id, { project: "Unknown" }, edited.revision);
+  expect(unresolved.repositoryId).toBeNull();
+  const pending = f.captures.edit(item.id, { body: "A different task" }, unresolved.revision);
+  expect(pending.repositoryId).toBeNull();
+  await f.captures.close();
+  expect(f.store.get(item.id)?.repositoryId).toBe("activation");
 });
 
 it("regenerates the full interpretation after input edits but preserves prompt-only edits", async () => {

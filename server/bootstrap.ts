@@ -9,6 +9,7 @@ import type { Assistant } from "./application/assistant.js";
 import { createCaptures } from "./application/captures.js";
 import { createContext } from "./application/context.js";
 import { createConversation } from "./application/conversation.js";
+import { resolveImplementationRepository } from "./application/implementation-repository.js";
 import type { PeopleSync } from "./application/people-sync.js";
 import { createPreferences } from "./application/preferences.js";
 import { createProfileService } from "./application/profile.js";
@@ -89,7 +90,24 @@ export function createApplication(options: AppOptions = {}) {
     discoveryRunning: () => scanner.isRunning(),
   });
 
-  const captures = createCaptures({ store, getAssistant, context, notes, today });
+  const repositories = () =>
+    scanner
+      .status()
+      .projects.filter(
+        (project) =>
+          project.availability === "available" &&
+          settings.projectRoots.includes(project.root) &&
+          resolve(project.root, project.name) === resolve(project.path),
+      );
+  const captures = createCaptures({
+    store,
+    getAssistant,
+    context,
+    notes,
+    today,
+    resolveRepository: (item) =>
+      resolveImplementationRepository(item, repositories(), profileNotes.documents()),
+  });
   const profiles = createProfileService(() => profileNotes);
   const conversation = createConversation({ store, getAssistant, context, searchSessions });
   const t3 = createT3({
@@ -97,15 +115,7 @@ export function createApplication(options: AppOptions = {}) {
     settings,
     client: options.t3Client ?? createT3Client(),
     getProfile: () => profileNotes,
-    repositories: () =>
-      scanner
-        .status()
-        .projects.filter(
-          (project) =>
-            project.availability === "available" &&
-            settings.projectRoots.includes(project.root) &&
-            resolve(project.root, project.name) === resolve(project.path),
-        ),
+    repositories,
     workspace: implementationWorkspace,
     id: randomUUID,
     now: () => now().toISOString(),

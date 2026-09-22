@@ -76,6 +76,8 @@ export class Store {
       );
     `);
     const columns = this.db.prepare("PRAGMA table_info(items)").all();
+    if (!columns.some((column) => column.name === "repositoryId"))
+      this.db.exec("ALTER TABLE items ADD COLUMN repositoryId TEXT");
     if (!columns.some((column) => column.name === "prompt")) {
       this.db.exec(
         columns.some((column) => column.name === "refinedDescription")
@@ -246,8 +248,8 @@ export class Store {
     this.db
       .prepare(`INSERT INTO items
       (id, original, title, body, kind, status, project, dueDate, priority, relatedId,
-       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         ...Object.values({
           ...item,
@@ -270,6 +272,7 @@ export class Store {
           | "sourcePaths"
           | "references"
           | "profilePath"
+          | "repositoryId"
         >
       >,
     revision: number,
@@ -286,7 +289,7 @@ export class Store {
       this.db
         .prepare(`UPDATE items SET title=?, body=?, kind=?, status=?, project=?, dueDate=?,
         priority=?, relatedId=?, updatedAt=?, revision=?, processing=?, processingError=?,
-        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=? WHERE id=?`)
+        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=? WHERE id=?`)
         .run(
           next.title,
           next.body,
@@ -305,6 +308,7 @@ export class Store {
           JSON.stringify(next.references),
           next.profilePath,
           next.prompt,
+          next.repositoryId,
           id,
         );
       this.db.exec("COMMIT");

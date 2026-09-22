@@ -43,6 +43,7 @@ export function annotatedText(text: string, references: EntityReference[]) {
 }
 
 export type Item = ItemFields & {
+  repositoryId: string | null;
   references: EntityReference[];
   id: string;
   original: string;
