@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { assert, expect, it, vi } from "vitest";
 import type { Assistant, AssistantContext } from "../server/application/assistant.js";
 import { createCaptures } from "../server/application/captures.js";
 import { createConversation } from "../server/application/conversation.js";
@@ -91,10 +91,11 @@ function fixture() {
     timezone: () => "Europe/Berlin",
     discoveryRunning: () => discovery,
   });
+  const contextQuery = vi.fn(() => context);
   const captures = createCaptures({
     store,
     getAssistant: () => assistant,
-    context: () => context,
+    context: contextQuery,
     notes,
     today: () => context.today,
   });
@@ -107,6 +108,7 @@ function fixture() {
     assistant,
     notes,
     captures,
+    contextQuery,
     note,
     incorporate,
     switchProfile: () => {
@@ -228,7 +230,7 @@ it("does not overwrite a concurrent manual edit with an obsolete interpretation"
   expect(f.incorporate).not.toHaveBeenCalled();
 });
 
-it("saves researched descriptions and actual sources while retaining the original capture", async () => {
+it("saves researched prompts and actual sources while retaining the original capture", async () => {
   const f = fixture();
   const base = await f.assistant.interpret("", context);
   vi.mocked(f.assistant.interpret).mockResolvedValue({
@@ -259,6 +261,114 @@ it("saves researched descriptions and actual sources while retaining the origina
   await f.captures.retry(latest.id, { resetReferences: true, revision: latest.revision });
   expect(f.store.get(item.id)?.prompt).toBe("My reviewed description");
   expect(f.store.get(item.id)?.sourcePaths).toEqual(saved.sourcePaths);
+});
+
+it("regenerates the full interpretation after input edits but preserves prompt-only edits", async () => {
+  const f = fixture();
+  const base = await f.assistant.interpret("", context);
+  vi.mocked(f.assistant.interpret).mockResolvedValue({
+    ...base,
+    kind: "commitment",
+    title: "Original task",
+    prompt: "Original prompt",
+  });
+  const item = f.captures.capture("Original input");
+  await f.captures.close();
+  const before = f.store.get(item.id);
+  assert(before);
+  f.contextQuery.mockReturnValue({
+    ...context,
+    related: [before],
+    commitments: { ...context.commitments, due: [before], suggested: [before], waiting: [before] },
+  });
+  const gate = deferred<typeof base>();
+  vi.mocked(f.assistant.interpret).mockReturnValueOnce(gate.promise);
+  f.captures.edit(item.id, { body: "Updated input" }, before.revision);
+  expect(f.store.get(item.id)).toMatchObject({ processing: "pending", prompt: "Original prompt" });
+  gate.resolve({
+    ...base,
+    kind: "commitment",
+    title: "Updated task",
+    prompt: "Implement updated input",
+    sources: ["ctx:new"],
+  });
+  await f.captures.close();
+  const updated = f.store.get(item.id);
+  assert(updated);
+  expect(updated).toMatchObject({
+    original: "Original input",
+    body: "Updated input",
+    title: "Updated task",
+    prompt: "Implement updated input",
+    sourcePaths: ["ctx:new"],
+    processing: "ready",
+  });
+  expect(f.assistant.interpret).toHaveBeenLastCalledWith("Updated input", expect.anything());
+  expect(vi.mocked(f.assistant.interpret).mock.lastCall?.[1]).toMatchObject({
+    related: [],
+    commitments: { due: [], suggested: [], waiting: [] },
+  });
+  vi.mocked(f.assistant.interpret).mockClear();
+  f.captures.edit(item.id, { prompt: "My reviewed prompt" }, updated.revision);
+  await f.captures.close();
+  expect(f.store.get(item.id)?.prompt).toBe("My reviewed prompt");
+  expect(f.assistant.interpret).not.toHaveBeenCalled();
+});
+
+it("regenerates only the latest input when it changes during refinement", async () => {
+  const f = fixture();
+  const base = await f.assistant.interpret("", context);
+  const gate = deferred<typeof base>();
+  vi.mocked(f.assistant.interpret)
+    .mockClear()
+    .mockReturnValueOnce(gate.promise)
+    .mockResolvedValue({
+      ...base,
+      kind: "commitment",
+      prompt: "Latest prompt",
+    });
+  const item = f.captures.capture("Original input");
+  const first = f.captures.edit(item.id, { body: "Intermediate input" }, item.revision);
+  f.captures.edit(item.id, { body: "Latest input" }, first.revision);
+  gate.resolve({ ...base, prompt: "Obsolete prompt" });
+  await f.captures.close();
+  expect(f.store.get(item.id)).toMatchObject({
+    body: "Latest input",
+    prompt: "Latest prompt",
+    processing: "ready",
+    original: "Original input",
+  });
+  expect(vi.mocked(f.assistant.interpret).mock.calls.map(([input]) => input)).toEqual([
+    "Original input",
+    "Latest input",
+  ]);
+});
+
+it("marks explicit regeneration pending and preserves the previous prompt on failure", async () => {
+  const f = fixture();
+  const base = await f.assistant.interpret("", context);
+  const item = f.store.capture("Input");
+  const saved = f.store.update(
+    item.id,
+    { kind: "commitment", prompt: "Previous prompt", processing: "ready" },
+    item.revision,
+  );
+  const gate = deferred<typeof base>();
+  vi.mocked(f.assistant.interpret).mockReturnValueOnce(gate.promise);
+  const retry = f.captures.retry(item.id, { resetReferences: false, revision: saved.revision });
+  expect(f.store.get(item.id)?.processing).toBe("pending");
+  gate.resolve({ ...base, kind: "commitment", prompt: "Regenerated prompt" });
+  await retry;
+  const latest = f.store.get(item.id);
+  assert(latest);
+  expect(latest.prompt).toBe("Regenerated prompt");
+  vi.mocked(f.assistant.interpret).mockRejectedValueOnce(new Error("Unavailable"));
+  await f.captures.retry(item.id, { resetReferences: false, revision: latest.revision });
+  expect(f.store.get(item.id)).toMatchObject({
+    prompt: "Regenerated prompt",
+    processing: "pending",
+    processingError: expect.stringContaining("Interpretation failed"),
+  });
 });
 
 it("does not authorize a profile write during reference-only processing or manual completion", async () => {

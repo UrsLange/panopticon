@@ -116,7 +116,7 @@ describe("local API", () => {
     expect(readFileSync(index, "utf8")).not.toContain(registry.path);
   });
 
-  it("persists aliases, retrieves their targets, and resolves edited notes without replacing user fields", async () => {
+  it("persists aliases, retrieves their targets, and reinterprets edited input", async () => {
     const assistant: Assistant = {
       interpret: async (text, context) => {
         expect(
@@ -198,8 +198,8 @@ describe("local API", () => {
     await app.close();
     const final = store.get(item.id);
     if (!final) throw new Error("Missing edited item");
-    expect(final.title).toBe("My title");
-    expect(final.kind).toBe("commitment");
+    expect(final.title).toBe("Please ask about ghma tomorrow");
+    expect(final.kind).toBe("idea");
     expect(final.body).toBe("Please ask about ghma tomorrow");
     expect(final.original).toBe("Ask about ghma");
     expect(final.references[0]?.target).toBe(project.path);

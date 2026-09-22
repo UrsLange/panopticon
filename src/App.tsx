@@ -656,6 +656,7 @@ function ItemEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<{ item: Item; changedAt: string }[] | null>(null);
+  const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
   const previous = useRef(item);
   const dirty = (Object.keys(fields) as (keyof ItemFields)[]).some(
     (key) => fields[key] !== item[key],
@@ -796,26 +797,54 @@ function ItemEditor({
           </div>
         )}
         <label className="field">
-          Description
+          User input
           <textarea
-            aria-label="Description"
-            rows={7}
-            value={fields.prompt}
-            maxLength={30000}
-            placeholder="Supporting details will appear here after refinement."
-            onChange={(event) => setFields({ ...fields, prompt: event.target.value })}
-          />
-        </label>
-        <label className="field">
-          Notes
-          <textarea
-            aria-label="Notes"
+            aria-label="User input"
             rows={5}
             value={fields.body}
             maxLength={30000}
             onChange={(event) => setFields({ ...fields, body: event.target.value })}
           />
         </label>
+        <p className="muted-text">
+          Saving changed user input regenerates the prompt and interpretation.
+        </p>
+        <label className="field">
+          Prompt
+          <textarea
+            aria-label="Prompt"
+            rows={7}
+            value={fields.prompt}
+            maxLength={30000}
+            placeholder="A self-contained prompt will appear here after refinement."
+            onChange={(event) => setFields({ ...fields, prompt: event.target.value })}
+          />
+        </label>
+        {item.processing === "pending" && (
+          <p className="muted-text">
+            {item.processingError || !aiConfigured
+              ? "Prompt regeneration is pending. The previous prompt may be out of date."
+              : "Generating prompt… The previous prompt may be out of date."}
+          </p>
+        )}
+        <button
+          type="button"
+          className="secondary"
+          disabled={
+            busy ||
+            !fields.prompt.trim() ||
+            fields.body !== item.body ||
+            item.processing === "pending"
+          }
+          onClick={() => {
+            void run(async () => {
+              await navigator.clipboard.writeText(fields.prompt);
+              setCopiedPrompt(fields.prompt);
+            });
+          }}
+        >
+          {copiedPrompt === fields.prompt ? "Prompt copied" : "Copy prompt"}
+        </button>
         <label className="field">
           Related idea or item
           <select
@@ -929,7 +958,7 @@ function ItemEditor({
               <button
                 type="button"
                 className="secondary"
-                disabled={busy}
+                disabled={busy || dirty}
                 onClick={() => {
                   void run(() => onRetry(true));
                 }}
@@ -941,12 +970,12 @@ function ItemEditor({
             <button
               type="button"
               className="secondary"
-              disabled={busy}
+              disabled={busy || dirty}
               onClick={() => {
                 void run(onRetry);
               }}
             >
-              Reinterpret capture
+              Regenerate prompt
             </button>
           )}
           <button type="submit" className="primary" disabled={busy}>

@@ -22,7 +22,8 @@ export function createCaptures({
 }) {
   const processing = new Map<string, Promise<void>>();
   const mergeNote = notes.merge;
-  const processItem = (id: string, referencesOnly = false) => {
+  const processItem = (id: string, mode: "full" | "references" | "edited" = "full") => {
+    const referencesOnly = mode === "references";
     if (processing.has(id)) return processing.get(id);
     const task = (async () => {
       const item = store.get(id);
@@ -31,6 +32,13 @@ export function createCaptures({
         const assistant = getAssistant();
         if (!assistant) return;
         const evidence = context(item.body, [], item.references);
+        evidence.related = evidence.related.filter((related) => related.id !== id);
+        evidence.commitments = {
+          ...evidence.commitments,
+          due: evidence.commitments.due.filter((related) => related.id !== id),
+          suggested: evidence.commitments.suggested.filter((related) => related.id !== id),
+          waiting: evidence.commitments.waiting.filter((related) => related.id !== id),
+        };
         const interpreted = await assistant.interpret(item.body, evidence);
         const unresolved = evidence.candidates.filter(
           (candidate) => interpreted.referenceIds.includes(candidate.id) && !candidate.available,
@@ -50,6 +58,7 @@ export function createCaptures({
           ]
             .filter(Boolean)
             .join("\n\n");
+          interpreted.prompt += `\n\nClarify unresolved references before dependent work: ${unresolved.map((candidate) => candidate.mention).join(", ")}.`;
         }
         const references = resolveReferences(
           interpreted.referenceIds,
@@ -84,7 +93,7 @@ export function createCaptures({
           item.revision,
         );
         if (
-          !referencesOnly &&
+          mode === "full" &&
           updated.kind === "note" &&
           interpreted.updateProfile &&
           !interpreted.needsClarification
@@ -119,7 +128,7 @@ export function createCaptures({
     process: processItem,
     busy: () => processing.size > 0,
     close: async () => {
-      await Promise.all(processing.values());
+      while (processing.size) await Promise.all(processing.values());
     },
     async retry(id: string, input: { resetReferences: boolean; revision?: number }) {
       const item = store.get(id);
@@ -139,8 +148,17 @@ export function createCaptures({
           { references: [], processing: "pending", processingError: null },
           input.revision,
         );
+      } else if (
+        !processing.has(item.id) &&
+        (item.processing !== "pending" || item.processingError)
+      ) {
+        store.update(
+          item.id,
+          { processing: "pending", processingError: null },
+          input.revision ?? item.revision,
+        );
       }
-      await processItem(item.id, input.resetReferences);
+      await processItem(item.id, input.resetReferences ? "references" : "full");
       return store.get(item.id);
     },
     edit(id: string, fields: Partial<ItemFields>, revision: number) {
@@ -189,8 +207,12 @@ export function createCaptures({
       );
       if (bodyChanged) {
         const active = processing.get(current.id);
-        if (active) void active.then(() => processItem(current.id, true));
-        else void processItem(current.id, true);
+        if (active)
+          void active.then(() => {
+            if (store.get(current.id)?.revision === updated.revision)
+              return processItem(current.id, "edited");
+          });
+        else void processItem(current.id, "edited");
       }
       return updated;
     },

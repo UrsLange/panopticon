@@ -188,6 +188,8 @@ it("marks unavailable research and fabricated citations for review without autho
   expect(result).toMatchObject({ needsClarification: true, updateProfile: false, sources: [] });
   expect(result?.rationale).toContain("search_history could not retrieve");
   expect(result?.rationale).toContain("citations were not retrieved");
+  expect(result?.prompt).toContain("search_history could not retrieve");
+  expect(result?.prompt).toContain("Clarify material gaps before dependent work");
   expect(JSON.stringify(model.requests[1].input)).toContain("Context lookup failed");
 });
 

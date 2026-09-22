@@ -96,7 +96,7 @@ export function mockProvider() {
       input.text.format.name === "capture_interpretation"
         ? {
             title: payload.capture,
-            prompt: `Expanded description: ${payload.capture}`,
+            prompt: `Implement: ${payload.capture}`,
             sources: [],
             kind: explicitNote || implicitNote ? "note" : "idea",
             project: "",

@@ -108,9 +108,8 @@ it("routes exact references, sends saved context, and leaves the commitment open
   const launched = await service.implement(item.id, { revision: item.revision });
   const entry = store.latestImplementation(item.id, "/profile");
   assert(entry);
-  expect(entry.prompt).toContain(item.prompt);
-  expect(entry.prompt).toContain("Use the existing search index.");
-  expect(entry.prompt).not.toContain("Unrelated personal context");
+  expect(entry.prompt).toBe(item.prompt);
+  expect(vi.mocked(client.launch).mock.calls[0][1].prompt).toBe(item.prompt);
   expect(launched?.url).toBe("http://127.0.0.1:3773/local/id-1");
   expect(entry.state).toBe("submitted");
   expect(store.get(item.id)?.status).toBe("open");
@@ -184,7 +183,7 @@ it("resumes the persisted handoff after a restart without changing its task or I
   expect(service.options(item.id).latest?.revision).toBe(item.revision);
 });
 
-it("rejects stale, unrefined, closed, missing-repository, and oversized tasks before dispatch", async () => {
+it("rejects stale, unrefined, closed, and missing-repository tasks before dispatch", async () => {
   const { service, store, item, client, documents } = fixture();
   await expect(service.implement(item.id, { revision: 0 })).rejects.toThrow("changed");
   const review = store.update(item.id, { processing: "review" }, item.revision);
@@ -199,11 +198,10 @@ it("rejects stale, unrefined, closed, missing-repository, and oversized tasks be
   await expect(
     service.implement(item.id, { revision: ready.revision, repositoryId: "unknown" }),
   ).rejects.toThrow("Choose a discovered");
-  documents[0].content = "x".repeat(120000);
-  await expect(service.implement(item.id, { revision: ready.revision })).rejects.toThrow(
-    "input limit",
-  );
   expect(client.launch).not.toHaveBeenCalled();
+  documents[0].content = "x".repeat(120000);
+  await service.implement(item.id, { revision: ready.revision });
+  expect(vi.mocked(client.launch).mock.calls[0][1].prompt).toBe(item.prompt);
 });
 
 it("preserves a working connection when reconnection fails and isolates pending handoffs by instance", async () => {

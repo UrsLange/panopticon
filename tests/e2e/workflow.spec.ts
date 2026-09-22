@@ -78,7 +78,7 @@ test("creates aliases through the profile editor and shows persisted capture ann
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management]", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Notes", { exact: true }).fill("Ask about ghma tomorrow");
+  await page.getByLabel("User input", { exact: true }).fill("Ask about ghma tomorrow");
   await page.getByRole("button", { name: "Save changes" }).click();
   await page.reload();
   await page.getByRole("button", { name: /^Inbox/ }).click();
@@ -86,6 +86,9 @@ test("creates aliases through the profile editor and shows persisted capture ann
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management] tomorrow", { exact: true }),
   ).toBeVisible();
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
+    "Implement: Ask about ghma tomorrow",
+  );
   await page.getByText("Original capture & sources").click();
   await expect(page.locator("pre").filter({ hasText: /^Ask about ghma$/ })).toBeVisible();
 });
@@ -101,13 +104,24 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await expect(page.getByRole("status")).toContainText("Captured.");
   await page.getByRole("button", { name: /^Inbox/ }).click();
   await page.getByRole("button", { name: /Send the revised proposal/ }).click();
-  await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
-    "Expanded description: Send the revised proposal to Anna",
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
+    "Implement: Send the revised proposal to Anna",
+  );
+  const inputBounds = await page.getByLabel("User input", { exact: true }).boundingBox();
+  const promptBounds = await page.getByLabel("Prompt", { exact: true }).boundingBox();
+  if (!inputBounds || !promptBounds) throw new Error("Missing input or prompt field");
+  expect(inputBounds.y + inputBounds.height).toBeLessThan(promptBounds.y);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy prompt", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Prompt copied", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "Implement: Send the revised proposal to Anna",
   );
   await page.screenshot({ path: "test-results/refined-capture.png", fullPage: true });
   await page
-    .getByLabel("Description", { exact: true })
+    .getByLabel("Prompt", { exact: true })
     .fill("Send Anna the proposal after reviewing its acceptance criteria.");
+  await expect(page.getByRole("button", { name: "Regenerate prompt", exact: true })).toBeDisabled();
   await page.getByLabel("Kind", { exact: true }).selectOption("commitment");
   const today = (await (await request.get("/api/today")).json()).date;
   await page.getByLabel("Due date").fill(today);
@@ -117,7 +131,7 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await page.getByRole("button", { name: "Today", exact: true }).click();
   await expect(page.getByRole("button", { name: /^Send the revised proposal/ })).toBeVisible();
   await page.getByRole("button", { name: /^Send the revised proposal/ }).click();
-  await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
     "Send Anna the proposal after reviewing its acceptance criteria.",
   );
   await page.getByRole("button", { name: "Close item" }).click();
@@ -485,8 +499,8 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await page.getByRole("button", { name: "Capture", exact: true }).click();
   await page.getByRole("button", { name: /^Inbox/ }).click();
   await page.getByRole("button", { name: /Implement project search in T3 Code/ }).click();
-  await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
-    "Expanded description: Implement project search in T3 Code",
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
+    "Implement: Implement project search in T3 Code",
   );
   await page.getByLabel("Kind", { exact: true }).selectOption("commitment");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -511,11 +525,11 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await page
     .getByLabel("Implementation repository", { exact: true })
     .selectOption(projects.projects[0].id);
-  await page.getByLabel("Description", { exact: true }).fill("Unsaved implementation change");
+  await page.getByLabel("Prompt", { exact: true }).fill("Unsaved implementation change");
   await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeDisabled();
   await page
-    .getByLabel("Description", { exact: true })
-    .fill("Expanded description: Implement project search in T3 Code");
+    .getByLabel("Prompt", { exact: true })
+    .fill("Implement: Implement project search in T3 Code");
   await page.getByRole("button", { name: "Implement", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Retry implementation", exact: true }),

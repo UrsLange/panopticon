@@ -104,6 +104,7 @@ export async function refineCapture(
           result.needsClarification = true;
           result.updateProfile = false;
           result.rationale = [result.rationale, ...issues].filter(Boolean).join("\n\n");
+          result.prompt += `\n\nContext limitations: ${[...issues].join(" ")} Clarify material gaps before dependent work.`;
         }
         return result;
       }
