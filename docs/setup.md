@@ -7,7 +7,7 @@
 - **macOS** for the supported desktop and background-scheduling workflow.
 - **Git** with an author name and email configured. Profile writes use your identity and hooks.
 - **mise** to install the Node.js and pnpm versions pinned in [mise.toml](../mise.toml).
-- **A model endpoint and API key.** The model must support the Responses API, function tool calling, and JSON-schema structured outputs. Chat-completions-only endpoints do not work.
+- **A model endpoint and API key.** The model must support the Responses API, function tool calling, hosted `web_search`, and JSON-schema structured outputs. Chat-completions-only endpoints do not work.
 - **Network access** for dependency installation and model requests.
 
 [Project discovery](project-discovery.md) uses the same configured model endpoint and API key as the rest of the app. Optional integrations have separate requirements: Azure CLI or application credentials for [Entra sync](usage.md#people-directory), and an existing indexed `ctx` installation for session history.

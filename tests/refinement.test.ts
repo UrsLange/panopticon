@@ -62,6 +62,8 @@ type ModelRequest = {
   input: { type?: string; role?: string; content?: string; output?: string }[];
   tool_choice: unknown;
   instructions: string;
+  tools: { type: string }[];
+  max_tool_calls?: number;
 };
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -149,6 +151,129 @@ it("researches profile, project and CTX evidence over multiple Responses turns w
     expect.any(AbortSignal),
   );
   expect(readSessionEvent).toHaveBeenCalled();
+});
+
+it("resolves capture links with web search and preserves citations across local research turns", async () => {
+  const url = "https://example.com/";
+  const web = {
+    id: "ws_search",
+    type: "web_search_call",
+    status: "completed",
+    action: { type: "search", sources: null },
+  };
+  const cited = message({ ...interpretation, sources: [url] });
+  const annotated = {
+    ...cited,
+    content: [
+      {
+        ...cited.content[0],
+        annotations: [
+          { type: "url_citation", url, title: "Example Domain", start_index: 0, end_index: 1 },
+        ],
+      },
+    ],
+  };
+  const model = await provider((request, index) => {
+    expect(request.tools).toContainEqual({ type: "web_search" });
+    if (index === 0) {
+      expect(request.max_tool_calls).toBe(100);
+      return [web, annotated, call("lookup", {}, "local")];
+    }
+    expect(request.max_tool_calls).toBe(98);
+    return [message({ ...interpretation, sources: ["https://example.com", url] })];
+  });
+  const result = await createAssistant("test-key", "test", model.url, () => ({
+    scopes: [],
+    tools: [researchTool],
+  }))?.interpret(`Review ${url}`, context);
+  expect(result).toMatchObject({ sources: [url], needsClarification: false });
+  expect(model.requests[1].input).toContainEqual(web);
+});
+
+it("continues after web-only turns and accepts retrieved URLs while rejecting invented ones", async () => {
+  const urls = [
+    "https://example.com/search",
+    "https://example.com/page",
+    "https://example.com/find",
+  ];
+  const model = await provider((_request, index) =>
+    index === 0
+      ? [
+          {
+            id: "ws_search",
+            type: "web_search_call",
+            status: "completed",
+            action: { type: "search", sources: [{ type: "url", url: urls[0] }] },
+          },
+          {
+            id: "ws_open",
+            type: "web_search_call",
+            status: "completed",
+            action: { type: "open_page", url: urls[1] },
+          },
+          {
+            id: "ws_find",
+            type: "web_search_call",
+            status: "completed",
+            action: { type: "find_in_page", url: urls[2], pattern: "example" },
+          },
+        ]
+      : [message({ ...interpretation, sources: [...urls, "https://invented.example/"] })],
+  );
+  const result = await createAssistant("test-key", "test", model.url)?.interpret(
+    "Review these pages",
+    context,
+  );
+  expect(result).toMatchObject({ sources: urls, needsClarification: true });
+  expect(result?.rationale).toContain("citations were not retrieved");
+});
+
+it("marks failed web retrieval for review without accepting the failed URL", async () => {
+  const model = await provider(() => [
+    {
+      id: "ws_failed",
+      type: "web_search_call",
+      status: "failed",
+      action: { type: "open_page", url: "https://example.com/private" },
+    },
+    message({
+      ...interpretation,
+      kind: "note",
+      updateProfile: true,
+      sources: ["https://example.com/private"],
+    }),
+  ]);
+  const result = await createAssistant("test-key", "test", model.url)?.interpret(
+    "Remember this page",
+    context,
+  );
+  expect(result).toMatchObject({ sources: [], needsClarification: true, updateProfile: false });
+  expect(result?.rationale).toContain("Web search could not retrieve");
+});
+
+it("counts hosted web calls against the research budget before executing local tools", async () => {
+  const execute = vi.fn(researchTool.execute);
+  const model = await provider((request, index) => {
+    if (index === 0)
+      return [
+        ...Array.from({ length: 100 }, (_, i) => ({
+          id: `ws_${i}`,
+          type: "web_search_call",
+          status: "completed",
+          action: { type: "search" },
+        })),
+        call("lookup", {}, "local"),
+      ];
+    expect(request.tool_choice).toBe("none");
+    expect(request.max_tool_calls).toBeUndefined();
+    return [message({ ...interpretation, sources: [] })];
+  });
+  const result = await createAssistant("test-key", "test", model.url, () => ({
+    scopes: [],
+    tools: [{ ...researchTool, execute }],
+  }))?.interpret("Research", context);
+  expect(execute).not.toHaveBeenCalled();
+  expect(result?.rationale).toContain("safety budget");
 });
 
 it("can correct a missing file path without treating recovered evidence as incomplete", async () => {

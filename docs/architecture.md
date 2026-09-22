@@ -82,6 +82,8 @@ Explicit implementation handoffs send the saved task and linked context to T3 Co
 
 Research tools are read-only and exclude symlinks, paths outside configured roots, common credential files, and generated directories. Normal source files can still contain secrets. Configure only trusted roots.
 
-Capture refinement permits 100 tool calls over 15 minutes, up to 400,000 accumulated context characters, plus a two-minute finalization allowance. File reads use 12,000-character pages and reject files larger than 2 MiB. Unresolved evidence gaps require review and cannot authorize a profile update.
+Capture refinement uses the configured provider's hosted `web_search` tool to open relevant capture links and research public context. Retrieved URLs and provider URL citations can be retained as sources. The research prompt treats web content as untrusted evidence and instructs the model to keep private context out of search queries. Inaccessible links that leave material gaps require clarification.
+
+Capture refinement permits 100 tool calls, including hosted web calls, over 15 minutes, up to 400,000 accumulated context characters, plus a two-minute finalization allowance. File reads use 12,000-character pages and reject files larger than 2 MiB. Unresolved evidence gaps require review and cannot authorize a profile update.
 
 The service binds to `127.0.0.1` for one local user. General-purpose shell execution and MCP are not connected to capture research or project discovery. Discovery exposes only file listing, content search, and reading within the selected repository; it has no history or file-editing tools. See [project discovery](project-discovery.md#exploration-and-updates).

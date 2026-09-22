@@ -20,7 +20,7 @@ Conversation is read-only. Profile updates create local commits; nothing is auto
 
 ## Get started
 
-You need macOS, Git with a configured author identity, [mise](https://mise.jdx.dev/), and access to a model supporting the Responses API, tool calling, and structured JSON outputs. Tool versions are pinned in [mise.toml](mise.toml).
+You need macOS, Git with a configured author identity, [mise](https://mise.jdx.dev/), and access to a model supporting the Responses API, tool calling, hosted web search, and structured JSON outputs. Tool versions are pinned in [mise.toml](mise.toml).
 
 From the repository root:
 

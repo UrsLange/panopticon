@@ -42,13 +42,16 @@ export async function refineCapture(
     ...context.commitments.suggested.map((item) => item.id),
     ...context.commitments.waiting.map((item) => item.id),
   ]);
-  const tools = research.tools.map(({ name, description, parameters }) => ({
-    type: "function" as const,
-    name,
-    description,
-    parameters,
-    strict: true,
-  }));
+  const tools = [
+    { type: "web_search" as const },
+    ...research.tools.map(({ name, description, parameters }) => ({
+      type: "function" as const,
+      name,
+      description,
+      parameters,
+      strict: true,
+    })),
+  ];
   const issues = new Set<string>();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), refinementLimits.milliseconds);
@@ -85,6 +88,7 @@ export async function refineCapture(
             input,
             tools,
             tool_choice: finalizing ? "none" : "auto",
+            ...(finalizing ? {} : { max_tool_calls: refinementLimits.calls - calls }),
             max_output_tokens: 10000,
             text: { format: zodTextFormat(interpretationSchema, "capture_interpretation") },
           },
@@ -94,9 +98,38 @@ export async function refineCapture(
         if (!finalizing && controller.signal.aborted) continue;
         throw error;
       }
+      const webCalls = response.output.filter((item) => item.type === "web_search_call");
+      calls += webCalls.length;
+      for (const call of webCalls) {
+        if (call.status !== "completed") {
+          issues.add("Web search could not retrieve requested context.");
+          continue;
+        }
+        if (call.action.type === "search") {
+          for (const source of call.action.sources ?? []) sources.add(source.url);
+        } else if (call.action.url) sources.add(call.action.url);
+      }
+      for (const item of response.output) {
+        if (item.type !== "message") continue;
+        for (const content of item.content) {
+          if (content.type !== "output_text") continue;
+          for (const annotation of content.annotations) {
+            if (annotation.type === "url_citation") sources.add(annotation.url);
+          }
+        }
+      }
       const requested = response.output.filter((item) => item.type === "function_call");
-      if (!requested.length) {
+      if (!requested.length && (!webCalls.length || response.output_parsed)) {
         const result = interpretationSchema.parse(response.output_parsed);
+        const webSources = new Map(
+          [...sources].flatMap((source) => {
+            const url = URL.parse(source);
+            return url && ["http:", "https:"].includes(url.protocol) ? [[url.href, source]] : [];
+          }),
+        );
+        result.sources = result.sources.map(
+          (source) => webSources.get(URL.parse(source)?.href ?? "") ?? source,
+        );
         if (result.sources.some((source) => !sources.has(source)))
           issues.add("Some proposed citations were not retrieved and need review.");
         result.sources = [...new Set(result.sources.filter((source) => sources.has(source)))];

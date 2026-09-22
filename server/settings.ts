@@ -152,7 +152,7 @@ function connectionError(error: unknown, model = false) {
       return "The provider is rate-limited or out of quota. Try again later.";
   }
   return model
-    ? "Model validation failed. Choose a model supporting the Responses API, tool calling and structured JSON outputs, or check your connection. Your previous settings are unchanged."
+    ? "Model validation failed. Choose a model supporting the Responses API, tool calling, hosted web search and structured JSON outputs, or check your connection. Your previous settings are unchanged."
     : "Could not load models. Check the endpoint, network or VPN, and API key.";
 }
 
