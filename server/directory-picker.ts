@@ -22,6 +22,8 @@ export async function chooseDirectory() {
       "/usr/bin/osascript",
       [
         "-e",
+        "activate",
+        "-e",
         'POSIX path of (choose folder with prompt "Choose a project group directory for Panopticon")',
       ],
       { timeout: 120000 },

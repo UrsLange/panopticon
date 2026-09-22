@@ -22,7 +22,7 @@ import { annotatedText } from "../shared/schema";
 import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
 import { Implementation } from "./Implementation";
-import { Configuration } from "./Settings";
+import { Configuration, Enrichment } from "./Settings";
 
 type View = "today" | "inbox" | "notebook" | "ask" | "profile" | "settings";
 type Daily = { date: string; due: Item[]; suggested: Item[]; waiting: Item[] };
@@ -311,7 +311,9 @@ export function App() {
             </form>
           )}
 
-          {view === "settings" && <Configuration settings={settings} onChange={settingsChanged} />}
+          <div hidden={view !== "settings"}>
+            <Configuration settings={settings} onChange={settingsChanged} />
+          </div>
 
           {view === "today" && (
             <div className="dashboard">
@@ -1347,9 +1349,10 @@ function ProfileEditor({
         </section>
       </div>
       <p className="muted-text">
-        Connection, model, repository, and agent enrichment guidance are available in Settings. Git
-        commits and pushes remain under your control.
+        Connection, model, and repository preferences are available in Settings. Git commits and
+        pushes remain under your control.
       </p>
+      <Enrichment />
     </>
   );
 }

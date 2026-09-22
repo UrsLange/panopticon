@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -28,8 +28,16 @@ test("onboards a model and portable profile, then exposes editable settings and 
   );
   await page.getByRole("button", { name: "Open my assistant" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Model", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit model connection" }).click();
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue("test-model");
-  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByText("Environment variable: OPENAI_API_KEY", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("heading", { name: "A clearer day." })).toBeVisible();
 });
@@ -275,6 +283,11 @@ test("shows editable model settings on a narrow screen", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Model", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit model connection" }).click();
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue("test-model");
   await page.screenshot({ path: "test-results/settings-mobile.png", fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
@@ -290,6 +303,10 @@ test("allows manual tenant entry when detection fails or finishes after an edit"
   );
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "People", exact: true })
+    .click();
   await expect(page.getByText("Could not detect a tenant.", { exact: false })).toBeVisible();
   const tenant = page.getByLabel("Entra tenant ID");
   await tenant.fill("33333333-3333-4333-8333-333333333333");
@@ -327,11 +344,16 @@ test("configures project roots and discovers project knowledge without onboardin
   writeFileSync(join(repo, "README.md"), "# Team onboarding\nA local app. Run mise run check.");
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByLabel("Project root directories").fill(root);
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Projects", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Enter path manually" }).click();
+  await page.getByLabel("Directory 1", { exact: true }).fill(root);
   await page.getByRole("button", { name: "Save project directories" }).click();
   await expect(page.getByRole("status")).toContainText("Project directories saved");
   await page.getByRole("button", { name: "Scan now", exact: true }).click();
-  await expect(page.getByText("Updated", { exact: true })).toBeVisible({
+  await expect(page.getByRole("table").getByText("Updated", { exact: true })).toBeVisible({
     timeout: 15000,
   });
   const docs = await (await request.get("/api/profile")).json();
@@ -344,6 +366,7 @@ test("configures project roots and discovers project knowledge without onboardin
       await request.post("/api/projects/scan", { data: { projectIds: ["unknown-project"] } })
     ).status(),
   ).toBe(400);
+  await page.getByRole("button", { name: "Details for example-project" }).click();
   await page.getByRole("button", { name: "Open document", exact: true }).click();
   await expect(
     page.getByRole("region", { name: "Profile document: example-project" }),
@@ -351,14 +374,18 @@ test("configures project roots and discovers project knowledge without onboardin
   await page.getByRole("button", { name: "Close document" }).click();
   await page.getByText("Diagnostics", { exact: true }).click();
   await expect(page.getByText("resp_test", { exact: true })).toBeVisible();
-  await page.getByLabel("Errors only").check();
-  await expect(page.getByText("No project errors.")).toBeVisible();
-  await page.getByLabel("Errors only").uncheck();
+  await page.getByLabel("Project status").selectOption("attention");
+  await expect(page.getByText("No projects match your search and filter.")).toBeVisible();
+  await page.getByLabel("Project status").selectOption("all");
   await page.screenshot({ path: "test-results/project-settings.png", fullPage: true });
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByText("Directories & provider setup", { exact: true }).click();
-  await expect(page.getByLabel("Project root directories")).toContainText("pa-discovery-ui-");
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Projects", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit directories" }).click();
+  await expect(page.getByLabel("Directory 1", { exact: true })).toHaveValue(/pa-discovery-ui-/);
 });
 
 test("shows provider diagnostics and current progress separately from previous errors", async ({
@@ -394,7 +421,12 @@ test("shows provider diagnostics and current progress separately from previous e
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Projects", exact: true })
+    .click();
   const menu = page.locator(".project-settings");
+  await menu.getByRole("button", { name: "Details for example-project" }).click();
   await menu.getByText("Diagnostics", { exact: true }).click();
   await expect(menu.getByText("HTTP 503", { exact: true })).toBeVisible();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -413,7 +445,9 @@ test("shows provider diagnostics and current progress separately from previous e
   project.finishedAt = new Date().toISOString();
   status.running = false;
   status.completed = 1;
-  await expect(menu.getByText("Updated", { exact: true })).toBeVisible({ timeout: 10000 });
+  await expect(menu.getByRole("table").getByText("Updated", { exact: true })).toBeVisible({
+    timeout: 10000,
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   await menu.screenshot({ path: "test-results/project-settings-mobile.png" });
   expect(await menu.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
@@ -425,6 +459,10 @@ test("configures Entra, syncs the directory outside the profile, and keeps clien
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "People", exact: true })
+    .click();
   await page.getByLabel("Automatic people sync").selectOption("true");
   await expect(page.getByLabel("Entra tenant ID")).toHaveValue(
     "11111111-1111-4111-8111-111111111111",
@@ -448,6 +486,11 @@ test("configures Entra, syncs the directory outside the profile, and keeps clien
   await page.getByRole("button", { name: "Your context", exact: true }).click();
   await expect(page.getByRole("button", { name: "People People directory" })).toHaveCount(0);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "People", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit people connection" }).click();
   await page.getByLabel("Automatic people sync").selectOption("false");
   await expect(page.getByLabel("Entra tenant ID")).toHaveValue(
     "33333333-3333-4333-8333-333333333333",
@@ -456,10 +499,16 @@ test("configures Entra, syncs the directory outside the profile, and keeps clien
   await page.getByLabel("Entra client ID").fill("22222222-2222-4222-8222-222222222222");
   await page.getByLabel("Entra client secret").fill("browser-fixture-secret");
   await page.getByRole("button", { name: "Save Entra settings" }).click();
+  await page.getByRole("button", { name: "Edit people connection" }).click();
   await expect(page.getByLabel("Entra client secret")).toHaveValue("");
   expect(await (await request.get("/api/settings")).text()).not.toContain("browser-fixture-secret");
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "People", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit people connection" }).click();
   await expect(page.getByLabel("Entra client secret")).toHaveValue("");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "test-results/people-settings-mobile.png", fullPage: true });
@@ -474,6 +523,10 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "T3 Code", exact: true })
+    .click();
   await page.getByLabel("T3 Code endpoint", { exact: true }).fill("http://127.0.0.1:4321");
   await page.getByLabel("T3 Code pairing token", { exact: true }).fill("wrong-token");
   await page.getByLabel("T3 Code default model", { exact: true }).fill("fixture-model");
@@ -482,6 +535,7 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await page.getByLabel("T3 Code pairing token", { exact: true }).fill("fixture-pairing");
   await page.getByRole("button", { name: "Connect T3 Code", exact: true }).click();
   await expect(page.getByText("T3 Code connected and saved.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Edit T3 Code connection" }).click();
   await expect(page.getByLabel("T3 Code pairing token", { exact: true })).toHaveValue("");
   expect(await (await request.get("/api/settings/t3")).text()).not.toContain("fixture-t3-secret");
   await page.getByRole("button", { name: "Test T3 Code connection", exact: true }).click();
@@ -571,6 +625,150 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   ).toHaveLength(2);
   await page.getByRole("button", { name: "Close item", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "T3 Code", exact: true })
+    .click();
   await page.getByRole("button", { name: "Disconnect T3 Code", exact: true }).click();
   await expect(page.getByText("T3 Code disconnected.", { exact: false })).toBeVisible();
+});
+
+test("keeps settings drafts across navigation and cancels without saving", async ({
+  page,
+  request,
+}) => {
+  const saved = await (await request.get("/api/settings")).json();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const navigation = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(navigation.getByRole("button", { name: "General", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await page.getByRole("button", { name: "Edit profile & timezone" }).click();
+  await page.getByLabel("Timezone", { exact: true }).fill("America/New_York");
+  await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  await navigation.getByRole("button", { name: "Projects", exact: true }).click();
+  await expect(page.getByLabel("Timezone", { exact: true })).not.toBeVisible();
+  await navigation.getByRole("button", { name: "General", exact: true }).click();
+  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue("America/New_York");
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue("America/New_York");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit profile & timezone" }).click();
+  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(saved.timezone);
+  expect((await (await request.get("/api/settings")).json()).timezone).toBe(saved.timezone);
+  await page.getByRole("button", { name: "Your context", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Prepare agent prompt" })).toBeVisible();
+});
+
+test("chooses project directories, handles cancellation and failure, and saves only explicitly", async ({
+  page,
+  request,
+}) => {
+  const saved = await (await request.get("/api/settings")).json();
+  const chosen = mkdtempSync(join(tmpdir(), "pa chosen directory-"));
+  let pickerResult: string | null = null;
+  let pickerError = false;
+  await page.route("**/api/settings/directory", (route) =>
+    route.fulfill({
+      status: pickerError ? 503 : 200,
+      json: pickerError ? { error: "Could not open the folder chooser." } : { path: pickerResult },
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Projects", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit directories" }).click();
+  const rows = page.locator(".directory-row");
+  await page.getByRole("button", { name: "Choose directory…" }).click();
+  await expect(rows).toHaveCount(saved.projectRoots.length);
+  pickerResult = chosen;
+  await page.getByRole("button", { name: "Choose directory…" }).click();
+  await expect(rows).toHaveCount(saved.projectRoots.length + 1);
+  await expect(
+    page.getByLabel(`Directory ${saved.projectRoots.length + 1}`, { exact: true }),
+  ).toHaveValue(chosen);
+  expect((await (await request.get("/api/settings")).json()).projectRoots).toEqual(
+    saved.projectRoots,
+  );
+  await page.getByRole("button", { name: "Save project directories" }).click();
+  await expect(page.getByText("Project directories saved.", { exact: false })).toBeVisible();
+  expect((await (await request.get("/api/settings")).json()).projectRoots).toEqual([
+    ...saved.projectRoots,
+    realpathSync(chosen),
+  ]);
+  await page.getByRole("button", { name: "Edit directories" }).click();
+  pickerError = true;
+  await page.getByRole("button", { name: "Browse directory 1", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Could not open the folder chooser.");
+  await page.getByLabel("Directory 1", { exact: true }).fill("/unsaved/path");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: "test-results/project-directory-picker-mobile.png",
+    fullPage: true,
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit directories" }).click();
+  await expect(page.getByLabel("Directory 1", { exact: true })).toHaveValue(saved.projectRoots[0]);
+});
+
+test("explains file credentials, requires keys for other endpoints, and preserves drafts after validation failure", async ({
+  page,
+  request,
+}) => {
+  const saved = await (await request.get("/api/settings")).json();
+  const endpoint = "https://litellm.jobrad.tech/v1";
+  const fixture = {
+    ...saved,
+    baseURL: endpoint,
+    credentialSources: [{ source: "file", endpoint, path: "/fixture/provider.key" }],
+  };
+  await page.route("**/api/settings", (route) => route.fulfill({ json: fixture }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Model", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit model connection" }).click();
+  await expect(page.getByText("Local key file", { exact: true })).toBeVisible();
+  await expect(page.getByText("/fixture/provider.key", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);
+  await page.getByLabel("API endpoint", { exact: true }).fill("https://other.example/v1");
+  await expect(
+    page.getByText("No credential available for this endpoint", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Validate & save model" })).toBeDisabled();
+  await page.getByLabel("Credential source").selectOption("new");
+  await expect(page.getByRole("button", { name: "Validate & save model" })).toBeDisabled();
+  await page.getByLabel("API key", { exact: true }).fill("fixture-key");
+  let submitted: unknown;
+  await page.route("**/api/settings/connection", (route) => {
+    submitted = route.request().postDataJSON();
+    return route.fulfill({
+      status: 400,
+      json: { error: "Model validation failed. Your previous settings are unchanged." },
+    });
+  });
+  await page.getByRole("button", { name: "Validate & save model" }).click();
+  await expect(page.getByRole("alert")).toContainText("Model validation failed");
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("fixture-key");
+  expect(submitted).toEqual({
+    baseURL: "https://other.example/v1",
+    model: saved.model,
+    apiKey: "fixture-key",
+  });
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit model connection" }).click();
+  await expect(page.getByLabel("API endpoint", { exact: true })).toHaveValue(endpoint);
+  await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: "test-results/model-credential-source.png", fullPage: true });
 });
