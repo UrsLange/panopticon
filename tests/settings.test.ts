@@ -97,6 +97,11 @@ it("reports credential precedence without exposing keys", async () => {
     { source: "saved", endpoint: defaults.baseURL },
     { source: "environment", endpoint: defaults.baseURL },
   ]);
+  settings.saveValidated(
+    { baseURL: `${defaults.baseURL}/`, model: "test-model" },
+    defaults.baseURL,
+  );
+  expect(settings.credentials().apiKey).toBe("private-key");
 });
 
 it("returns folder selections and cancellation without saving, and rejects cross-origin requests", async () => {

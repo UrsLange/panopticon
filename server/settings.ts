@@ -119,7 +119,9 @@ export class SettingsStore {
     // Keep file-backed credentials in their source file rather than copying them into settings.
     const apiKey =
       input.apiKey ||
-      (input.baseURL === this.connection().baseURL ? this.saved.connection?.apiKey : undefined);
+      (input.baseURL.replace(/\/+$/, "") === this.connection().baseURL.replace(/\/+$/, "")
+        ? this.saved.connection?.apiKey
+        : undefined);
     this.save({
       connection: {
         baseURL,
