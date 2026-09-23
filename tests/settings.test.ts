@@ -104,6 +104,21 @@ it("reports credential precedence without exposing keys", async () => {
   expect(settings.credentials().apiKey).toBe("private-key");
 });
 
+it("prefers manually entered and saved keys over the available key file", async () => {
+  const { root, defaults } = await fixture();
+  const keyFile = join(root, "provider.key");
+  writeFileSync(keyFile, "file-key\n");
+  const fileDefaults = { ...defaults, apiKey: "", keyFile };
+  const settings = new SettingsStore(fileDefaults);
+  const input = { baseURL: defaults.baseURL, model: "test-model", apiKey: "manual-key" };
+  expect(settings.credentials(input).apiKey).toBe("manual-key");
+  settings.saveValidated(input, defaults.baseURL);
+  expect(new SettingsStore(fileDefaults).credentials().apiKey).toBe("manual-key");
+  expect(settings.credentials({ ...input, apiKey: "replacement-key" }).apiKey).toBe(
+    "replacement-key",
+  );
+});
+
 it("discovers and validates models using the advertised file credential without copying it", async () => {
   const { root, defaults } = await fixture();
   const keyFile = join(root, "provider.key");

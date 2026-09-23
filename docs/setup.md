@@ -32,7 +32,7 @@ Open <http://127.0.0.1:5173>.
 
 The browser workspace requires a validated model and a profile. Native capture can save thoughts before onboarding is complete.
 
-The default endpoint is `https://api.openai.com/v1`. Enter your provider's API key and change the endpoint if needed. Validation uses synthetic data, including a tool-call round trip; it sends no personal profile. Failed validation preserves the previous working connection.
+The default endpoint is `https://litellm.jobrad.tech/v1`, using the key from `~/.config/jobrad-ai/litellm.key` automatically. Alternatively, enter an API key manually and change the endpoint if needed. Validation uses synthetic data, including a tool-call round trip; it sends no personal profile. Failed validation preserves the previous working connection.
 
 ## Configuration
 
@@ -46,13 +46,13 @@ For initial defaults, copy [.env.example](../.env.example) to `.env.local` in th
 | `PA_PROFILE_DIR` | `~/.local/share/personal-assistant-profile` |
 | `PA_TIMEZONE` | System timezone |
 | `PA_PORT` | Backend port; `4317` |
-| `PA_MODEL_BASE_URL` | `https://api.openai.com/v1` |
+| `PA_MODEL_BASE_URL` | `https://litellm.jobrad.tech/v1` |
 | `PA_MODEL` | Provider model ID; unset |
 | `OPENAI_API_KEY` | Provider API key; unset |
-| `PA_KEY_FILE` | Optional token file path; unset disables file lookup |
+| `PA_KEY_FILE` | `~/.config/jobrad-ai/litellm.key` for the default LiteLLM endpoint; empty disables file lookup |
 | `PA_CAPTURE_SHORTCUT` | `Command+Shift+Space` |
 
-File-backed credentials are used only for the endpoint configured by `PA_MODEL_BASE_URL` (or its default). Manually entered keys are stored in `settings.json` with owner-only permissions and reused only for the same endpoint. Keys are never returned to the browser or written to the profile.
+File-backed credentials are used only for the endpoint configured by `PA_MODEL_BASE_URL` (or its default). Overriding the endpoint disables the default LiteLLM key lookup unless `PA_KEY_FILE` is also explicitly configured. Manually entered keys take precedence, are stored in `settings.json` with owner-only permissions, and are reused only for the same endpoint. Keys are never returned to the browser or written to the profile.
 
 The development proxy targets port 4317 in [vite.config.ts](../vite.config.ts). Changing `PA_PORT` alone does not update it. Reinstall the desktop companion and background schedule after changing the port.
 
