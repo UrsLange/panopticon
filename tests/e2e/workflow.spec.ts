@@ -87,7 +87,10 @@ test("creates aliases through the profile editor and shows persisted capture ann
     page.getByText("Ask about ghma [GitHub Access Management]", { exact: true }),
   ).toBeVisible();
   await page.getByLabel("User input", { exact: true }).fill("Ask about ghma tomorrow");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save and refine" }).click();
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
+    "Implement: Ask about ghma tomorrow",
+  );
   await page.reload();
   await page.getByRole("button", { name: /^Inbox/ }).click();
   await page.getByRole("button", { name: /Ask about ghma/ }).click();
@@ -129,12 +132,16 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await page
     .getByLabel("Prompt", { exact: true })
     .fill("Send Anna the proposal after reviewing its acceptance criteria.");
-  await expect(page.getByRole("button", { name: "Regenerate prompt", exact: true })).toBeDisabled();
+  await page.getByText("More actions", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "Refine again", exact: true })).toBeDisabled();
+  await page.locator(".capture-details summary").click();
   await page.getByLabel("Kind", { exact: true }).selectOption("commitment");
   const today = (await (await request.get("/api/today")).json()).date;
   await page.getByLabel("Due date").fill(today);
   await page.getByLabel("Project", { exact: true }).fill("Website redesign");
   await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("All changes saved", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close item" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("button", { name: "Today", exact: true }).click();
   await expect(page.getByRole("button", { name: /^Send the revised proposal/ })).toBeVisible();
@@ -152,9 +159,12 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await page.getByRole("button", { name: "Capture", exact: true }).click();
   await page.getByRole("button", { name: /^Inbox/ }).click();
   await page.getByRole("button", { name: /Perhaps onboarding/ }).click();
+  await page.locator(".capture-details summary").click();
   await page.getByLabel("Kind", { exact: true }).selectOption("idea");
   await page.getByLabel("Title", { exact: true }).fill("Invite a colleague during onboarding");
   await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("All changes saved", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close item" }).click();
   await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await expect(page.getByRole("button", { name: /Invite a colleague/ })).toBeVisible();
   await page.reload();
@@ -556,9 +566,10 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
     "Implement: Implement project search in T3 Code",
   );
+  await page.locator(".capture-details summary").click();
   await page.getByLabel("Kind", { exact: true }).selectOption("commitment");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await page.getByRole("button", { name: /Implement project search in T3 Code/ }).click();
+  await expect(page.getByText("All changes saved", { exact: true })).toBeVisible();
   const projects = await (await request.get("/api/projects")).json();
   execFileSync(
     "git",
@@ -576,11 +587,10 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
     ],
     { stdio: "ignore" },
   );
-  await expect(page.getByLabel("Implementation repository", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByText(`Implementation repository: ${projects.projects[0].path}`, { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Implementation repository", { exact: true })).toHaveValue(
+    projects.projects[0].id,
+  );
+  await expect(page.getByRole("button", { name: "Start in T3 Code", exact: true })).toBeEnabled();
   const items = await (await request.get("/api/items")).json();
   const commitment = items.find(
     (item: { title: string }) => item.title === "Implement project search in T3 Code",
@@ -592,24 +602,25 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await expect(page.getByLabel("Implementation repository", { exact: true })).toBeVisible({
     timeout: 10000,
   });
-  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Choose repository", exact: true })).toBeVisible();
   await request.patch(`/api/items/${commitment.id}`, {
     data: { revision: commitment.revision + 1, project: "example-project" },
   });
-  await expect(page.getByLabel("Implementation repository", { exact: true })).toHaveCount(0, {
-    timeout: 10000,
-  });
-  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Implementation repository", { exact: true })).toHaveValue(
+    projects.projects[0].id,
+    { timeout: 10000 },
+  );
+  await expect(page.getByRole("button", { name: "Start in T3 Code", exact: true })).toBeEnabled();
   await page.getByLabel("Prompt", { exact: true }).fill("Unsaved implementation change");
-  await expect(page.getByRole("button", { name: "Implement", exact: true })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Save and start in T3 Code", exact: true }),
+  ).toBeEnabled();
   await page
     .getByLabel("Prompt", { exact: true })
     .fill("Implement: Implement project search in T3 Code");
-  await page.getByRole("button", { name: "Implement", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Retry implementation", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Retry implementation", exact: true }).click();
+  await page.getByRole("button", { name: "Start in T3 Code", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retry handoff", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Retry handoff", exact: true }).click();
   await expect(page.getByRole("link", { name: "Open in T3 Code", exact: true })).toHaveAttribute(
     "href",
     /http:\/\/127\.0\.0\.1:4321\/fixture\//,
@@ -633,6 +644,7 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
       .evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
   await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByText("More actions", { exact: true }).click();
   await page.getByRole("button", { name: "Start another implementation", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Start another implementation", exact: true }),

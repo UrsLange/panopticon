@@ -19,9 +19,10 @@ export function Configuration({
   onChange,
   onboarding = false,
   onFinish,
-}: SettingsProps & { onFinish?: () => void }) {
-  const [section, setSection] = useState<(typeof sections)[number]>("General");
-  const [visited, setVisited] = useState<string[]>(["General"]);
+  initialSection = "General",
+}: SettingsProps & { onFinish?: () => void; initialSection?: (typeof sections)[number] }) {
+  const [section, setSection] = useState<(typeof sections)[number]>(initialSection);
+  const [visited, setVisited] = useState<string[]>([initialSection]);
   return (
     <div className={onboarding ? "configuration" : "configuration settings-workspace"}>
       {onboarding && (

@@ -17,11 +17,17 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import type { AssistantReply, Item, ItemFields, ProfileDocument, Settings } from "../shared/schema";
+import type {
+  AssistantReply,
+  Capture as Item,
+  ItemFields,
+  ProfileDocument,
+  Settings,
+} from "../shared/schema";
 import { annotatedText } from "../shared/schema";
 import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
-import { Implementation } from "./Implementation";
+import { useImplementation } from "./Implementation";
 import { Configuration, Enrichment } from "./Settings";
 
 type View = "today" | "inbox" | "notebook" | "ask" | "profile" | "settings";
@@ -62,7 +68,10 @@ export function App() {
     setItems(nextItems);
     setSelected((current) => {
       const next = nextItems.find((item) => item.id === current?.id);
-      return next && next.revision !== current?.revision ? next : current;
+      return next &&
+        (next.revision !== current?.revision || next.refinement !== current?.refinement)
+        ? next
+        : current;
     });
     setDaily(nextDaily);
   }, []);
@@ -498,6 +507,8 @@ export function App() {
           item={selected}
           items={items}
           aiConfigured={!!settings?.aiConfigured}
+          settings={settings}
+          onSettingsChange={setSettings}
           profileAvailable={selected.profilePath === settings?.profilePath}
           onOpenProfile={(path) => {
             void reloadProfile()
@@ -509,25 +520,27 @@ export function App() {
               .catch(report);
           }}
           onAddToProfile={async () => {
-            const updated = await api<Item>(`/items/${selected.id}/profile`, "POST", {
+            await api(`/items/${selected.id}/profile`, "POST", {
               revision: selected.revision,
             });
-            setSelected(updated);
             await reload();
             await reloadProfile();
           }}
           onClose={() => setSelected(null)}
           onSave={async (fields) => {
-            await updateItem(selected, fields);
-            setSelected(null);
+            const updated = await api<Item>(`/items/${selected.id}`, "PATCH", {
+              ...fields,
+              revision: selected.revision,
+            });
+            await reload();
             setNotice("Changes saved.");
+            return updated;
           }}
           onRetry={async (resetReferences = false) => {
-            const updated = await api<Item>(`/items/${selected.id}/process`, "POST", {
+            await api(`/items/${selected.id}/process`, "POST", {
               resetReferences,
               revision: selected.revision,
             });
-            setSelected(updated);
             await reload();
           }}
         />
@@ -607,11 +620,15 @@ function ItemRow({
                   : item.processingError
                     ? "Profile update needs attention"
                     : "Pending profile note"
-              : item.processing !== "ready"
-                ? item.processing === "review"
-                  ? "Needs clarification"
-                  : "Awaiting organization"
-                : item.kind)}
+              : item.refinement === "failed"
+                ? "Refinement failed"
+                : item.refinement === "running"
+                  ? "Refining…"
+                  : item.processing !== "ready"
+                    ? item.processing === "review"
+                      ? "Needs clarification"
+                      : "Awaiting organization"
+                    : item.kind)}
           {item.status === "waiting" && " · Waiting"}
           {item.status === "archived" && " · Archived"}
           {!reason && item.dueDate && ` · ${item.dueDate}`}
@@ -632,16 +649,20 @@ function ItemEditor({
   onAddToProfile,
   onOpenProfile,
   profileAvailable,
+  settings,
+  onSettingsChange,
 }: {
   item: Item;
   items: Item[];
   aiConfigured: boolean;
   onClose: () => void;
-  onSave: (fields: ItemFields) => Promise<void>;
+  onSave: (fields: ItemFields) => Promise<Item>;
   onRetry: (resetReferences?: boolean) => Promise<void>;
   onAddToProfile: () => Promise<void>;
   onOpenProfile: (path: string) => void;
   profileAvailable: boolean;
+  settings: Settings | null;
+  onSettingsChange: (settings: Settings) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [fields, setFields] = useState<ItemFields>({
@@ -656,6 +677,14 @@ function ItemEditor({
     relatedId: item.relatedId,
   });
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState("");
+  const [settingsSection, setSettingsSection] = useState<"Model" | "Projects" | "T3 Code" | null>(
+    null,
+  );
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const backdropPointer = useRef(false);
+  const implementation = useImplementation(item, settingsSection);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<{ item: Item; changedAt: string }[] | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
@@ -666,6 +695,12 @@ function ItemEditor({
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
+  useEffect(() => {
+    if (error || implementation.error || item.processingError) dialog.current?.scrollTo({ top: 0 });
+  }, [error, implementation.error, item.processingError]);
+  useEffect(() => {
+    if (settingsSection) dialog.current?.scrollTo({ top: 0 });
+  }, [settingsSection]);
   useEffect(() => {
     const before = previous.current;
     previous.current = item;
@@ -679,321 +714,698 @@ function ItemEditor({
         ) as ItemFields,
     );
   }, [item]);
-  const run = async (action: () => Promise<void>) => {
+  const bodyChanged = fields.body !== item.body;
+  const running = item.refinement === "running" || activity === "Refining…";
+  const closed = ["done", "archived"].includes(item.status);
+  const note = item.kind === "note";
+  const failed = item.refinement === "failed";
+  const review = item.refinement === "review";
+  const paused = item.refinement === "paused";
+  const { options, repositoryId, setRepositoryId } = implementation;
+  const latest = options?.latest;
+  const pendingHandoff = latest?.state === "pending";
+  const submitted = latest?.state === "submitted";
+  const canImplement =
+    fields.kind === "commitment" &&
+    ["open", "waiting"].includes(fields.status) &&
+    item.refinement === "ready" &&
+    !bodyChanged &&
+    fields.project === item.project &&
+    !!fields.prompt.trim() &&
+    !!options?.configured &&
+    !!repositoryId &&
+    !implementation.loading &&
+    !implementation.error;
+  const run = async (label: string, action: () => Promise<unknown>) => {
+    if (busy) return;
     setBusy(true);
+    setActivity(label);
     setError("");
     try {
       await action();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save.");
+      setError(reason instanceof Error ? reason.message : "Could not complete this action.");
     } finally {
       setBusy(false);
+      setActivity("");
     }
   };
+  const save = () => run("Saving…", () => onSave(fields));
+  const refine = (resetReferences = false) => run("Refining…", () => onRetry(resetReferences));
+  const implement = () =>
+    run("Sending to T3 Code…", async () => {
+      const saved = dirty ? await onSave(fields) : item;
+      await implementation.start(saved);
+    });
+  const stateLabel = closed
+    ? item.status === "done"
+      ? "Completed"
+      : "Archived"
+    : running
+      ? "Refining…"
+      : failed
+        ? note && item.processing === "review"
+          ? "Profile update failed"
+          : "Refinement failed"
+        : paused
+          ? aiConfigured
+            ? "Refinement paused"
+            : "Model connection required"
+          : review
+            ? note
+              ? "Ready for profile review"
+              : "Information needed"
+            : !fields.prompt.trim() && !note
+              ? "Prompt needed"
+              : submitted
+                ? "Sent to T3 Code"
+                : pendingHandoff
+                  ? "Handoff unconfirmed"
+                  : canImplement
+                    ? "Ready for implementation"
+                    : "Refined";
+  let action: { label: string; disabled?: boolean; run: () => void } = {
+    label: "Close",
+    run: onClose,
+  };
+  if (dirty) {
+    action = bodyChanged
+      ? { label: aiConfigured ? "Save and refine" : "Save changes", run: () => void save() }
+      : canImplement && !latest
+        ? { label: "Save and start in T3 Code", run: () => void implement() }
+        : { label: "Save changes", run: () => void save() };
+  } else if (!closed) {
+    if (pendingHandoff) {
+      action = options?.configured
+        ? {
+            label: "Retry handoff",
+            run: () => void run("Checking handoff…", () => implementation.start(item)),
+          }
+        : { label: "Connect T3 Code", run: () => setSettingsSection("T3 Code") };
+    } else if ((failed || paused) && !aiConfigured) {
+      action = { label: "Open model settings", run: () => setSettingsSection("Model") };
+    } else if (failed && note && item.processing === "review") {
+      action = {
+        label: "Retry profile update",
+        run: () => void run("Updating profile…", onAddToProfile),
+      };
+    } else if (failed || paused) {
+      action = {
+        label: failed ? "Retry refinement" : "Resume refinement",
+        run: () => void refine(),
+      };
+    } else if (review && !note) {
+      action = { label: "Add missing details", run: () => inputRef.current?.focus() };
+    } else if (note) {
+      action = aiConfigured
+        ? { label: "Add to profile", run: () => void run("Updating profile…", onAddToProfile) }
+        : { label: "Open model settings", run: () => setSettingsSection("Model") };
+    } else if (!fields.prompt.trim()) {
+      action = { label: "Write prompt", run: () => promptRef.current?.focus() };
+    } else if (fields.kind === "commitment" && !submitted) {
+      action = implementation.loading
+        ? { label: "Checking implementation…", disabled: true, run: () => {} }
+        : implementation.error
+          ? { label: "Check implementation again", run: implementation.refresh }
+          : !options?.configured
+            ? { label: "Connect T3 Code", run: () => setSettingsSection("T3 Code") }
+            : !options.repositories.length
+              ? { label: "Open project settings", run: () => setSettingsSection("Projects") }
+              : !repositoryId
+                ? {
+                    label: "Choose repository",
+                    run: () =>
+                      dialog.current
+                        ?.querySelector<HTMLSelectElement>(
+                          '[aria-label="Implementation repository"]',
+                        )
+                        ?.focus(),
+                  }
+                : {
+                    label: "Start in T3 Code",
+                    disabled: !canImplement,
+                    run: () => void implement(),
+                  };
+    }
+  }
+  if (running) action = { label: "Refining…", disabled: true, run: () => {} };
+  if (busy) action = { label: activity, disabled: true, run: () => {} };
   return (
-    <dialog ref={dialog} className="editor-modal" onCancel={onClose}>
+    <dialog
+      ref={dialog}
+      className="editor-modal capture-editor"
+      aria-labelledby="capture-heading"
+      onCancel={onClose}
+      onPointerDown={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        backdropPointer.current =
+          event.target === event.currentTarget &&
+          (event.clientX < bounds.left ||
+            event.clientX > bounds.right ||
+            event.clientY < bounds.top ||
+            event.clientY > bounds.bottom);
+      }}
+      onPointerUp={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (
+          backdropPointer.current &&
+          event.target === event.currentTarget &&
+          (event.clientX < bounds.left ||
+            event.clientX > bounds.right ||
+            event.clientY < bounds.top ||
+            event.clientY > bounds.bottom)
+        )
+          onClose();
+        backdropPointer.current = false;
+      }}
+    >
       <div className="modal-top">
-        <span className="eyebrow">MAKE IT YOURS</span>
+        <span className="eyebrow">{settingsSection ? "CAPTURE SETTINGS" : item.kind}</span>
         <button type="button" aria-label="Close item" className="icon-button" onClick={onClose}>
           <X size={20} />
         </button>
       </div>
-      <h2>Organize this thought</h2>
-      <p className="muted-text">Your original capture is always preserved.</p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void run(() => onSave(fields));
-        }}
-      >
-        {error && (
-          <div role="alert" className="banner error">
-            {error}
-          </div>
-        )}
-        <label className="field">
-          Title
-          <input
-            required
-            maxLength={300}
-            value={fields.title}
-            onChange={(event) => setFields({ ...fields, title: event.target.value })}
+      <h2 id="capture-heading">{item.title}</h2>
+      {settingsSection && settings ? (
+        <>
+          <button type="button" className="secondary" onClick={() => setSettingsSection(null)}>
+            Back to capture
+          </button>
+          <p className="muted-text">Your capture edits are kept while you change settings.</p>
+          <Configuration
+            key={settingsSection}
+            settings={settings}
+            onChange={onSettingsChange}
+            initialSection={settingsSection}
           />
-        </label>
-        <div className="field-grid">
-          <label className="field">
-            Kind
-            <select
-              aria-label="Kind"
-              value={fields.kind}
-              onChange={(event) =>
-                setFields({
-                  ...fields,
-                  kind: event.target.value as ItemFields["kind"],
-                  status:
-                    event.target.value === "note" &&
-                    fields.kind !== "note" &&
-                    fields.status === "done"
-                      ? "open"
-                      : fields.status,
-                  dueDate: event.target.value === "commitment" ? fields.dueDate : null,
-                })
-              }
-            >
-              <option value="unclassified">Unclassified</option>
-              <option value="idea">Idea</option>
-              <option value="note">Note</option>
-              <option value="commitment">Commitment</option>
-            </select>
-          </label>
-          <label className="field">
-            Status
-            <select
-              aria-label="Status"
-              value={fields.status}
-              onChange={(event) =>
-                setFields({ ...fields, status: event.target.value as ItemFields["status"] })
-              }
-            >
-              <option value="open">Open</option>
-              <option value="waiting">Waiting</option>
-              <option value="done" disabled={fields.kind === "note" && item.status !== "done"}>
-                {fields.kind === "note" && item.profilePath ? "Added to profile" : "Done"}
-              </option>
-              <option value="archived">Archived</option>
-            </select>
-          </label>
-        </div>
-        <label className="field">
-          Project
-          <input
-            value={fields.project}
-            maxLength={200}
-            placeholder="Optional project or context"
-            onChange={(event) => setFields({ ...fields, project: event.target.value })}
-          />
-        </label>
-        {fields.kind === "commitment" && (
-          <div className="field-grid">
-            <label className="field">
-              Due date
-              <input
-                type="date"
-                value={fields.dueDate ?? ""}
-                onChange={(event) => setFields({ ...fields, dueDate: event.target.value || null })}
-              />
-            </label>
-            <label className="field">
-              Priority
-              <select
-                aria-label="Priority"
-                value={fields.priority}
-                onChange={(event) =>
-                  setFields({ ...fields, priority: event.target.value as ItemFields["priority"] })
-                }
-              >
-                <option value="normal">Normal</option>
-                <option value="high">High</option>
-              </select>
-            </label>
-          </div>
-        )}
-        <label className="field">
-          User input
-          <textarea
-            aria-label="User input"
-            rows={5}
-            value={fields.body}
-            maxLength={30000}
-            onChange={(event) => setFields({ ...fields, body: event.target.value })}
-          />
-        </label>
-        <p className="muted-text">
-          Saving changed user input regenerates the prompt and interpretation.
-        </p>
-        <label className="field">
-          Prompt
-          <textarea
-            aria-label="Prompt"
-            rows={7}
-            value={fields.prompt}
-            maxLength={30000}
-            placeholder="A self-contained prompt will appear here after refinement."
-            onChange={(event) => setFields({ ...fields, prompt: event.target.value })}
-          />
-        </label>
-        {item.processing === "pending" && (
-          <p className="muted-text">
-            {item.processingError || !aiConfigured
-              ? "Prompt regeneration is pending. The previous prompt may be out of date."
-              : "Generating prompt… The previous prompt may be out of date."}
-          </p>
-        )}
-        <button
-          type="button"
-          className="secondary"
-          disabled={
-            busy ||
-            !fields.prompt.trim() ||
-            fields.body !== item.body ||
-            item.processing === "pending"
-          }
-          onClick={() => {
-            void run(async () => {
-              await navigator.clipboard.writeText(fields.prompt);
-              setCopiedPrompt(fields.prompt);
-            });
+        </>
+      ) : (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!busy && !running && dirty) void save();
           }}
         >
-          {copiedPrompt === fields.prompt ? "Prompt copied" : "Copy prompt"}
-        </button>
-        <label className="field">
-          Related idea or item
-          <select
-            aria-label="Related idea or item"
-            value={fields.relatedId ?? ""}
-            onChange={(event) => setFields({ ...fields, relatedId: event.target.value || null })}
+          <section
+            className={`capture-state ${failed || (review && !note) ? "needs-attention" : ""}`}
+            aria-label="Capture status"
           >
-            <option value="">No link</option>
-            {items
-              .filter((other) => other.id !== item.id)
-              .map((other) => (
-                <option key={other.id} value={other.id}>
-                  {other.title}
-                </option>
-              ))}
-          </select>
-        </label>
-        {item.references.length > 0 && (
-          <div className="interpretation">
-            <p>{annotatedText(item.body, item.references)}</p>
-          </div>
-        )}
-        {item.rationale && (
-          <div className="interpretation">
-            <Sparkles size={16} />
-            <p>{item.rationale}</p>
-          </div>
-        )}
-        {item.processingError && <p className="warning-text">{item.processingError}</p>}
-        {item.kind === "note" && item.profilePath && (
-          <div className="interpretation">
-            <p>Added to profile: {item.profilePath}</p>
-            {item.sourcePaths.map((path) =>
-              profileAvailable ? (
+            <p className="capture-state-heading" aria-live="polite">
+              {running && <LoaderCircle size={16} className="spin" />}
+              <strong>{stateLabel}</strong>
+              <span>
+                {item.status === "open" ? "Open" : item.status === "waiting" ? "Waiting" : ""}
+              </span>
+            </p>
+            {running && (
+              <p>
+                Refining this capture. You can edit a draft or close this window. Save after
+                refinement finishes.
+              </p>
+            )}
+            {!closed && !running && failed && (
+              <>
+                <p role="alert">{item.processingError}</p>
+                {item.processing === "pending" && (
+                  <p>The previous prompt may be out of date and cannot be sent to T3 Code.</p>
+                )}
+                {aiConfigured && item.processing === "pending" && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setSettingsSection("Model")}
+                  >
+                    Check model settings
+                  </button>
+                )}
+              </>
+            )}
+            {!closed && !running && paused && (
+              <p>
+                {aiConfigured
+                  ? "No refinement is running. Resume to prepare this capture."
+                  : "Connect and validate a model to refine this capture."}
+              </p>
+            )}
+            {!closed && !running && review && (
+              <>
+                <p>
+                  {note
+                    ? "Review this note before adding it to your profile."
+                    : "Add the missing information to User input, then save and refine."}
+                </p>
+                {item.rationale && <p className="capture-explanation">{item.rationale}</p>}
+              </>
+            )}
+            {!closed && !running && !review && item.rationale && (failed || paused) && (
+              <details open>
+                <summary>Previous interpretation</summary>
+                <p className="capture-explanation">{item.rationale}</p>
                 <button
                   type="button"
                   className="text-button"
-                  key={path}
-                  onClick={() => onOpenProfile(path)}
+                  onClick={() => inputRef.current?.focus()}
                 >
-                  {path}
+                  Add missing details
                 </button>
-              ) : (
-                <p key={path}>{path}</p>
-              ),
+              </details>
             )}
-          </div>
-        )}
-        {item.kind === "note" && !["done", "archived"].includes(item.status) && (
-          <p className="muted-text">
-            {dirty
-              ? "Save your changes before adding this note to the profile."
-              : "Add this note to your profile. Unclear or conflicting information will remain here for review."}
-          </p>
-        )}
-        <details>
-          <summary>Original capture & sources</summary>
-          <pre>{item.original}</pre>
-          {item.sourcePaths.map((path) => (
-            <div className="source" key={path}>
-              {path}
-            </div>
-          ))}
-          <p className="muted-text">Captured {new Date(item.createdAt).toLocaleString()}</p>
-        </details>
-        <details
-          onToggle={(event) => {
-            if (event.currentTarget.open && !history)
-              void api<{ item: Item; changedAt: string }[]>(`/items/${item.id}/history`)
-                .then(setHistory)
-                .catch((reason) => setError(String(reason)));
-          }}
-        >
-          <summary>Revision history</summary>
-          {history?.length ? (
-            history.map((entry) => (
-              <div key={entry.item.revision} className="history-entry">
-                <strong>{entry.item.title}</strong>
-                {entry.item.prompt && <pre>{entry.item.prompt}</pre>}
-                <p>
-                  {entry.item.kind} · {entry.item.status} ·{" "}
-                  {new Date(entry.changedAt).toLocaleString()}
-                </p>
-                <pre>{entry.item.body}</pre>
+            {!closed &&
+              !running &&
+              !failed &&
+              !paused &&
+              !review &&
+              !fields.prompt.trim() &&
+              !note && <p>Write a complete prompt below, or use Refine again to generate one.</p>}
+            {bodyChanged && (
+              <p>
+                Saving your input will regenerate the prompt. Review the result before starting
+                implementation.
+              </p>
+            )}
+            {!closed && !aiConfigured && !paused && (
+              <p>
+                Refinement needs a model connection.{" "}
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setSettingsSection("Model")}
+                >
+                  Open model settings
+                </button>
+              </p>
+            )}
+            {item.kind === "commitment" && (
+              <div className="implementation">
+                {implementation.loading && <p>Checking T3 Code readiness…</p>}
+                {implementation.error && implementation.error !== latest?.error && (
+                  <p role="alert">
+                    {implementation.error}{" "}
+                    <button type="button" className="text-button" onClick={implementation.refresh}>
+                      Check again
+                    </button>
+                  </p>
+                )}
+                {latest && (
+                  <>
+                    <p>
+                      {submitted ? "Sent to T3 Code" : "T3 Code has not confirmed the handoff"} ·
+                      revision {latest.revision}
+                      {latest.revision !== item.revision && " (earlier saved version)"}
+                    </p>
+                    {latest.error && <p role="alert">{latest.error}</p>}
+                    {pendingHandoff && (
+                      <p>
+                        Retry checks the same thread using the original saved task. It does not send
+                        your current edits.
+                      </p>
+                    )}
+                    {submitted && (
+                      <p>
+                        Implementation progress and approvals are in T3 Code. Mark this capture done
+                        when the task is complete.
+                      </p>
+                    )}
+                  </>
+                )}
+                {options && !closed && (
+                  <>
+                    {!options.configured && (
+                      <p>
+                        T3 Code is not connected.{" "}
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => setSettingsSection("T3 Code")}
+                        >
+                          Connect T3 Code
+                        </button>
+                      </p>
+                    )}
+                    {!pendingHandoff && !submitted && !options.repositories.length && (
+                      <p>
+                        No implementation repositories are available.{" "}
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => setSettingsSection("Projects")}
+                        >
+                          Add a project root and discover repositories
+                        </button>
+                      </p>
+                    )}
+                    {!pendingHandoff && options.repositories.length > 0 && (
+                      <label className="field">
+                        Implementation repository
+                        <select
+                          aria-label="Implementation repository"
+                          value={repositoryId}
+                          disabled={busy}
+                          onChange={(event) => setRepositoryId(event.target.value)}
+                        >
+                          <option value="">Choose a repository</option>
+                          {options.repositories.map((repository) => (
+                            <option key={repository.id} value={repository.id}>
+                              {repository.name} — {repository.path}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {!pendingHandoff && !repositoryId && options.repositories.length > 0 && (
+                      <p>Choose the repository for this task.</p>
+                    )}
+                    {!pendingHandoff && canImplement && !latest && (
+                      <p>
+                        Starts an agent in a new worktree from the current commit. Uncommitted
+                        changes are not included.
+                      </p>
+                    )}
+                    {fields.project !== item.project && (
+                      <p>Save the project change to check its implementation repository.</p>
+                    )}
+                  </>
+                )}
               </div>
-            ))
-          ) : (
-            <p className="muted-text">No earlier revisions.</p>
-          )}
-        </details>
-        <div className="modal-actions">
-          {aiConfigured && item.kind === "note" && !["done", "archived"].includes(item.status) && (
-            <button
-              type="button"
-              className="primary"
-              disabled={busy || dirty}
-              onClick={() => {
-                void run(onAddToProfile);
-              }}
-            >
-              {busy
-                ? "Updating profile…"
-                : item.processingError
-                  ? "Retry profile update"
-                  : "Add to profile"}
-            </button>
-          )}
-          {aiConfigured &&
-            item.references.length > 0 &&
-            !(item.kind === "note" && item.status === "done") && (
-              <button
-                type="button"
-                className="secondary"
-                disabled={busy || dirty}
-                onClick={() => {
-                  void run(() => onRetry(true));
-                }}
-              >
-                Resolve aliases again
-              </button>
             )}
-          {aiConfigured && !(item.kind === "note" && item.status === "done") && (
-            <button
-              type="button"
-              className="secondary"
-              disabled={busy || dirty}
-              onClick={() => {
-                void run(onRetry);
-              }}
-            >
-              Regenerate prompt
-            </button>
+          </section>
+          {error && (
+            <div role="alert" className="banner error">
+              {error}
+            </div>
           )}
-          <button type="submit" className="primary" disabled={busy}>
-            {busy ? "Saving…" : "Save changes"}
+          <label className="field">
+            Title
+            <input
+              required
+              maxLength={300}
+              value={fields.title}
+              onChange={(event) => setFields({ ...fields, title: event.target.value })}
+            />
+          </label>
+          <label className="field">
+            User input
+            <textarea
+              ref={inputRef}
+              aria-label="User input"
+              rows={4}
+              value={fields.body}
+              maxLength={30000}
+              onChange={(event) => setFields({ ...fields, body: event.target.value })}
+            />
+          </label>
+          <label className="field">
+            Prompt
+            <textarea
+              ref={promptRef}
+              aria-label="Prompt"
+              rows={6}
+              value={fields.prompt}
+              maxLength={30000}
+              placeholder="A self-contained prompt will appear here after refinement."
+              onChange={(event) => setFields({ ...fields, prompt: event.target.value })}
+            />
+          </label>
+          <button
+            type="button"
+            className="text-button"
+            disabled={
+              busy ||
+              !fields.prompt.trim() ||
+              bodyChanged ||
+              running ||
+              item.processing === "pending"
+            }
+            onClick={() =>
+              void run("Copying…", async () => {
+                await navigator.clipboard.writeText(fields.prompt);
+                setCopiedPrompt(fields.prompt);
+              })
+            }
+          >
+            {copiedPrompt === fields.prompt ? "Prompt copied" : "Copy prompt"}
           </button>
-        </div>
-        {item.kind === "commitment" && (
-          <Implementation
-            key={`${item.id}:${item.revision}`}
-            item={item}
-            dirty={dirty}
-            busy={busy}
-            run={run}
-          />
-        )}
-      </form>
+          <details className="capture-details">
+            <summary>
+              Task details{" "}
+              <span>
+                {fields.project || "No project"} · {fields.status}
+              </span>
+            </summary>
+            <div className="field-grid">
+              <label className="field">
+                Kind
+                <select
+                  aria-label="Kind"
+                  value={fields.kind}
+                  onChange={(event) =>
+                    setFields({
+                      ...fields,
+                      kind: event.target.value as ItemFields["kind"],
+                      status:
+                        event.target.value === "note" &&
+                        fields.kind !== "note" &&
+                        fields.status === "done"
+                          ? "open"
+                          : fields.status,
+                      dueDate: event.target.value === "commitment" ? fields.dueDate : null,
+                    })
+                  }
+                >
+                  <option value="unclassified">Unclassified</option>
+                  <option value="idea">Idea</option>
+                  <option value="note">Note</option>
+                  <option value="commitment">Commitment</option>
+                </select>
+              </label>
+              <label className="field">
+                Status
+                <select
+                  aria-label="Status"
+                  value={fields.status}
+                  onChange={(event) =>
+                    setFields({ ...fields, status: event.target.value as ItemFields["status"] })
+                  }
+                >
+                  <option value="open">Open</option>
+                  <option value="waiting">Waiting</option>
+                  <option value="done" disabled={fields.kind === "note" && item.status !== "done"}>
+                    {fields.kind === "note" && item.profilePath ? "Added to profile" : "Done"}
+                  </option>
+                  <option value="archived">Archived</option>
+                </select>
+              </label>
+            </div>
+            <label className="field">
+              Project
+              <input
+                value={fields.project}
+                maxLength={200}
+                placeholder="Optional project or context"
+                onChange={(event) => setFields({ ...fields, project: event.target.value })}
+              />
+            </label>
+            {fields.kind === "commitment" && (
+              <div className="field-grid">
+                <label className="field">
+                  Due date
+                  <input
+                    type="date"
+                    value={fields.dueDate ?? ""}
+                    onChange={(event) =>
+                      setFields({ ...fields, dueDate: event.target.value || null })
+                    }
+                  />
+                </label>
+                <label className="field">
+                  Priority
+                  <select
+                    aria-label="Priority"
+                    value={fields.priority}
+                    onChange={(event) =>
+                      setFields({
+                        ...fields,
+                        priority: event.target.value as ItemFields["priority"],
+                      })
+                    }
+                  >
+                    <option value="normal">Normal</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+              </div>
+            )}
+
+            <label className="field">
+              Related idea or item
+              <select
+                aria-label="Related idea or item"
+                value={fields.relatedId ?? ""}
+                onChange={(event) =>
+                  setFields({ ...fields, relatedId: event.target.value || null })
+                }
+              >
+                <option value="">No link</option>
+                {items
+                  .filter((other) => other.id !== item.id)
+                  .map((other) => (
+                    <option key={other.id} value={other.id}>
+                      {other.title}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </details>
+          {item.references.length > 0 && (
+            <div className="interpretation">
+              <p>{annotatedText(item.body, item.references)}</p>
+            </div>
+          )}
+          {item.rationale && !failed && !paused && !review && (
+            <details>
+              <summary>Interpretation</summary>
+              <p className="capture-explanation">{item.rationale}</p>
+            </details>
+          )}
+          {note && item.profilePath && (
+            <details open>
+              <summary>Added to profile</summary>
+              {item.sourcePaths.map((path) =>
+                profileAvailable ? (
+                  <button
+                    type="button"
+                    className="text-button"
+                    key={path}
+                    onClick={() => onOpenProfile(path)}
+                  >
+                    {path}
+                  </button>
+                ) : (
+                  <p key={path}>{path}</p>
+                ),
+              )}
+            </details>
+          )}
+          <details>
+            <summary>Original capture & sources</summary>
+            <pre>{item.original}</pre>
+            {item.sourcePaths.map((path) => (
+              <div className="source" key={path}>
+                {path}
+              </div>
+            ))}
+            <p className="muted-text">Captured {new Date(item.createdAt).toLocaleString()}</p>
+          </details>
+          <details
+            onToggle={(event) => {
+              if (event.currentTarget.open && !history)
+                void api<{ item: Item; changedAt: string }[]>(`/items/${item.id}/history`)
+                  .then(setHistory)
+                  .catch((reason) => setError(String(reason)));
+            }}
+          >
+            <summary>Revision history</summary>
+            {history?.length ? (
+              history.map((entry) => (
+                <div key={entry.item.revision} className="history-entry">
+                  <strong>{entry.item.title}</strong>
+                  {entry.item.prompt && <pre>{entry.item.prompt}</pre>}
+                  <p>
+                    {entry.item.kind} · {entry.item.status} ·{" "}
+                    {new Date(entry.changedAt).toLocaleString()}
+                  </p>
+                  <pre>{entry.item.body}</pre>
+                </div>
+              ))
+            ) : (
+              <p className="muted-text">No earlier revisions.</p>
+            )}
+          </details>
+
+          {!closed && (
+            <details className="capture-tools">
+              <summary>More actions</summary>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy || running || dirty || !aiConfigured}
+                  onClick={() => void refine()}
+                >
+                  Refine again
+                </button>
+                {item.references.length > 0 && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy || running || dirty || !aiConfigured}
+                    onClick={() => void refine(true)}
+                  >
+                    Resolve aliases again
+                  </button>
+                )}
+                {submitted && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy || running || dirty || !canImplement}
+                    onClick={() => void implement()}
+                  >
+                    Start another implementation
+                  </button>
+                )}
+              </div>
+              {(dirty || running || !aiConfigured) && (
+                <p className="muted-text">
+                  {running
+                    ? "Wait for the current refinement to finish."
+                    : dirty
+                      ? "Save your changes before refining again."
+                      : "Connect a model to refine this capture."}
+                </p>
+              )}
+              {submitted && (
+                <p className="muted-text">
+                  Another implementation starts a separate thread from the current saved version.
+                </p>
+              )}
+            </details>
+          )}
+          <div className="capture-footer">
+            <span className="capture-save-state">
+              {dirty ? "Unsaved changes · closing discards edits" : "All changes saved"}
+            </span>
+            <div className="modal-actions">
+              {dirty && action.label !== "Save changes" && action.label !== "Save and refine" && (
+                <button type="submit" className="secondary" disabled={busy || running}>
+                  Save changes
+                </button>
+              )}
+              {submitted && !dirty && !running && !busy ? (
+                <a
+                  className="primary capture-open"
+                  href={latest.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open in T3 Code
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={action.disabled}
+                  onClick={(event) => {
+                    if (!dirty || event.currentTarget.form?.reportValidity()) action.run();
+                  }}
+                >
+                  {action.label}
+                </button>
+              )}
+            </div>
+          </div>
+        </form>
+      )}
     </dialog>
   );
 }

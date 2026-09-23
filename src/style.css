@@ -1626,3 +1626,102 @@ summary {
     padding: 8px;
   }
 }
+
+.capture-editor {
+  width: min(740px, 94vw);
+  padding-bottom: 0;
+}
+.capture-editor h2 {
+  overflow-wrap: anywhere;
+  margin-bottom: 20px;
+}
+.capture-state {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--raised);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.capture-state p {
+  margin: 8px 0;
+}
+.capture-state.needs-attention {
+  border-left: 3px solid var(--accent);
+}
+.capture-state-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.capture-state-heading span {
+  color: var(--muted);
+  margin-left: auto;
+}
+.capture-explanation {
+  white-space: pre-wrap;
+}
+.capture-editor details {
+  margin: 18px 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.capture-editor summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.capture-details summary span {
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.capture-editor .implementation {
+  margin-top: 12px;
+  padding-top: 8px;
+}
+.capture-editor .modal-actions {
+  flex-wrap: wrap;
+}
+.capture-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  padding: 12px 0 18px;
+  margin-top: 24px;
+}
+.capture-footer .modal-actions {
+  margin-top: 0;
+}
+.capture-save-state {
+  color: var(--muted);
+  font-size: 12px;
+}
+.capture-open {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.capture-editor .settings-layout {
+  grid-template-columns: 1fr;
+}
+.capture-editor .settings-navigation {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.capture-state details {
+  margin: 8px 0;
+  padding: 8px 0;
+}
+@media (max-width: 600px) {
+  .capture-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

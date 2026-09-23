@@ -1,136 +1,66 @@
-import { useEffect, useState } from "react";
-import type { Item } from "../shared/schema";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Capture } from "../shared/schema";
 import type { ImplementationOptions, ImplementationSummary } from "../shared/t3";
 import { api } from "./api";
 
-export function Implementation({
-  item,
-  dirty,
-  busy,
-  run,
-}: {
-  item: Item;
-  dirty: boolean;
-  busy: boolean;
-  run(action: () => Promise<void>): Promise<void>;
-}) {
+export function useImplementation(item: Capture, settingsSection: string | null) {
   const [options, setOptions] = useState<ImplementationOptions | null>(null);
   const [repositoryId, setRepositoryId] = useState("");
   const [error, setError] = useState("");
-  useEffect(() => {
-    let current = true;
-    void api<ImplementationOptions>(`/items/${item.id}/implementation`)
+  const [loading, setLoading] = useState(true);
+  const suggested = useRef<string | null>(null);
+  const request = useRef(0);
+  const refresh = useCallback(async () => {
+    const { id, kind } = item;
+    if (kind !== "commitment") return;
+    const current = ++request.current;
+    setLoading(true);
+    setError("");
+    await api<ImplementationOptions>(`/items/${id}/implementation`)
       .then((next) => {
-        if (current) {
+        if (current === request.current) {
           setOptions(next);
-          setRepositoryId(next.suggestedRepositoryId ?? "");
+          const previousSuggestion = suggested.current;
+          setRepositoryId((selected) =>
+            !selected ||
+            selected === previousSuggestion ||
+            !next.repositories.some((repo) => repo.id === selected)
+              ? (next.suggestedRepositoryId ?? "")
+              : selected,
+          );
+          suggested.current = next.suggestedRepositoryId;
         }
       })
       .catch((reason) => {
-        if (current)
+        if (current === request.current)
           setError(
             reason instanceof Error ? reason.message : "Could not load implementation settings.",
           );
+      })
+      .finally(() => {
+        if (current === request.current) setLoading(false);
       });
+  }, [item]);
+  useEffect(() => {
+    if (!settingsSection) void refresh();
     return () => {
-      current = false;
+      request.current++;
     };
-  }, [item.id]);
-  if (error) return <p className="warning-text">{error}</p>;
-  if (!options?.configured && !options?.latest) return null;
-  const latest = options.latest;
-  const pending = latest?.state === "pending";
-  const resolvedRepository = options.repositories.find(
-    (repository) => repository.id === options.suggestedRepositoryId,
-  );
-  const ready =
-    item.processing === "ready" &&
-    !item.processingError &&
-    !!item.prompt.trim() &&
-    ["open", "waiting"].includes(item.status);
-  const start = () =>
-    run(async () => {
-      try {
-        const result = await api<ImplementationSummary>(
-          `/items/${item.id}/implementation`,
-          "POST",
-          {
-            revision: item.revision,
-            repositoryId: repositoryId || undefined,
-            ...(latest?.state === "submitted" ? { previousAttemptId: latest.id } : {}),
-          },
-        );
-        setOptions({ ...options, latest: result });
-      } finally {
-        setOptions(await api<ImplementationOptions>(`/items/${item.id}/implementation`));
-      }
-    });
-  return (
-    <section className="implementation">
-      <h3>Implementation</h3>
-      {latest && (
-        <p>
-          {latest.state === "submitted" ? "Sent to T3 Code" : "Handoff needs retry"} · revision{" "}
-          {latest.revision}
-          {latest.revision !== item.revision && " (earlier saved version)"} ·{" "}
-          <a href={latest.url} target="_blank" rel="noreferrer">
-            Open in T3 Code
-          </a>
-        </p>
-      )}
-      {latest?.error && <p className="warning-text">{latest.error}</p>}
-      {options.configured && (
-        <>
-          {!pending && resolvedRepository && (
-            <p className="muted-text">Implementation repository: {resolvedRepository.path}</p>
-          )}
-          {!pending && !resolvedRepository && (
-            <label className="field">
-              Implementation repository
-              <select
-                aria-label="Implementation repository"
-                value={repositoryId}
-                disabled={busy}
-                onChange={(event) => setRepositoryId(event.target.value)}
-              >
-                <option value="">Choose a repository</option>
-                {options.repositories.map((repository) => (
-                  <option key={repository.id} value={repository.id}>
-                    {repository.name} — {repository.path}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <p className="muted-text">
-            {pending
-              ? "Retry checks the same thread and preserves the original saved task, even if this commitment has changed."
-              : dirty
-                ? "Save your changes before implementing."
-                : !ready
-                  ? "Complete refinement and resolve processing errors before implementing an open commitment."
-                  : !options.repositories.length
-                    ? "Add a project root and discover repositories in Settings first."
-                    : "Starts an agent immediately in a new worktree from the current commit. Uncommitted changes are not included. Review approvals and progress in T3 Code."}
-          </p>
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy || (!pending && (dirty || !ready || !repositoryId))}
-            onClick={() => {
-              void start();
-            }}
-          >
-            {busy
-              ? "Please wait…"
-              : pending
-                ? "Retry implementation"
-                : latest
-                  ? "Start another implementation"
-                  : "Implement"}
-          </button>
-        </>
-      )}
-    </section>
-  );
+  }, [refresh, settingsSection]);
+  const start = async (saved: Capture) => {
+    setError("");
+    try {
+      const result = await api<ImplementationSummary>(`/items/${saved.id}/implementation`, "POST", {
+        revision: saved.revision,
+        repositoryId: repositoryId || undefined,
+        ...(options?.latest?.state === "submitted" ? { previousAttemptId: options.latest.id } : {}),
+      });
+      setOptions((current) => current && { ...current, latest: result });
+      await refresh();
+    } catch (reason) {
+      await refresh();
+      setError(reason instanceof Error ? reason.message : "Could not send this task to T3 Code.");
+    }
+  };
+  return { options, repositoryId, setRepositoryId, error, loading, start, refresh };
 }
