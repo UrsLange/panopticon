@@ -621,11 +621,10 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await page.getByRole("button", { name: "Start in T3 Code", exact: true }).click();
   await expect(page.getByRole("button", { name: "Retry handoff", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Retry handoff", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Open in T3 Code", exact: true })).toHaveAttribute(
-    "href",
-    /http:\/\/127\.0\.0\.1:4321\/fixture\//,
-  );
-  await expect(page.getByLabel("Status", { exact: true })).toHaveValue("open");
+  await expect(
+    page.getByRole("link", { name: "Continue in T3 Code", exact: true }),
+  ).toHaveAttribute("href", /http:\/\/127\.0\.0\.1:4321\/fixture\//);
+  await expect(page.getByLabel("Status", { exact: true })).toHaveValue("in_progress");
   let commands = await (await request.get("http://127.0.0.1:4321/test/commands")).json();
   expect(
     commands.filter((command: { type: string }) => command.type === "project.create"),

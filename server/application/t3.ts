@@ -1,4 +1,3 @@
-import type { Item } from "../../shared/schema.js";
 import type {
   Implementation,
   ImplementationOptions,
@@ -13,7 +12,7 @@ import {
   resolveImplementationRepository,
 } from "./implementation-repository.js";
 import { assertRevision } from "./items.js";
-import type { ProfileNotes } from "./ports.js";
+import type { CaptureRecords, ProfileNotes } from "./ports.js";
 
 export interface T3Client {
   connect(input: T3ConnectionInput, previous?: T3Connection): Promise<T3Connection>;
@@ -22,8 +21,7 @@ export interface T3Client {
   ): Promise<{ id: string; workspaceRoot: string; defaultModelSelection: T3Model | null }[]>;
   launch(connection: T3Connection, implementation: Implementation): Promise<void>;
 }
-export interface ImplementationRecords {
-  get(id: string): Item | undefined;
+export interface ImplementationRecords extends CaptureRecords {
   latestImplementation(itemId: string, profileRoot: string): Implementation | null;
   saveImplementation(implementation: Implementation): void;
 }
@@ -109,7 +107,7 @@ export function createT3({
       assertRevision(item, input.revision);
       if (
         item.kind !== "commitment" ||
-        !["open", "waiting"].includes(item.status) ||
+        !["open", "in_progress", "in_review", "waiting"].includes(item.status) ||
         item.processing !== "ready" ||
         item.processingError ||
         !item.prompt.trim()
@@ -162,6 +160,9 @@ export function createT3({
       entry.state = "submitted";
       entry.error = null;
       records.saveImplementation(entry);
+      const current = records.get(itemId);
+      if (current?.kind === "commitment" && !["done", "archived"].includes(current.status))
+        records.update(itemId, { status: "in_progress" }, current.revision);
       return summary(entry);
     } catch (error) {
       entry.error =

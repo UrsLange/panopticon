@@ -162,7 +162,7 @@ describe("capture and planning", () => {
         {
           kind: "commitment",
           dueDate: i < 8 ? "2026-09-16" : "2026-09-17",
-          status: i === 0 ? "waiting" : "open",
+          status: i === 0 ? "waiting" : i === 1 ? "in_progress" : i === 2 ? "in_review" : "open",
         },
         0,
       );
@@ -182,6 +182,11 @@ describe("capture and planning", () => {
       db.update(item.id, { kind }, 0);
     }
     expect(db.today("2026-09-17").suggested.map((item) => item.kind)).toEqual(["commitment"]);
+    for (const status of ["in_progress", "in_review", "waiting", "done"] as const) {
+      const item = db.capture(status);
+      db.update(item.id, { kind: "commitment", status }, 0);
+    }
+    expect(db.today("2026-09-17").suggested.map((item) => item.status)).toEqual(["open"]);
   });
 
   it("rejects invalid links without modifying the capture", () => {

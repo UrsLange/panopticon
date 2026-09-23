@@ -536,6 +536,18 @@ h2 {
 .row-arrow {
   color: var(--muted);
 }
+.item-main > .task-status {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--raised);
+  font-weight: 600;
+}
+.item-main > .task-status-in_progress,
+.item-main > .task-status-in_review {
+  color: var(--accent);
+  border: 1px solid currentColor;
+}
 :where(.completed) .item-main strong {
   text-decoration: line-through;
   color: var(--muted);

@@ -2,7 +2,22 @@ import { z } from "zod";
 import type { PublicEntraConfig } from "./people.js";
 
 export const kindSchema = z.enum(["unclassified", "idea", "note", "commitment"]);
-export const statusSchema = z.enum(["open", "waiting", "done", "archived"]);
+export const statusSchema = z.enum([
+  "open",
+  "in_progress",
+  "in_review",
+  "waiting",
+  "done",
+  "archived",
+]);
+export const statusLabels = {
+  open: "Not started",
+  in_progress: "In progress",
+  in_review: "Ready for review",
+  waiting: "Waiting",
+  done: "Done",
+  archived: "Archived",
+};
 export const dateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)

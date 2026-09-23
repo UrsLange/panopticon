@@ -12,7 +12,9 @@ In **Inbox**, open an item to edit its kind, project, status, deadline, priority
 
 ## Plan your day
 
-**Today** shows all open or waiting commitments due today or earlier, using your configured timezone. Suggested next actions are the three oldest undated open commitments, with high priority first. The app does not infer deadlines.
+**Today** shows started commitments in **In progress**, including those without deadlines. **Due & overdue** includes every unfinished commitment due today or earlier, using your configured timezone. Suggested next actions are the three oldest undated commitments that have not started, with high priority first. The app does not infer deadlines.
+
+Use **Mark in progress** for work you do outside T3 Code. **Mark waiting** pauses a task; **Resume** returns it to progress. Use **Mark done** when non-code work is complete. Code tasks are complete after their implementation is merged. Every commitment shows its status in the list, and Inbox can filter by status. The status selector also supports **Ready for review**, reopening, and archiving.
 
 **Notebook** holds ideas and pending profile notes. Discovering a repository does not create a commitment or assign it a priority.
 
@@ -22,7 +24,7 @@ After [connecting T3 Code](setup.md#t3-code), open a commitment and save any edi
 
 Panopticon reuses the T3 project for that repository path or creates one. It immediately submits the refined task, notes, original wording, linked item, resolved references, and cited profile documents to a new thread. Each implementation uses a separate Git worktree from the current commit; uncommitted changes are not included. T3 runs the project's setup script and uses approval-required permissions.
 
-Choose **Open in T3 Code** to follow progress and answer approvals. Sending a task leaves the commitment open. **Retry implementation** checks the original thread and reuses the saved task and command IDs when dispatch is still needed, including after a restart. Later edits are not included in that retry. **Start another implementation** explicitly creates a new thread from the latest saved version. The handoff records submission, not successful agent execution or completion.
+Choose **Continue in T3 Code** to follow progress and answer approvals in the existing thread. A confirmed handoff marks the commitment **In progress**; an unconfirmed handoff leaves its status unchanged. **Retry handoff** checks the original thread and reuses the saved task and command IDs when dispatch is still needed, including after a restart. Later edits are not included in that retry. **Start another implementation** explicitly creates a new thread from the latest saved version. A handoff does not establish successful execution or completion. Use **Mark merged** after the implementation has been merged.
 
 ## Add knowledge to your profile
 

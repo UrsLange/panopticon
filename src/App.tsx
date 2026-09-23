@@ -24,7 +24,7 @@ import type {
   ProfileDocument,
   Settings,
 } from "../shared/schema";
-import { annotatedText } from "../shared/schema";
+import { annotatedText, statusLabels } from "../shared/schema";
 import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
 import { useImplementation } from "./Implementation";
@@ -57,6 +57,7 @@ export function App() {
   const [profileDocument, setProfileDocument] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
   const input = useRef<HTMLTextAreaElement>(null);
   const report = useCallback(
     (reason: unknown) =>
@@ -150,7 +151,10 @@ export function App() {
   ).length;
   const filtered = items.filter(
     (item) =>
-      (showClosed || !["done", "archived"].includes(item.status)) &&
+      (showClosed ||
+        (view === "inbox" && ["done", "archived"].includes(statusFilter)) ||
+        !["done", "archived"].includes(item.status)) &&
+      (view !== "inbox" || statusFilter === "all" || item.status === statusFilter) &&
       (view !== "notebook" || ["idea", "note"].includes(item.kind)) &&
       `${item.title} ${item.body} ${item.prompt} ${item.project}`
         .toLowerCase()
@@ -328,6 +332,34 @@ export function App() {
             <div className="dashboard">
               <div>
                 <Section
+                  title="In progress"
+                  subtitle="Work already started, in T3 Code or elsewhere."
+                  count={
+                    items.filter(
+                      (item) =>
+                        item.kind === "commitment" &&
+                        ["in_progress", "in_review"].includes(item.status),
+                    ).length
+                  }
+                >
+                  {items
+                    .filter(
+                      (item) =>
+                        item.kind === "commitment" &&
+                        ["in_progress", "in_review"].includes(item.status),
+                    )
+                    .map((item) => row(item))}
+                  {!items.some(
+                    (item) =>
+                      item.kind === "commitment" &&
+                      ["in_progress", "in_review"].includes(item.status),
+                  ) && (
+                    <p className="muted-text">
+                      Start a task or mark work in progress to keep it here.
+                    </p>
+                  )}
+                </Section>
+                <Section
                   title="Due & overdue"
                   subtitle="Real deadlines. Nothing quietly left out."
                   count={daily?.due.length ?? 0}
@@ -441,6 +473,20 @@ export function App() {
                     placeholder="Find a thought or commitment"
                   />
                 </label>
+                {view === "inbox" && (
+                  <select
+                    aria-label="Filter task status"
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value)}
+                  >
+                    <option value="all">All statuses</option>
+                    {Object.entries(statusLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -527,6 +573,7 @@ export function App() {
             await reloadProfile();
           }}
           onClose={() => setSelected(null)}
+          onReload={reload}
           onSave={async (fields) => {
             const updated = await api<Item>(`/items/${selected.id}`, "PATCH", {
               ...fields,
@@ -609,6 +656,11 @@ function ItemRow({
       )}
       <button type="button" className="item-main" onClick={onOpen}>
         <strong>{item.title}</strong>
+        {item.kind === "commitment" && (
+          <span className={`task-status task-status-${item.status}`}>
+            {statusLabels[item.status]}
+          </span>
+        )}
         <span>
           {item.project && <span className="project-tag">{item.project}</span>}
           {reason ||
@@ -645,6 +697,7 @@ function ItemEditor({
   aiConfigured,
   onClose,
   onSave,
+  onReload,
   onRetry,
   onAddToProfile,
   onOpenProfile,
@@ -657,6 +710,7 @@ function ItemEditor({
   aiConfigured: boolean;
   onClose: () => void;
   onSave: (fields: ItemFields) => Promise<Item>;
+  onReload: () => Promise<void>;
   onRetry: (resetReferences?: boolean) => Promise<void>;
   onAddToProfile: () => Promise<void>;
   onOpenProfile: (path: string) => void;
@@ -684,7 +738,7 @@ function ItemEditor({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const backdropPointer = useRef(false);
-  const implementation = useImplementation(item, settingsSection);
+  const implementation = useImplementation(item, settingsSection, onReload);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<{ item: Item; changedAt: string }[] | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
@@ -727,7 +781,7 @@ function ItemEditor({
   const submitted = latest?.state === "submitted";
   const canImplement =
     fields.kind === "commitment" &&
-    ["open", "waiting"].includes(fields.status) &&
+    ["open", "in_progress", "in_review", "waiting"].includes(fields.status) &&
     item.refinement === "ready" &&
     !bodyChanged &&
     fields.project === item.project &&
@@ -778,7 +832,7 @@ function ItemEditor({
             : !fields.prompt.trim() && !note
               ? "Prompt needed"
               : submitted
-                ? "Sent to T3 Code"
+                ? statusLabels[item.status]
                 : pendingHandoff
                   ? "Handoff unconfirmed"
                   : canImplement
@@ -914,7 +968,11 @@ function ItemEditor({
               {running && <LoaderCircle size={16} className="spin" />}
               <strong>{stateLabel}</strong>
               <span>
-                {item.status === "open" ? "Open" : item.status === "waiting" ? "Waiting" : ""}
+                {item.kind === "commitment"
+                  ? statusLabels[item.status]
+                  : item.status === "waiting"
+                    ? "Waiting"
+                    : ""}
               </span>
             </p>
             {running && (
@@ -1022,8 +1080,8 @@ function ItemEditor({
                     )}
                     {submitted && (
                       <p>
-                        Implementation progress and approvals are in T3 Code. Mark this capture done
-                        when the task is complete.
+                        Continue work and answer approvals in T3 Code. Mark this task done after its
+                        implementation is merged.
                       </p>
                     )}
                   </>
@@ -1187,7 +1245,11 @@ function ItemEditor({
                     setFields({ ...fields, status: event.target.value as ItemFields["status"] })
                   }
                 >
-                  <option value="open">Open</option>
+                  <option value="open">Not started</option>
+                  {fields.kind === "commitment" && <option value="in_progress">In progress</option>}
+                  {fields.kind === "commitment" && (
+                    <option value="in_review">Ready for review</option>
+                  )}
                   <option value="waiting">Waiting</option>
                   <option value="done" disabled={fields.kind === "note" && item.status !== "done"}>
                     {fields.kind === "note" && item.profilePath ? "Added to profile" : "Done"}
@@ -1376,6 +1438,46 @@ function ItemEditor({
               {dirty ? "Unsaved changes · closing discards edits" : "All changes saved"}
             </span>
             <div className="modal-actions">
+              {item.kind === "commitment" && !dirty && !closed && (
+                <>
+                  {["open", "waiting", "in_review"].includes(item.status) && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        void run("Updating status…", () =>
+                          onSave({ ...fields, status: "in_progress" }),
+                        )
+                      }
+                    >
+                      {item.status === "open" ? "Mark in progress" : "Resume"}
+                    </button>
+                  )}
+                  {item.status === "in_progress" && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        void run("Updating status…", () => onSave({ ...fields, status: "waiting" }))
+                      }
+                    >
+                      Mark waiting
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      void run("Completing…", () => onSave({ ...fields, status: "done" }))
+                    }
+                  >
+                    {submitted ? "Mark merged" : "Mark done"}
+                  </button>
+                </>
+              )}
               {dirty && action.label !== "Save changes" && action.label !== "Save and refine" && (
                 <button type="submit" className="secondary" disabled={busy || running}>
                   Save changes
@@ -1388,7 +1490,7 @@ function ItemEditor({
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Open in T3 Code
+                  Continue in T3 Code
                 </a>
               ) : (
                 <button

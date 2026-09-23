@@ -3,7 +3,11 @@ import type { Capture } from "../shared/schema";
 import type { ImplementationOptions, ImplementationSummary } from "../shared/t3";
 import { api } from "./api";
 
-export function useImplementation(item: Capture, settingsSection: string | null) {
+export function useImplementation(
+  item: Capture,
+  settingsSection: string | null,
+  onReload: () => Promise<void>,
+) {
   const [options, setOptions] = useState<ImplementationOptions | null>(null);
   const [repositoryId, setRepositoryId] = useState("");
   const [error, setError] = useState("");
@@ -56,6 +60,7 @@ export function useImplementation(item: Capture, settingsSection: string | null)
         ...(options?.latest?.state === "submitted" ? { previousAttemptId: options.latest.id } : {}),
       });
       setOptions((current) => current && { ...current, latest: result });
+      await onReload();
       await refresh();
     } catch (reason) {
       await refresh();

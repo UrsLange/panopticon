@@ -103,7 +103,7 @@ function fixture() {
   return { service: createT3(ports), ports, store, item, client, documents, repositories };
 }
 
-it("routes exact references, sends saved context, and leaves the commitment open", async () => {
+it("routes exact references, sends saved context, and marks the commitment in progress", async () => {
   const { service, store, item, client } = fixture();
   expect(service.options(item.id).suggestedRepositoryId).toBe("repo");
   const launched = await service.implement(item.id, { revision: item.revision });
@@ -113,7 +113,7 @@ it("routes exact references, sends saved context, and leaves the commitment open
   expect(vi.mocked(client.launch).mock.calls[0][1].prompt).toBe(item.prompt);
   expect(launched?.url).toBe("http://127.0.0.1:3773/local/id-1");
   expect(entry.state).toBe("submitted");
-  expect(store.get(item.id)?.status).toBe("open");
+  expect(store.get(item.id)?.status).toBe("in_progress");
   expect(client.launch).toHaveBeenCalledTimes(1);
 });
 
@@ -148,7 +148,9 @@ it("does not guess between duplicate project names or use a previous handoff aft
   const { service, store, item, repositories } = fixture();
   await service.implement(item.id, { revision: item.revision });
   repositories.push({ id: "second", name: "portal", path: "/another/portal", document: null });
-  const changed = store.update(item.id, { project: "portal", references: [] }, item.revision);
+  const current = store.get(item.id);
+  assert(current);
+  const changed = store.update(item.id, { project: "portal", references: [] }, current.revision);
   expect(service.options(item.id).suggestedRepositoryId).toBeNull();
   store.update(item.id, { project: "unknown" }, changed.revision);
   expect(service.options(item.id).suggestedRepositoryId).toBeNull();
@@ -185,16 +187,19 @@ it("reuses a project and its full model selection, including options", async () 
 });
 
 it("deduplicates concurrent launches and explicit new-thread requests", async () => {
-  const { service, item, client } = fixture();
+  const { service, item, client, store } = fixture();
   const [first, duplicate] = await Promise.all([
     service.implement(item.id, { revision: item.revision }),
     service.implement(item.id, { revision: item.revision }),
   ]);
   expect(first?.id).toBe(duplicate?.id);
   expect(client.launch).toHaveBeenCalledTimes(1);
+  const current = store.get(item.id);
+  assert(current);
+  const revision = current.revision;
   const [next, nextDuplicate] = await Promise.all([
-    service.implement(item.id, { revision: item.revision, previousAttemptId: first?.id }),
-    service.implement(item.id, { revision: item.revision, previousAttemptId: first?.id }),
+    service.implement(item.id, { revision, previousAttemptId: first?.id }),
+    service.implement(item.id, { revision, previousAttemptId: first?.id }),
   ]);
   expect(next?.id).not.toBe(first?.id);
   expect(next?.id).toBe(nextDuplicate?.id);
@@ -209,6 +214,7 @@ it("resumes the persisted handoff after a restart without changing its task or I
   );
   const pending = store.latestImplementation(item.id, "/profile");
   assert(pending);
+  expect(store.get(item.id)?.status).toBe("open");
   expect(pending.error).not.toContain("private-token");
   store.update(item.id, { prompt: "A later edit" }, item.revision);
   await createT3(ports).implement(item.id, { revision: item.revision });

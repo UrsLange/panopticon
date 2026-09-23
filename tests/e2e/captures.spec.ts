@@ -44,7 +44,12 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
     if (path === "/api/items") return route.fulfill({ json: [item] });
     if (path === "/api/today")
       return route.fulfill({
-        json: { date: "2026-09-23", due: [], suggested: [item], waiting: [] },
+        json: {
+          date: "2026-09-23",
+          due: [],
+          suggested: item.status === "open" ? [item] : [],
+          waiting: [],
+        },
       });
     if (path.endsWith("/implementation")) {
       if (route.request().method() === "POST") {
@@ -59,6 +64,7 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
           error: null,
           url: "http://localhost:4321/environment/thread-test",
         };
+        item = { ...item, status: "in_progress", revision: item.revision + 1 };
         return route.fulfill({ json: options.latest });
       }
       return route.fulfill({ json: options });
@@ -184,11 +190,11 @@ test("preserves drafts through settings and saves the exact version sent to T3 C
     revision: 1,
   });
   await page.getByRole("button", { name: "Save and start in T3 Code", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Open in T3 Code", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Continue in T3 Code", exact: true })).toBeVisible();
   expect(state.item.title).toBe("Kiana access request");
   expect(state.saves).toBe(1);
   expect(state.launches).toEqual([{ revision: 2, repositoryId: "access" }]);
-  expect(state.item.status).toBe("open");
+  expect(state.item.status).toBe("in_progress");
   await expect(
     page.getByRole("button", { name: "Start another implementation", exact: true }),
   ).not.toBeVisible();
@@ -248,5 +254,38 @@ test("keeps implementation lookup and launch failures visible and recoverable", 
   failure = "";
   await page.getByRole("button", { name: "Check implementation again", exact: true }).click();
   await page.getByRole("button", { name: "Start in T3 Code", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Open in T3 Code", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Continue in T3 Code", exact: true })).toBeVisible();
+});
+
+test("tracks outside work without T3 and filters started and completed tasks", async ({ page }) => {
+  const state = await capturePage(page, {
+    prompt: "",
+    processing: "pending",
+    refinement: "paused",
+  });
+  state.options.configured = false;
+  await state.update({ revision: 1 });
+  await page.getByRole("button", { name: "Mark in progress", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Mark waiting", exact: true })).toBeVisible();
+  expect(state.item.status).toBe("in_progress");
+  await page.getByRole("button", { name: "Mark waiting", exact: true }).click();
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  const active = page
+    .locator(".section")
+    .filter({ has: page.getByRole("heading", { name: "In progress", exact: true }) });
+  await expect(active).toContainText("Add Kiana to GitHub");
+  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Filter task status").selectOption("open");
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toHaveCount(0);
+  await page.getByLabel("Filter task status").selectOption("in_progress");
+  await page.getByRole("button", { name: /^Add Kiana to GitHub/ }).click();
+  await page.getByRole("button", { name: "Mark done", exact: true }).click();
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByLabel("Filter task status").selectOption("done");
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+  expect(state.launches).toHaveLength(0);
+  await page.getByRole("button", { name: "Reopen Add Kiana to GitHub", exact: true }).click();
+  await page.getByLabel("Filter task status").selectOption("open");
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
 });

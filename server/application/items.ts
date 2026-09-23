@@ -56,7 +56,7 @@ export function revisedItem(
 }
 export function dailyCommitments(items: Item[], date: string) {
   const active = items.filter(
-    (item) => item.kind === "commitment" && (item.status === "open" || item.status === "waiting"),
+    (item) => item.kind === "commitment" && !["done", "archived"].includes(item.status),
   );
   const due = active
     .filter((item) => item.dueDate && item.dueDate <= date)
