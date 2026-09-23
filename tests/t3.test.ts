@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, statSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,9 +10,14 @@ import { createApp } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
 import { SettingsStore } from "../server/settings.js";
 import { Store } from "../server/store.js";
-import { createT3Client, implementationWorkspace, readPullRequest } from "../server/t3.js";
+import { createT3Client, implementationWorkspace, readLocalMerge } from "../server/t3.js";
 import type { ProfileDocument } from "../shared/schema.js";
-import { type PullRequest, type T3Connection, t3ConnectionSchema } from "../shared/t3.js";
+import {
+  type Implementation,
+  type LocalMerge,
+  type T3Connection,
+  t3ConnectionSchema,
+} from "../shared/t3.js";
 import { mockT3 } from "./mock-t3.js";
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -100,12 +105,14 @@ function fixture() {
     workspace: vi.fn(async (path: string) => ({ path, branch: "commit-sha" })),
     id: () => `id-${++sequence}`,
     now: () => "2026-09-21T12:00:00.000Z",
-    pullRequest: vi.fn(
-      async (url: string): Promise<PullRequest> => ({
-        url,
-        state: "OPEN" as const,
-        isDraft: false,
-        mergedAt: null,
+    localMerge: vi.fn(
+      async (entry: Implementation): Promise<LocalMerge> => ({
+        branch: `panopticon/${entry.id}`,
+        mainBranch: "main",
+        head: "implementation-commit",
+        mainHead: "main-commit",
+        merged: false,
+        dirty: false,
       }),
     ),
   };
@@ -144,34 +151,18 @@ it("moves finished turns to review, respects manual resume, and never treats a t
   expect(store.get(item.id)?.status).toBe("in_progress");
 });
 
-it("completes only after the linked pull request is merged and does not undo reopening", async () => {
+it("completes only after a local merge and does not undo reopening", async () => {
   const { service, store, item, ports, client } = fixture();
-  const entry = await service.implement(item.id, { revision: item.revision });
-  const started = store.get(item.id);
-  assert(entry && started);
-  const url = "https://github.com/example/portal/pull/42";
-  await service.linkPullRequest(item.id, {
-    implementationId: entry.id,
-    revision: started.revision,
-    url,
-  });
-  expect(store.get(item.id)?.status).toBe("in_progress");
-  ports.pullRequest.mockResolvedValue({ url, state: "CLOSED", isDraft: false, mergedAt: null });
+  await service.implement(item.id, { revision: item.revision });
   await service.refreshActive();
   expect(store.get(item.id)?.status).toBe("in_progress");
-  ports.pullRequest.mockResolvedValue({
-    url,
-    state: "MERGED",
-    isDraft: false,
-    mergedAt: null,
-  });
-  await service.refreshActive();
-  expect(store.get(item.id)?.status).toBe("in_progress");
-  ports.pullRequest.mockResolvedValue({
-    url,
-    state: "MERGED",
-    isDraft: false,
-    mergedAt: "2026-09-23T10:00:00Z",
+  ports.localMerge.mockResolvedValue({
+    branch: "panopticon/id-1",
+    mainBranch: "main",
+    head: "implementation-commit",
+    mainHead: "merge-commit",
+    merged: true,
+    dirty: false,
   });
   vi.mocked(client.progress).mockRejectedValue(new Error("offline private-token"));
   await service.refreshActive();
@@ -180,11 +171,16 @@ it("completes only after the linked pull request is merged and does not undo reo
   expect(completed.status).toBe("done");
   expect(service.options(item.id).latest?.progress?.error).not.toContain("private-token");
   store.update(item.id, { status: "in_progress" }, completed.revision);
-  ports.pullRequest.mockRejectedValueOnce(new Error("network"));
+  ports.localMerge.mockRejectedValueOnce(new Error("private repository diagnostic"));
   await service.refresh(item.id);
+  expect(service.options(item.id).latest?.progress?.error).not.toContain(
+    "private repository diagnostic",
+  );
   await service.refresh(item.id);
   expect(store.get(item.id)?.status).toBe("in_progress");
-  expect(store.latestImplementation(item.id, "/profile")?.pullRequestUrl).toBe(url);
+  expect(store.latestImplementation(item.id, "/profile")?.mergedCommit).toBe(
+    "implementation-commit",
+  );
 });
 
 it("preserves paused tasks, changed scope, and edits made during progress checks", async () => {
@@ -198,22 +194,20 @@ it("preserves paused tasks, changed scope, and edits made during progress checks
   expect(store.get(item.id)?.status).toBe("waiting");
   current = store.get(item.id);
   assert(current);
-  const changed = store.update(
+  store.update(
     item.id,
     { prompt: "A different requirement", status: "in_progress" },
     current.revision,
   );
-  ports.pullRequest.mockImplementation(async (url) => ({
-    url,
-    state: "MERGED",
-    isDraft: false,
-    mergedAt: "2026-09-23T10:00:00Z",
-  }));
-  await service.linkPullRequest(item.id, {
-    implementationId: entry.id,
-    revision: changed.revision,
-    url: "https://github.com/example/portal/pull/42",
+  ports.localMerge.mockResolvedValue({
+    branch: "panopticon/id-1",
+    mainBranch: "main",
+    head: "implementation-commit",
+    mainHead: "merge-commit",
+    merged: true,
+    dirty: false,
   });
+  await service.refresh(item.id);
   expect(store.get(item.id)?.status).toBe("in_progress");
   vi.mocked(client.progress).mockImplementationOnce(async () => {
     const latest = store.get(item.id);
@@ -225,21 +219,13 @@ it("preserves paused tasks, changed scope, and edits made during progress checks
   expect(store.get(item.id)?.status).toBe("archived");
 });
 
-it("rejects links for stale implementations and isolates replaced T3 instances", async () => {
-  const { service, store, item, client, ports } = fixture();
-  const entry = await service.implement(item.id, { revision: item.revision });
-  const started = store.get(item.id);
-  assert(entry && started);
-  await expect(
-    service.linkPullRequest(item.id, {
-      implementationId: "old",
-      revision: started.revision,
-      url: "https://github.com/example/portal/pull/42",
-    }),
-  ).rejects.toThrow("current implementation");
+it("isolates replaced T3 instances while still checking the local merge", async () => {
+  const { service, item, client, ports } = fixture();
+  await service.implement(item.id, { revision: item.revision });
   ports.settings.saveT3({ ...connection, environmentId: "different" });
   await service.refresh(item.id);
   expect(client.progress).not.toHaveBeenCalled();
+  expect(ports.localMerge).toHaveBeenCalledTimes(1);
   expect(service.options(item.id).latest?.progress?.error).toContain("original T3");
 });
 
@@ -261,21 +247,125 @@ it("keeps connection actions responsive during slow polling and deduplicates che
   await Promise.all([first, second]);
 });
 
-it("reads pull request merge evidence without a shell and validates external data", async () => {
-  const url = "https://github.com/example/portal/pull/42";
-  const result = { url, state: "MERGED", isDraft: false, mergedAt: "2026-09-23T10:00:00Z" };
-  const execute = vi.fn(async () => ({ stdout: JSON.stringify(result) }));
-  expect(await readPullRequest(url, execute)).toEqual(result);
-  expect(execute).toHaveBeenCalledWith(
-    "gh",
-    ["pr", "view", url, "--json", "url,state,isDraft,mergedAt"],
-    { timeout: 15000, maxBuffer: 1024 * 1024 },
-  );
-  await expect(readPullRequest("https://attacker.test/pull/42", execute)).rejects.toThrow();
-  await expect(readPullRequest(`${url};echo secret`, execute)).rejects.toThrow();
-  expect(execute).toHaveBeenCalledTimes(1);
-  execute.mockResolvedValue({ stdout: JSON.stringify({ ...result, state: "UNKNOWN" }) });
-  await expect(readPullRequest(url, execute)).rejects.toThrow();
+function localMergeFixture() {
+  const root = mkdtempSync(join(tmpdir(), "pa-local-merge-"));
+  const repository = join(root, "repository");
+  const worktree = join(root, "implementation");
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  git("init", "--initial-branch=main", repository);
+  git("-C", repository, "commit", "--allow-empty", "-m", "test: initialize");
+  const baseBranch = git("-C", repository, "rev-parse", "HEAD");
+  git("-C", repository, "worktree", "add", "-b", "panopticon/test", worktree);
+  return {
+    entry: { id: "test", workspaceRoot: repository, baseBranch },
+    repository,
+    worktree,
+    git,
+    commitWork() {
+      writeFileSync(join(worktree, "feature.txt"), "implementation\n");
+      git("-C", worktree, "add", "feature.txt");
+      git("-C", worktree, "commit", "-m", "feat: implementation");
+    },
+  };
+}
+
+it.each(["--ff-only", "--no-ff"])(
+  "detects a local %s merge, including one completed before polling",
+  async (mode) => {
+    const { entry, repository, git, commitWork } = localMergeFixture();
+    commitWork();
+    git("-C", repository, "merge", mode, "panopticon/test", "-m", "Merge implementation");
+    const result = await readLocalMerge(entry);
+    expect(result).toMatchObject({
+      branch: "panopticon/test",
+      mainBranch: "main",
+      merged: true,
+      dirty: false,
+    });
+  },
+);
+
+it.each(["--ff-only", "--no-ff"])(
+  "detects a local %s merge after branch and worktree cleanup",
+  async (mode) => {
+    const { entry, repository, worktree, git, commitWork } = localMergeFixture();
+    commitWork();
+    git("-C", repository, "merge", mode, "panopticon/test", "-m", "Merge implementation");
+    git("-C", repository, "worktree", "remove", worktree);
+    git("-C", repository, "branch", "-d", "panopticon/test");
+    expect((await readLocalMerge(entry)).merged).toBe(true);
+  },
+);
+
+it("completes a submitted task from real local Git evidence without T3 connectivity", async () => {
+  const { entry, repository, git, commitWork } = localMergeFixture();
+  const { ports, item, store, repositories, client } = fixture();
+  repositories[0].path = repository;
+  ports.workspace.mockResolvedValue({ path: repository, branch: entry.baseBranch });
+  const service = createT3({ ...ports, id: () => entry.id, localMerge: readLocalMerge });
+  await service.implement(item.id, { revision: item.revision });
+  commitWork();
+  await service.refresh(item.id);
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  git("-C", repository, "merge", "--ff-only", "panopticon/test");
+  vi.mocked(client.progress).mockRejectedValue(new Error("offline"));
+  await service.refreshActive();
+  expect(store.get(item.id)?.status).toBe("done");
+  expect(service.options(item.id).latest?.progress?.localMerge?.merged).toBe(true);
+});
+
+it("does not complete untouched branches, unmerged work, or a branch merely updated from main", async () => {
+  const { entry, repository, worktree, git } = localMergeFixture();
+  expect((await readLocalMerge(entry)).merged).toBe(false);
+  git("-C", repository, "commit", "--allow-empty", "-m", "chore: unrelated main work");
+  git("-C", worktree, "merge", "--ff-only", "main");
+  expect((await readLocalMerge(entry)).merged).toBe(false);
+  writeFileSync(join(worktree, "feature.txt"), "implementation\n");
+  git("-C", worktree, "add", "feature.txt");
+  git("-C", worktree, "commit", "-m", "feat: implementation");
+  expect((await readLocalMerge(entry)).merged).toBe(false);
+});
+
+it("requires clean implementation worktrees even after the committed work was merged", async () => {
+  const { entry, repository, worktree, git, commitWork } = localMergeFixture();
+  commitWork();
+  git("-C", repository, "merge", "--ff-only", "panopticon/test");
+  writeFileSync(join(worktree, "unfinished.txt"), "unfinished\n");
+  expect(await readLocalMerge(entry)).toMatchObject({ merged: false, dirty: true });
+});
+
+it("uses origin's default branch metadata instead of the currently checked out branch", async () => {
+  const { entry, repository, git, commitWork } = localMergeFixture();
+  git("-C", repository, "branch", "-m", "main", "trunk");
+  git("-C", repository, "update-ref", "refs/remotes/origin/trunk", entry.baseBranch);
+  git("-C", repository, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk");
+  commitWork();
+  git("-C", repository, "merge", "--ff-only", "panopticon/test");
+  git("-C", repository, "switch", "-c", "unrelated");
+  expect(await readLocalMerge(entry)).toMatchObject({ mainBranch: "trunk", merged: true });
+});
+
+it("keeps squash merges and merges into another branch for manual confirmation", async () => {
+  const { entry, repository, git, commitWork } = localMergeFixture();
+  commitWork();
+  git("-C", repository, "switch", "-c", "integration");
+  git("-C", repository, "merge", "--ff-only", "panopticon/test");
+  expect((await readLocalMerge(entry)).merged).toBe(false);
+  git("-C", repository, "switch", "main");
+  git("-C", repository, "merge", "--squash", "panopticon/test");
+  git("-C", repository, "commit", "-m", "feat: squashed implementation");
+  expect((await readLocalMerge(entry)).merged).toBe(false);
+});
+
+it("reports missing implementation branches and ambiguous local main branches", async () => {
+  const { entry, repository, git } = localMergeFixture();
+  await expect(readLocalMerge({ ...entry, id: "missing" })).rejects.toThrow("missing or renamed");
+  git("-C", repository, "branch", "master");
+  await expect(readLocalMerge(entry)).rejects.toThrow("identify the local main branch");
 });
 
 it("validates T3 progress against the saved environment and project", async () => {

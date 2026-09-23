@@ -27,7 +27,7 @@ import { createProjectScanner } from "./projects.js";
 import { createResearch } from "./research-tools.js";
 import { SettingsStore, settingsModels } from "./settings.js";
 import { Store } from "./store.js";
-import { createT3Client, implementationWorkspace, readPullRequest } from "./t3.js";
+import { createT3Client, implementationWorkspace, readLocalMerge } from "./t3.js";
 
 export type AppOptions = {
   chooseDirectory?: () => Promise<string | null>;
@@ -117,7 +117,7 @@ export function createApplication(options: AppOptions = {}) {
     getProfile: () => profileNotes,
     repositories,
     workspace: implementationWorkspace,
-    pullRequest: readPullRequest,
+    localMerge: readLocalMerge,
     id: randomUUID,
     now: () => now().toISOString(),
   });

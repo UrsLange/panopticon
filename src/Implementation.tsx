@@ -77,19 +77,6 @@ export function useImplementation(
     setOptions(next);
     await onReload();
   };
-  const linkPullRequest = async (url: string | null) => {
-    const next = await api<ImplementationOptions>(
-      `/items/${item.id}/implementation/pull-request`,
-      "PUT",
-      {
-        implementationId: options?.latest?.id,
-        revision: item.revision,
-        url,
-      },
-    );
-    setOptions(next);
-    await onReload();
-  };
   return {
     options,
     repositoryId,
@@ -99,6 +86,5 @@ export function useImplementation(
     start,
     refresh,
     checkProgress,
-    linkPullRequest,
   };
 }

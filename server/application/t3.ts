@@ -3,7 +3,7 @@ import type {
   Implementation,
   ImplementationOptions,
   ImplementationProgress,
-  PullRequest,
+  LocalMerge,
   T3Connection,
   T3ConnectionInput,
   T3Model,
@@ -43,7 +43,7 @@ export function createT3({
   workspace,
   id,
   now,
-  pullRequest,
+  localMerge,
 }: {
   records: ImplementationRecords;
   settings: {
@@ -56,7 +56,7 @@ export function createT3({
   workspace(path: string): Promise<{ path: string; branch: string }>;
   id(): string;
   now(): string;
-  pullRequest(url: string): Promise<PullRequest>;
+  localMerge(implementation: Implementation): Promise<LocalMerge>;
 }) {
   let active: Promise<unknown> | null = null;
   const status = (): T3Status => {
@@ -77,7 +77,6 @@ export function createT3({
       createdAt: entry.createdAt,
       state: entry.state,
       error: entry.error,
-      pullRequestUrl: entry.pullRequestUrl,
       progress: entry.progress,
       taskChanged: records.get(entry.itemId)?.prompt !== entry.prompt,
       url: `${entry.endpoint}/${encodeURIComponent(entry.environmentId)}/${encodeURIComponent(entry.id)}`,
@@ -218,7 +217,6 @@ export function createT3({
       turnState: entry.progress?.turnState ?? null,
       checkedAt: now(),
       error: null,
-      pullRequest: entry.progress?.pullRequest,
     };
     const errors: string[] = [];
     if (
@@ -233,24 +231,23 @@ export function createT3({
     } else {
       errors.push("Reconnect the original T3 Code instance to check agent progress.");
     }
-    if (entry.pullRequestUrl) {
-      try {
-        progress.pullRequest = await pullRequest(entry.pullRequestUrl);
-      } catch {
-        errors.push(
-          "Pull request status is unavailable. Check GitHub CLI installation, sign-in, and repository access on the Panopticon server.",
-        );
-      }
+    try {
+      progress.localMerge = await localMerge(entry);
+    } catch (error) {
+      errors.push(
+        error instanceof ApplicationError
+          ? error.message
+          : "Local merge status is unavailable. Check the implementation branch and local repository.",
+      );
     }
     if (getProfile().root !== profileRoot) return;
     const latest = records.latestImplementation(itemId, profileRoot);
-    if (latest?.id !== entry.id || latest.pullRequestUrl !== entry.pullRequestUrl) return;
+    if (latest?.id !== entry.id) return;
     const current = records.get(itemId);
     if (!current || current.revision !== item.revision) return;
     const newlyMerged =
-      progress.pullRequest?.state === "MERGED" &&
-      !!progress.pullRequest.mergedAt &&
-      !(entry.progress?.pullRequest?.state === "MERGED" && entry.progress.pullRequest.mergedAt);
+      progress.localMerge?.merged && progress.localMerge.head !== entry.mergedCommit;
+    if (progress.localMerge?.merged) entry.mergedCommit = progress.localMerge.head;
     const newlyFinished =
       progress.turnState === "completed" && entry.progress?.turnState !== "completed";
     const newlyRunning =
@@ -304,33 +301,6 @@ export function createT3({
         });
       return refreshing;
     },
-    linkPullRequest: (
-      itemId: string,
-      input: { implementationId: string; url: string | null; revision: number },
-    ) =>
-      exclusive(async () => {
-        await checks.get(itemId);
-        const item = records.get(itemId);
-        assertRevision(item, input.revision);
-        const entry = records.latestImplementation(itemId, getProfile().root);
-        if (!entry || entry.id !== input.implementationId || entry.state !== "submitted")
-          throw new ApplicationError(
-            "conflict",
-            "Reload the current implementation before linking a pull request.",
-          );
-        if (["done", "archived"].includes(item.status))
-          throw new ApplicationError(
-            "invalid",
-            "Reopen the task before changing its pull request.",
-          );
-        if (input.url !== (entry.pullRequestUrl ?? null) && entry.progress)
-          delete entry.progress.pullRequest;
-        if (input.url) entry.pullRequestUrl = input.url;
-        else delete entry.pullRequestUrl;
-        records.saveImplementation(entry);
-        await checkProgress(itemId);
-        return options(itemId);
-      }),
     connect: (input: T3ConnectionInput) =>
       exclusive(async () => {
         settings.saveT3(await client.connect(input, settings.t3Connection()));

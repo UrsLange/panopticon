@@ -70,14 +70,9 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
       }
       return route.fulfill({ json: options });
     }
-    if (path.endsWith("/implementation/pull-request")) {
-      if (options.latest)
-        options.latest.pullRequestUrl = route.request().postDataJSON().url ?? undefined;
-      return route.fulfill({ json: options });
-    }
     if (path.endsWith("/implementation/refresh")) {
       const progress = options.latest?.progress;
-      if (progress?.pullRequest?.state === "MERGED")
+      if (progress?.localMerge?.merged)
         item = { ...item, status: "done", revision: item.revision + 1 };
       else if (progress?.turnState === "completed")
         item = { ...item, status: "in_review", revision: item.revision + 1 };
@@ -271,32 +266,34 @@ test("keeps implementation lookup and launch failures visible and recoverable", 
   await expect(page.getByRole("link", { name: "Continue in T3 Code", exact: true })).toBeVisible();
 });
 
-test("reviews agent output and completes only after the linked pull request is merged", async ({
+test("reviews agent output and completes after a local merge without pull request setup", async ({
   page,
 }) => {
   const state = await capturePage(page);
   await page.getByRole("button", { name: "Start in T3 Code", exact: true }).click();
   await expect(page.getByRole("link", { name: "Continue in T3 Code", exact: true })).toBeVisible();
   const latest = state.options.latest;
-  expect(latest).not.toBeNull();
   if (!latest) throw new Error("Missing implementation");
-  latest.progress = { turnState: "completed", checkedAt: "2026-09-23T12:00:00Z", error: null };
+  latest.progress = {
+    turnState: "completed",
+    checkedAt: "2026-09-23T12:00:00Z",
+    error: null,
+    localMerge: {
+      branch: "panopticon/thread-test",
+      mainBranch: "main",
+      head: "feature",
+      mainHead: "base",
+      merged: false,
+      dirty: false,
+    },
+  };
   await page.getByRole("button", { name: "Check progress", exact: true }).click();
   await expect(page.getByRole("region", { name: "Capture status" })).toContainText(
     "Ready for review",
   );
+  await expect(page.getByText("Not merged locally", { exact: true })).toBeVisible();
   expect(state.item.status).toBe("in_review");
-  const url = "https://github.com/example/access/pull/42";
-  await page.getByLabel("Implementation pull request", { exact: true }).fill(url);
-  await page.getByRole("button", { name: "Link pull request", exact: true }).click();
-  await expect(page.getByRole("link", { name: "View linked pull request" })).toHaveAttribute(
-    "href",
-    url,
-  );
-  latest.progress.pullRequest = { url, state: "CLOSED", isDraft: false, mergedAt: null };
-  await page.getByRole("button", { name: "Check progress", exact: true }).click();
-  await expect(page.getByText(/Closed without merging/)).toBeVisible();
-  expect(state.item.status).toBe("in_review");
+  await expect(page.getByLabel("Implementation pull request", { exact: true })).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "test-results/task-progress-mobile.png" });
   expect(
@@ -304,14 +301,17 @@ test("reviews agent output and completes only after the linked pull request is m
       .getByRole("dialog")
       .evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
-  latest.progress.pullRequest = {
-    url,
-    state: "MERGED",
-    isDraft: false,
-    mergedAt: "2026-09-23T12:10:00Z",
+  latest.progress.localMerge = {
+    branch: "panopticon/thread-test",
+    mainBranch: "main",
+    head: "feature",
+    mainHead: "feature",
+    merged: true,
+    dirty: false,
   };
   await page.getByRole("button", { name: "Check progress", exact: true }).click();
   await expect(page.getByRole("region", { name: "Capture status" })).toContainText("Completed");
+  await expect(page.getByText("Merged locally", { exact: true })).toBeVisible();
   expect(state.item.status).toBe("done");
 });
 

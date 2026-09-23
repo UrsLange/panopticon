@@ -777,10 +777,6 @@ function ItemEditor({
   const paused = item.refinement === "paused";
   const { options, repositoryId, setRepositoryId } = implementation;
   const latest = options?.latest;
-  const [pullRequestUrl, setPullRequestUrl] = useState("");
-  useEffect(() => {
-    setPullRequestUrl(latest?.pullRequestUrl ?? "");
-  }, [latest?.pullRequestUrl]);
   const pendingHandoff = latest?.state === "pending";
   const submitted = latest?.state === "submitted";
   const canImplement =
@@ -1111,75 +1107,37 @@ function ItemEditor({
                           </p>
                         )}
                         {latest.progress?.error && <p role="alert">{latest.progress.error}</p>}
-                        {latest.pullRequestUrl && (
+                        {latest.progress?.localMerge && (
                           <p>
-                            <a href={latest.pullRequestUrl} target="_blank" rel="noreferrer">
-                              View linked pull request
-                            </a>
-                            {latest.progress?.pullRequest &&
-                              ` · ${latest.progress.pullRequest.state === "MERGED" ? "Merged" : latest.progress.pullRequest.state === "CLOSED" ? "Closed without merging" : latest.progress.pullRequest.isDraft ? "Draft" : "Open"}`}
+                            <strong>
+                              {latest.progress.localMerge.merged
+                                ? "Merged locally"
+                                : latest.progress.localMerge.dirty
+                                  ? "Uncommitted implementation changes"
+                                  : "Not merged locally"}
+                            </strong>
+                            {" · "}
+                            {latest.progress.localMerge.branch}
+                            {" into "}
+                            {latest.progress.localMerge.mainBranch}
                           </p>
                         )}
                         {!closed && (
                           <>
-                            <label className="field">
-                              Implementation pull request
-                              <input
-                                aria-label="Implementation pull request"
-                                type="url"
-                                value={pullRequestUrl}
-                                onChange={(event) => setPullRequestUrl(event.target.value)}
-                                placeholder="https://github.com/owner/repository/pull/123"
-                                disabled={busy}
-                              />
-                            </label>
                             <p>
-                              Link the pull request that completes this task. Panopticon checks
-                              every 30 seconds while running and marks the task done after merge.
+                              Panopticon checks the implementation branch every 30 seconds and marks
+                              this task done after it is merged into the local main branch.
                             </p>
-                            <div className="modal-actions">
-                              <button
-                                type="button"
-                                className="secondary"
-                                disabled={
-                                  busy ||
-                                  dirty ||
-                                  !pullRequestUrl.trim() ||
-                                  pullRequestUrl.trim() === latest.pullRequestUrl
-                                }
-                                onClick={() =>
-                                  void run("Linking pull request…", () =>
-                                    implementation.linkPullRequest(pullRequestUrl.trim()),
-                                  )
-                                }
-                              >
-                                Link pull request
-                              </button>
-                              {latest.pullRequestUrl && (
-                                <button
-                                  type="button"
-                                  className="secondary"
-                                  disabled={busy || dirty}
-                                  onClick={() =>
-                                    void run("Unlinking pull request…", () =>
-                                      implementation.linkPullRequest(null),
-                                    )
-                                  }
-                                >
-                                  Unlink pull request
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                className="secondary"
-                                disabled={busy || dirty}
-                                onClick={() =>
-                                  void run("Checking progress…", implementation.checkProgress)
-                                }
-                              >
-                                Check progress
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              className="secondary"
+                              disabled={busy || dirty}
+                              onClick={() =>
+                                void run("Checking progress…", implementation.checkProgress)
+                              }
+                            >
+                              Check progress
+                            </button>
                           </>
                         )}
                       </>

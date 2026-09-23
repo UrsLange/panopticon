@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { pullRequestUrlSchema, type T3Connection } from "../shared/t3.js";
+import type { Implementation, LocalMerge, T3Connection } from "../shared/t3.js";
 import { ApplicationError } from "./application/errors.js";
 import type { T3Client } from "./application/t3.js";
 
@@ -23,28 +23,104 @@ const projectsSchema = z.object({
 const descriptorSchema = z.object({ environmentId: z.string(), serverVersion: z.string() });
 const exec = promisify(execFile);
 
-export async function readPullRequest(
-  url: string,
-  execute: (
-    file: string,
-    args: string[],
-    options: { timeout: number; maxBuffer: number },
-  ) => Promise<{ stdout: string }> = exec,
-) {
-  const reference = pullRequestUrlSchema.parse(url);
-  const { stdout } = await execute(
-    "gh",
-    ["pr", "view", reference, "--json", "url,state,isDraft,mergedAt"],
-    { timeout: 15000, maxBuffer: 1024 * 1024 },
-  );
-  return z
-    .object({
-      url: pullRequestUrlSchema,
-      state: z.enum(["OPEN", "CLOSED", "MERGED"]),
-      isDraft: z.boolean(),
-      mergedAt: z.iso.datetime().nullable(),
-    })
-    .parse(JSON.parse(stdout));
+export async function readLocalMerge(
+  entry: Pick<Implementation, "id" | "workspaceRoot" | "baseBranch">,
+): Promise<LocalMerge> {
+  const branch = `panopticon/${entry.id}`;
+  const branchRef = `refs/heads/${branch}`;
+  const git = async (...args: string[]) =>
+    (
+      await exec("git", ["-C", entry.workspaceRoot, ...args], {
+        timeout: 15000,
+        maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      })
+    ).stdout;
+  const refs = (
+    await git(
+      "for-each-ref",
+      "--format=%(refname)%00%(objectname)%00%(symref)",
+      "refs/heads",
+      "refs/remotes/origin/HEAD",
+    )
+  )
+    .trim()
+    .split("\n")
+    .map((line) => line.split("\0"));
+  const originHead = refs.find(([name]) => name === "refs/remotes/origin/HEAD")?.[2];
+  const mainRef = originHead
+    ? originHead.replace("refs/remotes/origin/", "refs/heads/")
+    : ["refs/heads/main", "refs/heads/master"].filter((name) => refs.some(([ref]) => ref === name));
+  const target = typeof mainRef === "string" ? mainRef : mainRef.length === 1 ? mainRef[0] : null;
+  const mainHead = refs.find(([name]) => name === target)?.[1];
+  if (!target || !mainHead)
+    throw new ApplicationError(
+      "unavailable",
+      "Cannot identify the local main branch. Set origin/HEAD to its default branch, or keep a single local main or master branch.",
+    );
+  const reflog = (await git("reflog", "show", "--format=%H%x00%gs", target))
+    .split("\n")
+    .map((line) => line.split("\0"));
+  let head = refs.find(([name]) => name === branchRef)?.[1];
+  if (!head) {
+    const merge = reflog.find(([, message]) =>
+      [branch, branchRef].some(
+        (ref) =>
+          message?.startsWith(`merge ${ref}: Fast-forward`) ||
+          message?.startsWith(`merge ${ref}: Merge made`),
+      ),
+    );
+    if (merge)
+      head = merge[1].includes(": Fast-forward")
+        ? merge[0]
+        : (await git("show", "-s", "--format=%P", merge[0])).trim().split(" ")[1];
+  }
+  if (!head)
+    throw new ApplicationError(
+      "unavailable",
+      "The implementation branch is missing or renamed. Restore it to check the local merge, or mark the task merged manually.",
+    );
+  const worktrees = await git("worktree", "list", "--porcelain", "-z");
+  const worktree = worktrees
+    .split("\0\0")
+    .find((record) => record.split("\0").includes(`branch ${branchRef}`));
+  const path = worktree?.split("\0")[0]?.slice("worktree ".length);
+  const dirty = path
+    ? !!(await git("-C", path, "status", "--porcelain", "--untracked-files=normal")).trim()
+    : false;
+  const result = {
+    branch,
+    mainBranch: target.slice("refs/heads/".length),
+    head,
+    mainHead,
+    merged: false,
+    dirty,
+  };
+  if (dirty || head === entry.baseBranch || branchRef === target) return result;
+  try {
+    await git("merge-base", "--is-ancestor", entry.baseBranch, head);
+    await git("merge-base", "--is-ancestor", head, mainHead);
+  } catch (error) {
+    if ((error as { code?: number }).code === 1) return result;
+    throw error;
+  }
+  const parents = await git("log", "--merges", "--format=%P", `${entry.baseBranch}..${mainHead}`);
+  const mergeCommit = parents
+    .trim()
+    .split("\n")
+    .some((line) => line.split(" ").slice(1).includes(head));
+  // Reachability alone also matches a branch that only fast-forwarded to main.
+  const fastForward = reflog.some(([commit, message]) => {
+    return (
+      commit === head &&
+      [branch, branchRef, head].some(
+        (ref) =>
+          message === `merge ${ref}: Fast-forward` ||
+          message?.startsWith(`merge ${ref}: Fast-forward (`),
+      )
+    );
+  });
+  return { ...result, merged: mergeCommit || fastForward };
 }
 
 export async function implementationWorkspace(path: string) {
