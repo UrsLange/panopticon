@@ -6,6 +6,7 @@ import { createApplication } from "./bootstrap.js";
 import { config } from "./config.js";
 import { startPeopleScheduler } from "./people-scheduler.js";
 import { startProjectScheduler } from "./project-scheduler.js";
+import { startT3Scheduler } from "./t3-scheduler.js";
 
 const services = createApplication();
 const app = createHttpApp(services, config.port);
@@ -20,10 +21,12 @@ if (existsSync(client)) {
 await app.listen({ host: "127.0.0.1", port: config.port });
 const stopScheduler = startProjectScheduler(services.scanner);
 const stopPeopleScheduler = startPeopleScheduler(services.peopleSync);
+const stopT3Scheduler = startT3Scheduler(services.t3);
 console.log(`Personal assistant API: http://127.0.0.1:${config.port}`);
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
     stopScheduler();
     stopPeopleScheduler();
+    stopT3Scheduler();
     void app.close();
   });

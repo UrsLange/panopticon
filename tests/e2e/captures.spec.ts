@@ -63,10 +63,24 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
           state: "submitted",
           error: null,
           url: "http://localhost:4321/environment/thread-test",
+          taskChanged: false,
         };
         item = { ...item, status: "in_progress", revision: item.revision + 1 };
         return route.fulfill({ json: options.latest });
       }
+      return route.fulfill({ json: options });
+    }
+    if (path.endsWith("/implementation/pull-request")) {
+      if (options.latest)
+        options.latest.pullRequestUrl = route.request().postDataJSON().url ?? undefined;
+      return route.fulfill({ json: options });
+    }
+    if (path.endsWith("/implementation/refresh")) {
+      const progress = options.latest?.progress;
+      if (progress?.pullRequest?.state === "MERGED")
+        item = { ...item, status: "done", revision: item.revision + 1 };
+      else if (progress?.turnState === "completed")
+        item = { ...item, status: "in_review", revision: item.revision + 1 };
       return route.fulfill({ json: options });
     }
     if (path === `/api/items/${item.id}` && route.request().method() === "PATCH") {
@@ -255,6 +269,50 @@ test("keeps implementation lookup and launch failures visible and recoverable", 
   await page.getByRole("button", { name: "Check implementation again", exact: true }).click();
   await page.getByRole("button", { name: "Start in T3 Code", exact: true }).click();
   await expect(page.getByRole("link", { name: "Continue in T3 Code", exact: true })).toBeVisible();
+});
+
+test("reviews agent output and completes only after the linked pull request is merged", async ({
+  page,
+}) => {
+  const state = await capturePage(page);
+  await page.getByRole("button", { name: "Start in T3 Code", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Continue in T3 Code", exact: true })).toBeVisible();
+  const latest = state.options.latest;
+  expect(latest).not.toBeNull();
+  if (!latest) throw new Error("Missing implementation");
+  latest.progress = { turnState: "completed", checkedAt: "2026-09-23T12:00:00Z", error: null };
+  await page.getByRole("button", { name: "Check progress", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Capture status" })).toContainText(
+    "Ready for review",
+  );
+  expect(state.item.status).toBe("in_review");
+  const url = "https://github.com/example/access/pull/42";
+  await page.getByLabel("Implementation pull request", { exact: true }).fill(url);
+  await page.getByRole("button", { name: "Link pull request", exact: true }).click();
+  await expect(page.getByRole("link", { name: "View linked pull request" })).toHaveAttribute(
+    "href",
+    url,
+  );
+  latest.progress.pullRequest = { url, state: "CLOSED", isDraft: false, mergedAt: null };
+  await page.getByRole("button", { name: "Check progress", exact: true }).click();
+  await expect(page.getByText(/Closed without merging/)).toBeVisible();
+  expect(state.item.status).toBe("in_review");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: "test-results/task-progress-mobile.png" });
+  expect(
+    await page
+      .getByRole("dialog")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  latest.progress.pullRequest = {
+    url,
+    state: "MERGED",
+    isDraft: false,
+    mergedAt: "2026-09-23T12:10:00Z",
+  };
+  await page.getByRole("button", { name: "Check progress", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Capture status" })).toContainText("Completed");
+  expect(state.item.status).toBe("done");
 });
 
 test("tracks outside work without T3 and filters started and completed tasks", async ({ page }) => {

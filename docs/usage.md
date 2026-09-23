@@ -26,6 +26,12 @@ Panopticon reuses the T3 project for that repository path or creates one. It imm
 
 Choose **Continue in T3 Code** to follow progress and answer approvals in the existing thread. A confirmed handoff marks the commitment **In progress**; an unconfirmed handoff leaves its status unchanged. **Retry handoff** checks the original thread and reuses the saved task and command IDs when dispatch is still needed, including after a restart. Later edits are not included in that retry. **Start another implementation** explicitly creates a new thread from the latest saved version. A handoff does not establish successful execution or completion. Use **Mark merged** after the implementation has been merged.
 
+While the server runs, Panopticon checks submitted implementations every 30 seconds. A finished agent turn moves active work to **Ready for review**; inspect the result in T3 Code, since a finished turn can also contain a question or partial work. A new running turn returns reviewed work to **In progress**. Waiting tasks retain their manual status.
+
+For automatic completion, enter the exact GitHub pull request URL under **Implementation pull request** and choose **Link pull request**. This explicit association identifies which merge completes the task. Panopticon uses the server's installed, authenticated `gh` CLI to read that pull request; it never merges or pushes changes. Only a confirmed `MERGED` state with a merge timestamp completes the task. Open, draft, closed-without-merge, and unavailable pull requests do not. **Check progress** checks immediately; **Unlink pull request** stops merge tracking. Local merges and other hosting providers require **Mark merged**.
+
+Tracking errors appear on the task and leave completion unchanged. A changed task prompt prevents automatic status transitions from the old implementation. Starting another implementation creates a fresh association; link its pull request separately. Reopening a task after an observed merge does not immediately complete it again.
+
 ## Add knowledge to your profile
 
 An explicit memory request, such as “remember that I prefer atomic conventional commits,” authorizes automatic incorporation into your profile. Unclear or implicit notes wait for review.

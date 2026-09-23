@@ -10,9 +10,9 @@ import { createApp } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
 import { SettingsStore } from "../server/settings.js";
 import { Store } from "../server/store.js";
-import { createT3Client, implementationWorkspace } from "../server/t3.js";
+import { createT3Client, implementationWorkspace, readPullRequest } from "../server/t3.js";
 import type { ProfileDocument } from "../shared/schema.js";
-import { type T3Connection, t3ConnectionSchema } from "../shared/t3.js";
+import { type PullRequest, type T3Connection, t3ConnectionSchema } from "../shared/t3.js";
 import { mockT3 } from "./mock-t3.js";
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -78,6 +78,7 @@ function fixture() {
     connect: vi.fn(async () => connection),
     projects: vi.fn(async () => []),
     launch: vi.fn(async () => {}),
+    progress: vi.fn<T3Client["progress"]>(async () => "running"),
   };
   const settings = {
     t3Connection: () => saved,
@@ -99,6 +100,14 @@ function fixture() {
     workspace: vi.fn(async (path: string) => ({ path, branch: "commit-sha" })),
     id: () => `id-${++sequence}`,
     now: () => "2026-09-21T12:00:00.000Z",
+    pullRequest: vi.fn(
+      async (url: string): Promise<PullRequest> => ({
+        url,
+        state: "OPEN" as const,
+        isDraft: false,
+        mergedAt: null,
+      }),
+    ),
   };
   return { service: createT3(ports), ports, store, item, client, documents, repositories };
 }
@@ -115,6 +124,189 @@ it("routes exact references, sends saved context, and marks the commitment in pr
   expect(entry.state).toBe("submitted");
   expect(store.get(item.id)?.status).toBe("in_progress");
   expect(client.launch).toHaveBeenCalledTimes(1);
+});
+
+it("moves finished turns to review, respects manual resume, and never treats a turn as task completion", async () => {
+  const { service, store, item, client } = fixture();
+  await service.implement(item.id, { revision: item.revision });
+  vi.mocked(client.progress).mockResolvedValue("completed");
+  await service.refresh(item.id);
+  const reviewed = store.get(item.id);
+  assert(reviewed);
+  expect(reviewed.status).toBe("in_review");
+  store.update(item.id, { status: "in_progress" }, reviewed.revision);
+  vi.mocked(client.progress).mockRejectedValueOnce(new Error("offline"));
+  await service.refresh(item.id);
+  await service.refresh(item.id);
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  vi.mocked(client.progress).mockResolvedValue("error");
+  await service.refresh(item.id);
+  expect(store.get(item.id)?.status).toBe("in_progress");
+});
+
+it("completes only after the linked pull request is merged and does not undo reopening", async () => {
+  const { service, store, item, ports, client } = fixture();
+  const entry = await service.implement(item.id, { revision: item.revision });
+  const started = store.get(item.id);
+  assert(entry && started);
+  const url = "https://github.com/example/portal/pull/42";
+  await service.linkPullRequest(item.id, {
+    implementationId: entry.id,
+    revision: started.revision,
+    url,
+  });
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  ports.pullRequest.mockResolvedValue({ url, state: "CLOSED", isDraft: false, mergedAt: null });
+  await service.refreshActive();
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  ports.pullRequest.mockResolvedValue({
+    url,
+    state: "MERGED",
+    isDraft: false,
+    mergedAt: null,
+  });
+  await service.refreshActive();
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  ports.pullRequest.mockResolvedValue({
+    url,
+    state: "MERGED",
+    isDraft: false,
+    mergedAt: "2026-09-23T10:00:00Z",
+  });
+  vi.mocked(client.progress).mockRejectedValue(new Error("offline private-token"));
+  await service.refreshActive();
+  const completed = store.get(item.id);
+  assert(completed);
+  expect(completed.status).toBe("done");
+  expect(service.options(item.id).latest?.progress?.error).not.toContain("private-token");
+  store.update(item.id, { status: "in_progress" }, completed.revision);
+  ports.pullRequest.mockRejectedValueOnce(new Error("network"));
+  await service.refresh(item.id);
+  await service.refresh(item.id);
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  expect(store.latestImplementation(item.id, "/profile")?.pullRequestUrl).toBe(url);
+});
+
+it("preserves paused tasks, changed scope, and edits made during progress checks", async () => {
+  const { service, store, item, client, ports } = fixture();
+  const entry = await service.implement(item.id, { revision: item.revision });
+  let current = store.get(item.id);
+  assert(current && entry);
+  store.update(item.id, { status: "waiting" }, current.revision);
+  vi.mocked(client.progress).mockResolvedValue("completed");
+  await service.refresh(item.id);
+  expect(store.get(item.id)?.status).toBe("waiting");
+  current = store.get(item.id);
+  assert(current);
+  const changed = store.update(
+    item.id,
+    { prompt: "A different requirement", status: "in_progress" },
+    current.revision,
+  );
+  ports.pullRequest.mockImplementation(async (url) => ({
+    url,
+    state: "MERGED",
+    isDraft: false,
+    mergedAt: "2026-09-23T10:00:00Z",
+  }));
+  await service.linkPullRequest(item.id, {
+    implementationId: entry.id,
+    revision: changed.revision,
+    url: "https://github.com/example/portal/pull/42",
+  });
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  vi.mocked(client.progress).mockImplementationOnce(async () => {
+    const latest = store.get(item.id);
+    assert(latest);
+    store.update(item.id, { status: "archived" }, latest.revision);
+    return "completed";
+  });
+  await service.refresh(item.id);
+  expect(store.get(item.id)?.status).toBe("archived");
+});
+
+it("rejects links for stale implementations and isolates replaced T3 instances", async () => {
+  const { service, store, item, client, ports } = fixture();
+  const entry = await service.implement(item.id, { revision: item.revision });
+  const started = store.get(item.id);
+  assert(entry && started);
+  await expect(
+    service.linkPullRequest(item.id, {
+      implementationId: "old",
+      revision: started.revision,
+      url: "https://github.com/example/portal/pull/42",
+    }),
+  ).rejects.toThrow("current implementation");
+  ports.settings.saveT3({ ...connection, environmentId: "different" });
+  await service.refresh(item.id);
+  expect(client.progress).not.toHaveBeenCalled();
+  expect(service.options(item.id).latest?.progress?.error).toContain("original T3");
+});
+
+it("keeps connection actions responsive during slow polling and deduplicates checks", async () => {
+  const { service, item, client } = fixture();
+  await service.implement(item.id, { revision: item.revision });
+  let finish: (state: "running") => void = () => {};
+  vi.mocked(client.progress).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const first = service.refreshActive();
+  const second = service.refresh(item.id);
+  await service.test();
+  expect(client.progress).toHaveBeenCalledTimes(1);
+  finish("running");
+  await Promise.all([first, second]);
+});
+
+it("reads pull request merge evidence without a shell and validates external data", async () => {
+  const url = "https://github.com/example/portal/pull/42";
+  const result = { url, state: "MERGED", isDraft: false, mergedAt: "2026-09-23T10:00:00Z" };
+  const execute = vi.fn(async () => ({ stdout: JSON.stringify(result) }));
+  expect(await readPullRequest(url, execute)).toEqual(result);
+  expect(execute).toHaveBeenCalledWith(
+    "gh",
+    ["pr", "view", url, "--json", "url,state,isDraft,mergedAt"],
+    { timeout: 15000, maxBuffer: 1024 * 1024 },
+  );
+  await expect(readPullRequest("https://attacker.test/pull/42", execute)).rejects.toThrow();
+  await expect(readPullRequest(`${url};echo secret`, execute)).rejects.toThrow();
+  expect(execute).toHaveBeenCalledTimes(1);
+  execute.mockResolvedValue({ stdout: JSON.stringify({ ...result, state: "UNKNOWN" }) });
+  await expect(readPullRequest(url, execute)).rejects.toThrow();
+});
+
+it("validates T3 progress against the saved environment and project", async () => {
+  const { service, store, item } = fixture();
+  await service.implement(item.id, { revision: item.revision });
+  const entry = store.latestImplementation(item.id, "/profile");
+  assert(entry);
+  const request = vi.fn(async (url: string | URL | Request) =>
+    String(url).includes(".well-known")
+      ? Response.json({ environmentId: connection.environmentId, serverVersion: "test" })
+      : Response.json({
+          thread: {
+            projectId: entry.projectId,
+            deletedAt: null,
+            latestTurn: { state: "completed" },
+          },
+        }),
+  );
+  const client = createT3Client(request);
+  expect(await client.progress(connection, entry)).toBe("completed");
+  request.mockResolvedValueOnce(Response.json({ environmentId: "other", serverVersion: "test" }));
+  await expect(client.progress(connection, entry)).rejects.toThrow("original T3");
+  request.mockResolvedValueOnce(
+    Response.json({ environmentId: connection.environmentId, serverVersion: "test" }),
+  );
+  request.mockResolvedValueOnce(
+    Response.json({
+      thread: { projectId: "other", deletedAt: null, latestTurn: { state: "completed" } },
+    }),
+  );
+  await expect(client.progress(connection, entry)).rejects.toThrow("thread is unavailable");
 });
 
 it("requires selection for ambiguous references and never matches a project by name", async () => {

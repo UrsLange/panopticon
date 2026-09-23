@@ -777,6 +777,10 @@ function ItemEditor({
   const paused = item.refinement === "paused";
   const { options, repositoryId, setRepositoryId } = implementation;
   const latest = options?.latest;
+  const [pullRequestUrl, setPullRequestUrl] = useState("");
+  useEffect(() => {
+    setPullRequestUrl(latest?.pullRequestUrl ?? "");
+  }, [latest?.pullRequestUrl]);
   const pendingHandoff = latest?.state === "pending";
   const submitted = latest?.state === "submitted";
   const canImplement =
@@ -968,7 +972,7 @@ function ItemEditor({
               {running && <LoaderCircle size={16} className="spin" />}
               <strong>{stateLabel}</strong>
               <span>
-                {item.kind === "commitment"
+                {item.kind === "commitment" && stateLabel !== statusLabels[item.status]
                   ? statusLabels[item.status]
                   : item.status === "waiting"
                     ? "Waiting"
@@ -1069,7 +1073,7 @@ function ItemEditor({
                     <p>
                       {submitted ? "Sent to T3 Code" : "T3 Code has not confirmed the handoff"} ·
                       revision {latest.revision}
-                      {latest.revision !== item.revision && " (earlier saved version)"}
+                      {latest.taskChanged && " (earlier task description)"}
                     </p>
                     {latest.error && <p role="alert">{latest.error}</p>}
                     {pendingHandoff && (
@@ -1079,10 +1083,106 @@ function ItemEditor({
                       </p>
                     )}
                     {submitted && (
-                      <p>
-                        Continue work and answer approvals in T3 Code. Mark this task done after its
-                        implementation is merged.
-                      </p>
+                      <>
+                        {latest.taskChanged && (
+                          <p>
+                            This task’s prompt changed after handoff. Progress checks will not
+                            change its status. Start another implementation for the updated task, or
+                            mark it complete manually after reviewing the result.
+                          </p>
+                        )}
+                        <p>
+                          Continue work and answer approvals in T3 Code. A finished agent turn needs
+                          review; the task is done when the implementation is merged.
+                        </p>
+                        {latest.progress && (
+                          <p aria-live="polite">
+                            {latest.progress.turnState === "running"
+                              ? "Agent working"
+                              : latest.progress.turnState === "completed"
+                                ? "Agent finished — review its result"
+                                : latest.progress.turnState === "error"
+                                  ? "Agent failed — check T3 Code"
+                                  : latest.progress.turnState === "interrupted"
+                                    ? "Agent interrupted"
+                                    : "Agent progress unavailable"}
+                            {" · Last check "}
+                            {new Date(latest.progress.checkedAt).toLocaleTimeString()}
+                          </p>
+                        )}
+                        {latest.progress?.error && <p role="alert">{latest.progress.error}</p>}
+                        {latest.pullRequestUrl && (
+                          <p>
+                            <a href={latest.pullRequestUrl} target="_blank" rel="noreferrer">
+                              View linked pull request
+                            </a>
+                            {latest.progress?.pullRequest &&
+                              ` · ${latest.progress.pullRequest.state === "MERGED" ? "Merged" : latest.progress.pullRequest.state === "CLOSED" ? "Closed without merging" : latest.progress.pullRequest.isDraft ? "Draft" : "Open"}`}
+                          </p>
+                        )}
+                        {!closed && (
+                          <>
+                            <label className="field">
+                              Implementation pull request
+                              <input
+                                aria-label="Implementation pull request"
+                                type="url"
+                                value={pullRequestUrl}
+                                onChange={(event) => setPullRequestUrl(event.target.value)}
+                                placeholder="https://github.com/owner/repository/pull/123"
+                                disabled={busy}
+                              />
+                            </label>
+                            <p>
+                              Link the pull request that completes this task. Panopticon checks
+                              every 30 seconds while running and marks the task done after merge.
+                            </p>
+                            <div className="modal-actions">
+                              <button
+                                type="button"
+                                className="secondary"
+                                disabled={
+                                  busy ||
+                                  dirty ||
+                                  !pullRequestUrl.trim() ||
+                                  pullRequestUrl.trim() === latest.pullRequestUrl
+                                }
+                                onClick={() =>
+                                  void run("Linking pull request…", () =>
+                                    implementation.linkPullRequest(pullRequestUrl.trim()),
+                                  )
+                                }
+                              >
+                                Link pull request
+                              </button>
+                              {latest.pullRequestUrl && (
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  disabled={busy || dirty}
+                                  onClick={() =>
+                                    void run("Unlinking pull request…", () =>
+                                      implementation.linkPullRequest(null),
+                                    )
+                                  }
+                                >
+                                  Unlink pull request
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="secondary"
+                                disabled={busy || dirty}
+                                onClick={() =>
+                                  void run("Checking progress…", implementation.checkProgress)
+                                }
+                              >
+                                Check progress
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </>
                     )}
                   </>
                 )}

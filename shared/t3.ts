@@ -31,6 +31,25 @@ export type T3Status = {
   serverVersion: string;
   defaultModel: T3Model;
 };
+export const pullRequestUrlSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9]\d*$/,
+    "Use a GitHub pull request URL, such as https://github.com/owner/repository/pull/123.",
+  );
+export type PullRequest = {
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  mergedAt: string | null;
+};
+export type ImplementationProgress = {
+  turnState: "running" | "interrupted" | "completed" | "error" | null;
+  checkedAt: string;
+  error: string | null;
+  pullRequest?: PullRequest;
+};
 export type Implementation = {
   id: string;
   itemId: string;
@@ -48,11 +67,21 @@ export type Implementation = {
   createdAt: string;
   state: "pending" | "submitted";
   error: string | null;
+  pullRequestUrl?: string;
+  progress?: ImplementationProgress;
 };
 export type ImplementationSummary = Pick<
   Implementation,
-  "id" | "revision" | "repositoryId" | "workspaceRoot" | "createdAt" | "state" | "error"
-> & { url: string };
+  | "id"
+  | "revision"
+  | "repositoryId"
+  | "workspaceRoot"
+  | "createdAt"
+  | "state"
+  | "error"
+  | "pullRequestUrl"
+  | "progress"
+> & { url: string; taskChanged: boolean };
 export type ImplementationOptions = {
   configured: boolean;
   repositories: { id: string; name: string; path: string }[];

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
-import type { T3Connection } from "../shared/t3.js";
+import { pullRequestUrlSchema, type T3Connection } from "../shared/t3.js";
 import { ApplicationError } from "./application/errors.js";
 import type { T3Client } from "./application/t3.js";
 
@@ -22,6 +22,30 @@ const projectsSchema = z.object({
 });
 const descriptorSchema = z.object({ environmentId: z.string(), serverVersion: z.string() });
 const exec = promisify(execFile);
+
+export async function readPullRequest(
+  url: string,
+  execute: (
+    file: string,
+    args: string[],
+    options: { timeout: number; maxBuffer: number },
+  ) => Promise<{ stdout: string }> = exec,
+) {
+  const reference = pullRequestUrlSchema.parse(url);
+  const { stdout } = await execute(
+    "gh",
+    ["pr", "view", reference, "--json", "url,state,isDraft,mergedAt"],
+    { timeout: 15000, maxBuffer: 1024 * 1024 },
+  );
+  return z
+    .object({
+      url: pullRequestUrlSchema,
+      state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+      isDraft: z.boolean(),
+      mergedAt: z.iso.datetime().nullable(),
+    })
+    .parse(JSON.parse(stdout));
+}
 
 export async function implementationWorkspace(path: string) {
   try {
@@ -248,6 +272,37 @@ export function createT3Client(request = fetch): T3Client {
       return connection;
     },
     projects,
+    async progress(connection, entry) {
+      const descriptor = descriptorSchema.safeParse(
+        await call(connection.endpoint, "/.well-known/t3/environment", connection.accessToken),
+      );
+      if (!descriptor.success || descriptor.data.environmentId !== entry.environmentId)
+        throw new ApplicationError("conflict", "Reconnect the original T3 Code instance.");
+      const snapshot = z
+        .object({
+          thread: z.object({
+            projectId: z.string(),
+            deletedAt: z.string().nullable(),
+            latestTurn: z
+              .object({ state: z.enum(["running", "interrupted", "completed", "error"]) })
+              .nullable(),
+          }),
+        })
+        .safeParse(
+          await call(
+            connection.endpoint,
+            `/api/orchestration/threads/${encodeURIComponent(entry.id)}`,
+            connection.accessToken,
+          ),
+        );
+      if (
+        !snapshot.success ||
+        snapshot.data.thread.projectId !== entry.projectId ||
+        snapshot.data.thread.deletedAt
+      )
+        throw new ApplicationError("unavailable", "The implementation thread is unavailable.");
+      return snapshot.data.thread.latestTurn?.state ?? null;
+    },
     async launch(connection, entry) {
       const descriptor = descriptorSchema.safeParse(
         await call(connection.endpoint, "/.well-known/t3/environment"),

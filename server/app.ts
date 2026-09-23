@@ -3,7 +3,7 @@ import Fastify from "fastify";
 import { ZodError, z } from "zod";
 import { entraSchema } from "../shared/people.js";
 import { itemPatchSchema } from "../shared/schema.js";
-import { t3ConnectionSchema } from "../shared/t3.js";
+import { pullRequestUrlSchema, t3ConnectionSchema } from "../shared/t3.js";
 import type { Application } from "./application/application.js";
 import { connectionSchema } from "./application/connection.js";
 import { ApplicationError, ProfileCommitError } from "./application/errors.js";
@@ -79,6 +79,22 @@ export function createHttpApp(services: Application, port: number) {
       .parse(request.body);
     return services.t3.implement(request.params.id, input);
   });
+  app.post<{ Params: { id: string } }>("/api/items/:id/implementation/refresh", async (request) =>
+    services.t3.refresh(request.params.id),
+  );
+  app.put<{ Params: { id: string } }>(
+    "/api/items/:id/implementation/pull-request",
+    async (request) => {
+      const input = z
+        .object({
+          implementationId: z.string().min(1).max(200),
+          revision: z.number().int().nonnegative(),
+          url: pullRequestUrlSchema.nullable(),
+        })
+        .parse(request.body);
+      return services.t3.linkPullRequest(request.params.id, input);
+    },
+  );
   app.get("/api/people", async () => peopleSync.status());
   app.get("/api/settings/entra/tenant", async () => preferences.detectTenant());
   app.put("/api/settings/entra", async (request) => {

@@ -47,7 +47,9 @@ export function useImplementation(
   }, [item]);
   useEffect(() => {
     if (!settingsSection) void refresh();
+    const timer = settingsSection ? undefined : setInterval(() => void refresh(), 5000);
     return () => {
+      clearInterval(timer);
       request.current++;
     };
   }, [refresh, settingsSection]);
@@ -67,5 +69,36 @@ export function useImplementation(
       setError(reason instanceof Error ? reason.message : "Could not send this task to T3 Code.");
     }
   };
-  return { options, repositoryId, setRepositoryId, error, loading, start, refresh };
+  const checkProgress = async () => {
+    const next = await api<ImplementationOptions>(
+      `/items/${item.id}/implementation/refresh`,
+      "POST",
+    );
+    setOptions(next);
+    await onReload();
+  };
+  const linkPullRequest = async (url: string | null) => {
+    const next = await api<ImplementationOptions>(
+      `/items/${item.id}/implementation/pull-request`,
+      "PUT",
+      {
+        implementationId: options?.latest?.id,
+        revision: item.revision,
+        url,
+      },
+    );
+    setOptions(next);
+    await onReload();
+  };
+  return {
+    options,
+    repositoryId,
+    setRepositoryId,
+    error,
+    loading,
+    start,
+    refresh,
+    checkProgress,
+    linkPullRequest,
+  };
 }
