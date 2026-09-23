@@ -73,7 +73,7 @@ it("reads a file-backed default only for its intended endpoint", async () => {
     "fixture-secret",
   );
   expect(settings.credentialSources()).toEqual([
-    { source: "file", endpoint: "https://litellm.jobrad.tech/v1", path: keyFile },
+    { source: "file", endpoint: "https://model.example/v1/", path: keyFile },
   ]);
   expect(() => settings.credentials({ baseURL: "https://other.example/v1", model: "" })).toThrow(
     "No API key",
@@ -102,6 +102,21 @@ it("reports credential precedence without exposing keys", async () => {
     defaults.baseURL,
   );
   expect(settings.credentials().apiKey).toBe("private-key");
+});
+
+it("discovers and validates models using the advertised file credential without copying it", async () => {
+  const { root, defaults } = await fixture();
+  const keyFile = join(root, "provider.key");
+  writeFileSync(keyFile, "test-key\n");
+  const fileDefaults = { ...defaults, apiKey: "", keyFile };
+  const settings = new SettingsStore(fileDefaults);
+  const [source] = settings.credentialSources();
+  const input = { baseURL: source.endpoint, model: "test-model" };
+  expect(await settingsModels(settings).discover(input)).toContain(input.model);
+  await settingsModels(settings).connect(input);
+  const reloaded = new SettingsStore(fileDefaults);
+  expect(reloaded.credentials().apiKey).toBe("test-key");
+  expect(readFileSync(join(root, "settings.json"), "utf8")).not.toContain("test-key");
 });
 
 it("returns folder selections and cancellation without saving, and rejects cross-origin requests", async () => {

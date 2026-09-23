@@ -89,7 +89,7 @@ export class SettingsStore {
         if (readFileSync(this.defaults.keyFile, "utf8").trim())
           sources.push({
             source: "file",
-            endpoint: "https://litellm.jobrad.tech/v1",
+            endpoint: this.defaults.baseURL,
             path: this.defaults.keyFile,
           });
       } catch {
