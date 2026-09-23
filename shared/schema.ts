@@ -57,6 +57,10 @@ export type Item = ItemFields & {
   profilePath: string | null;
 };
 
+export type Capture = Item & {
+  refinement: "running" | "failed" | "paused" | "review" | "ready";
+};
+
 export const interpretationSchema = z.object({
   prompt: z.string().max(30000),
   sources: z.array(z.string()),

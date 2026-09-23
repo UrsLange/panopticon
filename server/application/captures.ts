@@ -1,5 +1,5 @@
 import { ZodError } from "zod";
-import { type Item, type ItemFields, itemFieldsSchema } from "../../shared/schema.js";
+import { type Capture, type Item, type ItemFields, itemFieldsSchema } from "../../shared/schema.js";
 import { resolveReferences, retainReferences } from "./aliases.js";
 import type { Assistant } from "./assistant.js";
 import type { createContext } from "./context.js";
@@ -23,6 +23,16 @@ export function createCaptures({
   resolveRepository(item: Pick<Item, "project" | "references">): string | null;
 }) {
   const processing = new Map<string, Promise<void>>();
+  const captureState = (item: Item): Capture => ({
+    ...item,
+    refinement: processing.has(item.id)
+      ? "running"
+      : item.processingError
+        ? "failed"
+        : item.processing === "pending"
+          ? "paused"
+          : item.processing,
+  });
   const mergeNote = notes.merge;
   const processItem = (id: string, mode: "full" | "references" | "edited" = "full") => {
     const referencesOnly = mode === "references";
@@ -122,13 +132,21 @@ export function createCaptures({
   };
 
   return {
-    list: () => store.list(),
-    today: () => store.today(today()),
+    list: () => store.list().map(captureState),
+    today: () => {
+      const daily = store.today(today());
+      return {
+        ...daily,
+        due: daily.due.map(captureState),
+        suggested: daily.suggested.map(captureState),
+        waiting: daily.waiting.map(captureState),
+      };
+    },
     history: (id: string) => store.history(id),
     capture(text: string) {
       const item = store.capture(text);
       void processItem(item.id);
-      return item;
+      return captureState(item);
     },
     process: processItem,
     busy: () => processing.size > 0,
@@ -138,7 +156,12 @@ export function createCaptures({
     async retry(id: string, input: { resetReferences: boolean; revision?: number }) {
       const item = store.get(id);
       if (!item) throw new ApplicationError("not-found", "Item not found");
-      if (item.kind === "note" && item.status === "done") return item;
+      if (item.kind === "note" && item.status === "done") return captureState(item);
+      if (processing.has(id))
+        throw new ApplicationError(
+          "conflict",
+          "Refinement is already running. Wait for it to finish.",
+        );
       if (!getAssistant())
         throw new ApplicationError("unavailable", "Connect and validate a model in Settings.");
       if (input.resetReferences) {
@@ -147,7 +170,6 @@ export function createCaptures({
             "invalid",
             "Supply the current revision to resolve aliases again.",
           );
-        await processing.get(item.id);
         store.update(
           item.id,
           { references: [], repositoryId: null, processing: "pending", processingError: null },
@@ -164,7 +186,7 @@ export function createCaptures({
         );
       }
       await processItem(item.id, input.resetReferences ? "references" : "full");
-      return store.get(item.id);
+      return captureState(store.get(item.id) as Item);
     },
     edit(id: string, fields: Partial<ItemFields>, revision: number) {
       const current = store.get(id);
@@ -178,6 +200,11 @@ export function createCaptures({
           { code: "custom", path: ["status"], message: "Use Add to profile to complete a note." },
         ]);
       const bodyChanged = fields.body !== undefined && fields.body !== current.body;
+      if (processing.has(id) && !bodyChanged)
+        throw new ApplicationError(
+          "conflict",
+          "Refinement is running. Save your edits when it finishes.",
+        );
       const updated = store.update(
         id,
         {
@@ -192,8 +219,8 @@ export function createCaptures({
             : (fields.kind ?? current.kind) === "note" &&
                 (fields.status ?? current.status) !== "done"
               ? "review"
-              : "ready",
-          processingError: null,
+              : current.processing,
+          processingError: bodyChanged ? null : current.processingError,
           ...(bodyChanged || (fields.kind !== undefined && fields.kind !== current.kind)
             ? {
                 profilePath: null,
@@ -224,7 +251,7 @@ export function createCaptures({
           });
         else void processItem(current.id, "edited");
       }
-      return updated;
+      return captureState(updated);
     },
   };
 }

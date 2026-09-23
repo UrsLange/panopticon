@@ -227,7 +227,7 @@ it("does not overwrite a concurrent manual edit with an obsolete interpretation"
   const gate = deferred<typeof result>();
   vi.mocked(f.assistant.interpret).mockReturnValue(gate.promise);
   const item = f.captures.capture("Original");
-  f.captures.edit(item.id, { title: "Manual title", prompt: "My manual details" }, item.revision);
+  f.store.update(item.id, { title: "Manual title", prompt: "My manual details" }, item.revision);
   gate.resolve(result);
   await f.captures.close();
   expect(f.store.get(item.id)).toMatchObject({
@@ -402,6 +402,54 @@ it("marks explicit regeneration pending and preserves the previous prompt on fai
     prompt: "Regenerated prompt",
     processing: "pending",
     processingError: expect.stringContaining("Interpretation failed"),
+  });
+});
+
+it("exposes live refinement state and rejects duplicate refinement requests", async () => {
+  const f = fixture();
+  const base = await f.assistant.interpret("", context);
+  const gate = deferred<typeof base>();
+  vi.mocked(f.assistant.interpret).mockClear().mockReturnValueOnce(gate.promise);
+  const item = f.captures.capture("Implement access");
+  expect(item.refinement).toBe("running");
+  expect(f.captures.list()[0].refinement).toBe("running");
+  for (const resetReferences of [false, true]) {
+    await expect(
+      f.captures.retry(item.id, { resetReferences, revision: item.revision }),
+    ).rejects.toThrow("Refinement is already running");
+  }
+  expect(() => f.captures.edit(item.id, { title: "Edited" }, item.revision)).toThrow(
+    "Refinement is running",
+  );
+  gate.resolve({ ...base, kind: "commitment", prompt: "Implement access" });
+  await f.captures.close();
+  expect(f.captures.list()[0].refinement).toBe("ready");
+  expect(f.assistant.interpret).toHaveBeenCalledTimes(1);
+});
+
+it("distinguishes paused and failed refinement and retains blockers after metadata edits", () => {
+  const f = fixture();
+  const item = f.store.capture("Add access");
+  expect(f.captures.list()[0].refinement).toBe("paused");
+  const failed = f.store.update(
+    item.id,
+    { kind: "commitment", processingError: "Model unavailable", prompt: "Previous prompt" },
+    item.revision,
+  );
+  const edited = f.captures.edit(item.id, { priority: "high" }, failed.revision);
+  expect(edited).toMatchObject({
+    refinement: "failed",
+    processing: "pending",
+    processingError: "Model unavailable",
+  });
+  const review = f.store.update(
+    item.id,
+    { processing: "review", processingError: null, rationale: "Which access category?" },
+    edited.revision,
+  );
+  expect(f.captures.edit(item.id, { title: "Renamed task" }, review.revision)).toMatchObject({
+    refinement: "review",
+    rationale: "Which access category?",
   });
 });
 
