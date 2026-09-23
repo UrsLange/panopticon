@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { createApp } from "../server/bootstrap.js";
+import { createApp, createApplication } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
 import { Profile } from "../server/profile.js";
 import { SettingsStore, settingsModels } from "../server/settings.js";
@@ -117,6 +117,45 @@ it("discovers and validates models using the advertised file credential without 
   const reloaded = new SettingsStore(fileDefaults);
   expect(reloaded.credentials().apiKey).toBe("test-key");
   expect(readFileSync(join(root, "settings.json"), "utf8")).not.toContain("test-key");
+});
+
+it("reports missing credentials and resumes capture refinement after the connection is repaired", async () => {
+  const { defaults } = await fixture();
+  const settings = new SettingsStore({ ...defaults, apiKey: "" });
+  settings.saveValidated({ baseURL: defaults.baseURL, model: "test-model" }, defaults.baseURL);
+  const store = new Store(":memory:");
+  const app = createApplication({ settings, store });
+  cleanup.push(async () => {
+    await app.close();
+    store.db.close();
+  });
+  expect(app.preferences.status()).toMatchObject({ modelReady: true, aiConfigured: false });
+  const item = app.captures.capture("An idea I must not lose");
+  await app.captures.close();
+  expect(store.get(item.id)).toMatchObject({
+    original: item.original,
+    processing: "pending",
+    processingError: expect.stringContaining("No API key is available"),
+  });
+  await expect(app.captures.retry(item.id, { resetReferences: false })).rejects.toMatchObject({
+    code: "unavailable",
+    message: expect.stringContaining("Settings → Model"),
+  });
+  await expect(app.preferences.discover()).rejects.toThrow("No API key is available");
+  expect(
+    await app.preferences.connect({
+      baseURL: defaults.baseURL,
+      model: "test-model",
+      apiKey: "test-key",
+    }),
+  ).toMatchObject({ aiConfigured: true });
+  const refined = await app.captures.retry(item.id, { resetReferences: false });
+  expect(refined).toMatchObject({
+    original: item.original,
+    processing: "ready",
+    processingError: null,
+    prompt: `Implement: ${item.original}`,
+  });
 });
 
 it("returns folder selections and cancellation without saving, and rejects cross-origin requests", async () => {

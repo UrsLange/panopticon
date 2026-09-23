@@ -6,6 +6,7 @@ import { defaultEntra, type EntraConfig, type PublicEntraConfig } from "../share
 import type { Settings } from "../shared/schema.js";
 import type { T3Connection } from "../shared/t3.js";
 import type { Connection } from "./application/connection.js";
+import { ApplicationError } from "./application/errors.js";
 import { createModelConnection } from "./application/model-connection.js";
 import { createAssistant, validateToolCalling } from "./assistant.js";
 import { config } from "./config.js";
@@ -112,7 +113,11 @@ export class SettingsStore {
         /* Missing or unreadable defaults require configuration in the UI. */
       }
     }
-    if (!apiKey) throw new Error("No API key is available for this endpoint. Enter one below.");
+    if (!apiKey)
+      throw new ApplicationError(
+        "unavailable",
+        "No API key is available for this endpoint. Open Settings → Model and enter an API key or restore the configured credential source.",
+      );
     return { ...input, baseURL, apiKey };
   }
   saveValidated(input: Connection, baseURL: string) {

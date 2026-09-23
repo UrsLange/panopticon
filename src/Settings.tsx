@@ -108,9 +108,12 @@ export function Configuration({
 }
 
 function ModelSettings({ settings, onChange, onboarding }: SettingsProps) {
+  const savedSource = settings.credentialSources.find(
+    (entry) => entry.endpoint.replace(/\/+$/, "") === settings.baseURL.replace(/\/+$/, ""),
+  );
   const [baseURL, setBaseURL] = useState(settings.baseURL);
   const [apiKey, setApiKey] = useState("");
-  const [credentialMode, setCredentialMode] = useState("existing");
+  const [credentialMode, setCredentialMode] = useState(savedSource ? "existing" : "new");
   const [model, setModel] = useState(settings.model);
   const [models, setModels] = useState<string[]>([]);
   const [editing, setEditing] = useState(onboarding || !settings.modelReady);
@@ -122,7 +125,9 @@ function ModelSettings({ settings, onChange, onboarding }: SettingsProps) {
     (entry) => entry.endpoint.replace(/\/+$/, "") === baseURL.replace(/\/+$/, ""),
   );
   const dirty =
-    baseURL !== settings.baseURL || model !== settings.model || credentialMode === "new";
+    baseURL !== settings.baseURL ||
+    model !== settings.model ||
+    (credentialMode === "new" && !!apiKey);
   useUnsavedSettings(dirty);
   const run = async (save: boolean) => {
     setBusy(true);
@@ -164,7 +169,13 @@ function ModelSettings({ settings, onChange, onboarding }: SettingsProps) {
     <section className="settings-card">
       <div className="settings-section-heading">
         <h2>Model connection</h2>
-        <span className="pill">{settings.modelReady ? "Validated" : "Setup required"}</span>
+        <span className="pill">
+          {!savedSource
+            ? "Credential required"
+            : settings.modelReady
+              ? "Validated"
+              : "Setup required"}
+        </span>
       </div>
       <p className="muted-text">
         Connect a provider that supports the Responses API, tool calling, and structured outputs.
@@ -174,6 +185,13 @@ function ModelSettings({ settings, onChange, onboarding }: SettingsProps) {
           <strong>{settings.model}</strong>
           <br />
           <span className="muted-text">{settings.baseURL}</span>
+        </p>
+      )}
+      {!savedSource && (
+        <p className="banner warning" role="status">
+          No API key is available for the saved endpoint. Capture refinement is paused. Enter a new
+          API key or restore the configured environment variable or key file, then test and save the
+          connection.
         </p>
       )}
       {error && (
@@ -303,7 +321,7 @@ function ModelSettings({ settings, onChange, onboarding }: SettingsProps) {
                   setBaseURL(settings.baseURL);
                   setModel(settings.model);
                   setApiKey("");
-                  setCredentialMode("existing");
+                  setCredentialMode(savedSource ? "existing" : "new");
                   setModels([]);
                   setError("");
                   setNotice("");

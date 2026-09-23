@@ -746,7 +746,7 @@ test("explains file credentials, requires keys for other endpoints, and preserve
   request,
 }) => {
   const saved = await (await request.get("/api/settings")).json();
-  const endpoint = "https://litellm.jobrad.tech/v1";
+  const endpoint = "https://models.example/v1";
   const fixture = {
     ...saved,
     baseURL: endpoint,
@@ -792,4 +792,51 @@ test("explains file credentials, requires keys for other endpoints, and preserve
   await expect(page.getByLabel("API endpoint", { exact: true })).toHaveValue(endpoint);
   await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);
   await page.screenshot({ path: "test-results/model-credential-source.png", fullPage: true });
+});
+
+test("repairs a saved model with missing credentials through connection testing and validation", async ({
+  page,
+  request,
+}) => {
+  const saved = await (await request.get("/api/settings")).json();
+  let settings = { ...saved, aiConfigured: false, credentialSources: [] };
+  await page.route("**/api/settings", (route) => route.fulfill({ json: settings }));
+  await page.route("**/api/settings/connection", async (route) => {
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    settings = await response.json();
+    await route.fulfill({ response });
+  });
+  await page.goto("/");
+  await expect(page.getByText("Capture mode", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "Model", exact: true })
+    .click();
+  await expect(page.getByText("Credential required", { exact: true })).toBeVisible();
+  await expect(page.getByText(/No API key is available for the saved endpoint/)).toBeVisible();
+  await page.getByRole("button", { name: "Edit model connection" }).click();
+  await expect(page.getByLabel("Credential source")).toHaveValue("new");
+  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit model connection" }).click();
+  await expect(page.getByLabel("Credential source")).toHaveValue("new");
+  await page.getByLabel("API key", { exact: true }).fill("test-key");
+  await page.getByLabel("Model", { exact: true }).fill("");
+  await page.getByRole("button", { name: "Test connection & load models" }).click();
+  await expect(
+    page.getByText("Connected. Choose a model to validate.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#available-models option")).toHaveCount(2);
+  await page.getByLabel("Model", { exact: true }).fill("test-model");
+  await page.getByRole("button", { name: "Validate & save model" }).click();
+  await expect(page.getByText("Model validated and saved.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page.getByText("Assistant connected", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByText("Credential required", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit model connection" }).click();
+  await expect(page.getByLabel("Credential source")).toHaveValue("existing");
+  await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);
 });

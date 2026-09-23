@@ -72,7 +72,13 @@ export function createPreferences({
     return {
       credentialSources: saved.credentialSources,
       entra: saved.entra,
-      aiConfigured: assistantConfigured || saved.modelReady,
+      aiConfigured:
+        assistantConfigured ||
+        (saved.modelReady &&
+          saved.credentialSources.some(
+            (source) =>
+              source.endpoint.replace(/\/+$/, "") === saved.connection.baseURL.replace(/\/+$/, ""),
+          )),
       model: saved.connection.model,
       provider: new URL(saved.connection.baseURL).origin,
       baseURL: saved.connection.baseURL,

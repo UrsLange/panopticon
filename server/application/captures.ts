@@ -102,14 +102,16 @@ export function createCaptures({
           !interpreted.needsClarification
         )
           await mergeNote(id, updated.revision);
-      } catch {
+      } catch (error) {
         if (store.get(id)?.revision === item.revision)
           store.update(
             id,
             {
               processing: "pending",
               processingError:
-                "Interpretation failed. Check model settings, retry, or organize this item manually.",
+                error instanceof ApplicationError
+                  ? error.message
+                  : "Interpretation failed. Check model settings, retry, or organize this item manually.",
             },
             item.revision,
           );
