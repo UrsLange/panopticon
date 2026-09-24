@@ -1,3 +1,4 @@
+import { isRefined } from "../../shared/collections.js";
 import type { Item } from "../../shared/schema.js";
 import type { ItemChanges } from "./ports.js";
 
@@ -56,7 +57,8 @@ export function revisedItem(
 }
 export function dailyCommitments(items: Item[], date: string) {
   const active = items.filter(
-    (item) => item.kind === "commitment" && !["done", "archived"].includes(item.status),
+    (item) =>
+      item.kind === "commitment" && isRefined(item) && !["done", "archived"].includes(item.status),
   );
   const due = active
     .filter((item) => item.dueDate && item.dueDate <= date)

@@ -8,15 +8,25 @@ Capture from any view. **Command–K** focuses the browser capture box; **Comman
 
 A capture is saved before model processing. The assistant classifies it and refines its description using available context. Failed processing retains the capture and can be retried.
 
-In **Inbox**, open an item to edit its kind, project, status, deadline, priority, or related item. **Description** holds the refined text; **Notes** retains the capture text with resolved aliases. Original wording and revision history remain available. Review items with unresolved questions or incomplete research.
+Every capture starts in **Inbox**. **Needs your attention** holds captures requiring clarification, retry, or resumption; **Refining** holds work the assistant is processing automatically. Successful refinement moves ideas to **Notebook** and commitments to **Tasks**. Notes follow the profile workflow below. Editing the capture's **User input** sends it back through Inbox while retaining its task status and history.
+
+Open a capture or task to edit it in the details panel. **Prompt** holds the refined text; **User input** retains the capture text with resolved aliases. Original wording and revision history remain available. Refinement never closes an open panel or discards a draft.
+
+Navigation badges mean **needs your attention**, not total items. Inbox counts captures requiring your help, excluding background refinement. Tasks counts each task due today, overdue, or ready for review once. Use **Needs your attention** in the task status filter to see those tasks. Page summaries show totals separately; Notebook has no attention badge.
+
+## Manage tasks
+
+**Tasks** groups active work into **Ready for review**, **In progress**, **Backlog**, and **Waiting**. Within each group, tasks appear by earliest deadline, then high priority, then age. Search and project/status filters narrow the list. Completed and archived tasks remain available through the status filter.
+
+Click a task's completion circle once to finish it; **Undo** restores its previous status. Click its title for details, editing, and actions such as starting work or continuing in T3 Code. Closing the panel preserves your list position and filters.
 
 ## Plan your day
 
-**Today** shows started commitments in **In progress**, including those without deadlines. **Due & overdue** includes every unfinished commitment due today or earlier, using your configured timezone. Suggested next actions are the three oldest undated commitments that have not started, with high priority first. The app does not infer deadlines.
+**Today** shows refined, started commitments in **In progress**, including those without deadlines. **Due & overdue** includes every refined, unfinished commitment due today or earlier, using your configured timezone. Suggested next actions are the three oldest refined, undated commitments that have not started, with high priority first. The app does not infer deadlines.
 
-Use **Mark in progress** for work you do outside T3 Code. **Mark waiting** pauses a task; **Resume** returns it to progress. Use **Mark done** when non-code work is complete. Detected code merges wait for your confirmation before completing the task. Every commitment shows its status in the list, and Inbox can filter by status. The status selector also supports **Ready for review**, reopening, and archiving.
+Use **Mark in progress** for work you do outside T3 Code. **Mark waiting** pauses a task; **Resume** returns it to progress. Use **Mark done** when non-code work is complete. Detected code merges wait for your confirmation before completing the task. Every commitment shows its status in the list, and Tasks can filter by status. The status selector also supports **Ready for review**, reopening, and archiving.
 
-**Notebook** holds ideas and pending profile notes. Discovering a repository does not create a commitment or assign it a priority.
+**Notebook** holds refined ideas, with search, project filtering, and access to archived ideas. Discovering a repository does not create a commitment or assign it a priority.
 
 ## Implement a commitment
 
@@ -42,7 +52,7 @@ An explicit memory request, such as “remember that I prefer atomic conventiona
 
 For a pending note, open it and choose **Add to profile**. Save any text edits first. Answer clarification questions or use **Retry profile update** after resolving a failure.
 
-After a verified, committed update, the note is marked **Added to profile** and leaves the default queue. Enable **Include completed & archived** to see its original capture, history, and profile links. Editing a completed note reopens it for explicit addition; archiving a pending note dismisses it without incorporating it.
+After a verified, committed update, the note is marked **Added to profile** and leaves Inbox. Its content is available in **Your context**. Archiving a pending note dismisses it without incorporating it.
 
 Profile updates use local `docs(profile): ...` commits and never push. Uncommitted edits in a target file block updates; unrelated changes remain untouched. If a commit fails, files may already be saved. Resolve the Git problem and review and commit those changes before retrying.
 

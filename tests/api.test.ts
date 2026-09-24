@@ -295,7 +295,7 @@ describe("local API", () => {
     expect(store.get(item.id)?.references[0].target).toBe(project.path);
     expect(store.get(item.id)?.title).toBe("My title");
   });
-  it("saves immediately without a model and supports manual planning", async () => {
+  it("saves captures and manual metadata without exposing unfinished refinement in Today", async () => {
     const { app } = setup();
     const response = await app.inject({
       method: "POST",
@@ -313,8 +313,13 @@ describe("local API", () => {
       payload: { revision: 0, kind: "commitment", dueDate: "2026-09-17" },
     });
     expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({
+      kind: "commitment",
+      dueDate: "2026-09-17",
+      refinement: "paused",
+    });
     const today = await app.inject({ url: "/api/today", headers });
-    expect(today.json().due).toHaveLength(1);
+    expect(today.json().due).toHaveLength(0);
   });
 
   it("rejects invalid dates and cross-origin or DNS-rebound requests", async () => {
