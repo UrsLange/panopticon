@@ -81,7 +81,7 @@ test("creates aliases through the profile editor and shows persisted capture ann
   await expect(page.getByText("Saved to your repository.", { exact: false })).toBeVisible();
   await page.getByLabel("What’s on your mind?").fill("Ask about ghma");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
-  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.getByRole("button", { name: /Ask about ghma/ }).click();
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management]", { exact: true }),
@@ -92,7 +92,7 @@ test("creates aliases through the profile editor and shows persisted capture ann
     "Implement: Ask about ghma tomorrow",
   );
   await page.reload();
-  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.getByRole("button", { name: /Ask about ghma/ }).click();
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management] tomorrow", { exact: true }),
@@ -112,8 +112,8 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await expect(page.getByRole("heading", { name: "A clearer day." })).toBeVisible();
   await page.getByLabel("What’s on your mind?").fill("Send the revised proposal to Anna");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Captured.");
-  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await expect(page.getByRole("status")).toContainText(/Captured\.|added to Notebook/);
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.getByRole("button", { name: /Send the revised proposal/ }).click();
   await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
     "Implement: Send the revised proposal to Anna",
@@ -157,7 +157,7 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
     .getByLabel("What’s on your mind?")
     .fill("Perhaps onboarding could include an invitation for a colleague");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
-  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.getByRole("button", { name: /Perhaps onboarding/ }).click();
   await page.locator(".capture-details summary").click();
   await page.getByLabel("Kind", { exact: true }).selectOption("idea");
@@ -192,11 +192,8 @@ test("incorporates explicit profile notes automatically and waits for approval o
     .toBe("done");
   await page.getByRole("button", { name: /^Inbox/ }).click();
   await expect(page.getByRole("button", { name: /note: I prefer browser-tested/ })).toHaveCount(0);
-  await page.getByLabel("Include completed & archived").check();
-  const incorporated = page.getByRole("button", { name: /note: I prefer browser-tested/ });
-  await expect(incorporated).toContainText("Added to profile");
-  await incorporated.click();
-  await page.getByRole("button", { name: "browser-test-preferences.md", exact: true }).click();
+  await page.getByRole("button", { name: "Your context", exact: true }).click();
+  await page.getByRole("button", { name: /Browser test preferences/ }).click();
   await expect(page.getByLabel("Markdown document")).toHaveValue(
     /note: I prefer browser-tested atomic commits\./,
   );
@@ -214,7 +211,6 @@ test("incorporates explicit profile notes automatically and waits for approval o
     before.find((doc: { path: string }) => doc.path === "browser-test-preferences.md").content,
   ).not.toContain(implicit);
   await page.getByRole("button", { name: /^Inbox/ }).click();
-  await page.getByLabel("Include completed & archived").uncheck();
   await page.getByRole("button", { name: /My browser-test review preference/ }).click();
   await expect(
     page.getByLabel("Status", { exact: true }).locator('option[value="done"]'),
@@ -232,10 +228,10 @@ test("incorporates explicit profile notes automatically and waits for approval o
   await expect(page.getByRole("button", { name: /My browser-test review preference/ })).toHaveCount(
     0,
   );
-  await page.getByLabel("Include completed & archived").check();
-  await expect(
-    page.getByRole("button", { name: /My browser-test review preference/ }),
-  ).toContainText("Added to profile");
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await expect(page.getByRole("button", { name: /My browser-test review preference/ })).toHaveCount(
+    0,
+  );
 });
 
 test("edits independent profile documents and adds project context", async ({ page }) => {
@@ -561,7 +557,7 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await page.getByRole("button", { name: "Today", exact: true }).click();
   await page.getByLabel("What’s on your mind?").fill("Implement project search in T3 Code");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
-  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.getByRole("button", { name: /Implement project search in T3 Code/ }).click();
   await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
     "Implement: Implement project search in T3 Code",

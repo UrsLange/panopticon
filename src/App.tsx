@@ -7,6 +7,7 @@ import {
   Command,
   FileText,
   Inbox,
+  ListTodo,
   LoaderCircle,
   MessageCircle,
   Plus,
@@ -17,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { captureCollection, isRefined, taskNeedsAttention } from "../shared/collections";
 import type {
   AssistantReply,
   Capture as Item,
@@ -30,12 +32,18 @@ import { PanopticonMark, Wordmark } from "./Brand";
 import { useImplementation } from "./Implementation";
 import { Configuration, Enrichment } from "./Settings";
 
-type View = "today" | "inbox" | "notebook" | "ask" | "profile" | "settings";
+type View = "today" | "inbox" | "tasks" | "notebook" | "ask" | "profile" | "settings";
+type Notice = {
+  text: string;
+  destination?: "tasks" | "notebook";
+  undo?: { item: Item; status: Item["status"] };
+};
 type Daily = { date: string; due: Item[]; suggested: Item[]; waiting: Item[] };
 type Message = { id: number; role: string; content: string; sources: string[] };
 const navigation = [
   { id: "today", label: "Today", icon: Sun },
   { id: "inbox", label: "Inbox", icon: Inbox },
+  { id: "tasks", label: "Tasks", icon: ListTodo },
   { id: "notebook", label: "Notebook", icon: BookOpen },
   { id: "ask", label: "Conversation", icon: MessageCircle },
   { id: "profile", label: "Your context", icon: FileText },
@@ -50,7 +58,7 @@ export function App() {
   const [onboarding, setOnboarding] = useState(false);
   const [documents, setDocuments] = useState<ProfileDocument[]>([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [capture, setCapture] = useState("");
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<Item | null>(null);
@@ -58,6 +66,9 @@ export function App() {
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [updating, setUpdating] = useState<string[]>([]);
+  const previousCollections = useRef(new Map<string, ReturnType<typeof captureCollection>>());
   const input = useRef<HTMLTextAreaElement>(null);
   const report = useCallback(
     (reason: unknown) =>
@@ -66,6 +77,20 @@ export function App() {
   );
   const reload = useCallback(async () => {
     const [nextItems, nextDaily] = await Promise.all([api<Item[]>("/items"), api<Daily>("/today")]);
+    for (const item of nextItems) {
+      const destination = captureCollection(item);
+      if (
+        previousCollections.current.get(item.id) === "inbox" &&
+        (destination === "tasks" || destination === "notebook") &&
+        !["done", "archived"].includes(item.status)
+      ) {
+        setNotice({
+          text: `${item.title} — added to ${destination === "tasks" ? "Tasks" : "Notebook"}.`,
+          destination,
+        });
+      }
+      previousCollections.current.set(item.id, destination);
+    }
     setItems(nextItems);
     setSelected((current) => {
       const next = nextItems.find((item) => item.id === current?.id);
@@ -74,7 +99,12 @@ export function App() {
         ? next
         : current;
     });
-    setDaily(nextDaily);
+    setDaily({
+      ...nextDaily,
+      due: nextDaily.due.filter(isRefined),
+      suggested: nextDaily.suggested.filter(isRefined),
+      waiting: nextDaily.waiting.filter(isRefined),
+    });
   }, []);
   const reloadProfile = useCallback(
     async () => setDocuments(await api<ProfileDocument[]>("/profile")),
@@ -107,7 +137,7 @@ export function App() {
   }, []);
   useEffect(() => {
     if (!notice) return;
-    const timeout = setTimeout(() => setNotice(""), 5000);
+    const timeout = setTimeout(() => setNotice(null), 8000);
     return () => clearTimeout(timeout);
   }, [notice]);
 
@@ -117,13 +147,14 @@ export function App() {
     setSaving(true);
     setError("");
     try {
-      await api<Item>("/captures", "POST", { text: capture });
+      const captured = await api<Item>("/captures", "POST", { text: capture });
+      previousCollections.current.set(captured.id, "inbox");
       setCapture("");
-      setNotice(
-        settings?.aiConfigured
+      setNotice({
+        text: settings?.aiConfigured
           ? "Captured. Your assistant is organizing it."
           : "Captured safely. Organize it in your inbox.",
-      );
+      });
       await reload();
     } catch (reason) {
       report(reason);
@@ -132,34 +163,89 @@ export function App() {
     }
   };
   const updateItem = async (item: Item, fields: Partial<ItemFields>) => {
-    await api(`/items/${item.id}`, "PATCH", { ...fields, revision: item.revision });
-    await reload();
+    setUpdating((current) => [...current, item.id]);
+    try {
+      const updated = await api<Item>(`/items/${item.id}`, "PATCH", {
+        ...fields,
+        revision: item.revision,
+      });
+      await reload();
+      return updated;
+    } finally {
+      setUpdating((current) => current.filter((id) => id !== item.id));
+    }
   };
   const row = (item: Item, reason?: string) => (
     <ItemRow
       key={item.id}
       item={item}
       reason={reason}
+      updating={updating.includes(item.id)}
       onOpen={() => setSelected(item)}
       onComplete={() => {
-        void updateItem(item, { status: item.status === "done" ? "open" : "done" }).catch(report);
+        void updateItem(item, { status: item.status === "done" ? "open" : "done" })
+          .then((updated) =>
+            setNotice({
+              text: item.status === "done" ? "Task reopened." : "Task completed.",
+              undo: { item: updated, status: item.status },
+            }),
+          )
+          .catch(report);
       }}
     />
   );
-  const pending = items.filter(
-    (item) => item.processing !== "ready" && !["done", "archived"].includes(item.status),
+  const inbox = items.filter(
+    (item) => captureCollection(item) === "inbox" && !["done", "archived"].includes(item.status),
+  );
+  const pending = inbox.filter((item) => item.refinement !== "running").length;
+  const refining = inbox.length - pending;
+  const tasks = items.filter((item) => captureCollection(item) === "tasks");
+  const activeTasks = tasks.filter((item) => !["done", "archived"].includes(item.status));
+  const attention = activeTasks.filter((item) =>
+    taskNeedsAttention(item, daily?.date ?? ""),
   ).length;
+  const inProgress = activeTasks.filter((item) =>
+    ["in_progress", "in_review"].includes(item.status),
+  );
   const filtered = items.filter(
     (item) =>
-      (showClosed ||
-        (view === "inbox" && ["done", "archived"].includes(statusFilter)) ||
+      captureCollection(item) === view &&
+      ((view === "notebook" && showClosed) ||
+        (view === "tasks" && ["done", "archived"].includes(statusFilter)) ||
         !["done", "archived"].includes(item.status)) &&
-      (view !== "inbox" || statusFilter === "all" || item.status === statusFilter) &&
-      (view !== "notebook" || ["idea", "note"].includes(item.kind)) &&
+      (view !== "tasks" ||
+        statusFilter === "all" ||
+        (statusFilter === "attention"
+          ? taskNeedsAttention(item, daily?.date ?? "")
+          : item.status === statusFilter)) &&
+      (!projectFilter || item.project === projectFilter) &&
       `${item.title} ${item.body} ${item.prompt} ${item.project}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
+  if (view === "tasks")
+    filtered.sort(
+      (a, b) =>
+        (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") ||
+        Number(b.priority === "high") - Number(a.priority === "high") ||
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.id.localeCompare(b.id),
+    );
+  const projects = [
+    ...new Set(
+      items
+        .filter((item) => captureCollection(item) === view)
+        .map((item) => item.project)
+        .filter(Boolean),
+    ),
+  ].sort();
+  const navigate = (next: View) => {
+    setView(next);
+    setQuery("");
+    setStatusFilter("all");
+    setProjectFilter("");
+    setShowClosed(false);
+  };
   const dateLabel = daily
     ? new Date(`${daily.date}T12:00:00`).toLocaleDateString(undefined, {
         weekday: "long",
@@ -214,14 +300,26 @@ export function App() {
               aria-label={label}
               aria-current={view === id ? "page" : undefined}
               className={`nav-item ${view === id ? "active" : ""}`}
-              onClick={() => {
-                setView(id);
-                setQuery("");
-              }}
+              aria-description={
+                id === "inbox"
+                  ? `${pending} captures need your attention; ${refining} refining.`
+                  : id === "tasks"
+                    ? `${attention} tasks due today, overdue, or ready for review.`
+                    : undefined
+              }
+              title={
+                id === "inbox"
+                  ? "Captures needing clarification, retry, or resumption"
+                  : id === "tasks"
+                    ? "Tasks due today, overdue, or ready for review"
+                    : label
+              }
+              onClick={() => navigate(id)}
             >
               <Icon size={19} />
               <span>{label}</span>
               {id === "inbox" && pending > 0 && <span className="count">{pending}</span>}
+              {id === "tasks" && attention > 0 && <span className="count">{attention}</span>}
             </button>
           ))}
         </nav>
@@ -257,7 +355,8 @@ export function App() {
                     {
                       today: "A clearer day.",
                       inbox: "Out of your head.",
-                      notebook: "Ideas and context worth keeping.",
+                      tasks: "Make room for the next step.",
+                      notebook: "Ideas worth keeping.",
                       ask: "Think it through.",
                       profile: "A little context goes a long way.",
                       settings: "Settings",
@@ -268,8 +367,11 @@ export function App() {
                   {
                     {
                       today: "Your commitments, a few next steps, and space for what’s new.",
-                      inbox: "Everything you captured. Organize it when you have a moment.",
-                      notebook: "Develop ideas and add pending notes to your profile.",
+                      inbox:
+                        "Captures stay here until refinement is complete. We’ll ask when we need your help.",
+                      tasks:
+                        "Your tasks, from the first step to the last. Open one to plan or continue your work.",
+                      notebook: "Your refined ideas, ready to revisit and develop.",
                       ask: "Build on your notes, your context, and what came before.",
                       profile: "An independent knowledge repository, shaped around you.",
                       settings: "",
@@ -334,26 +436,10 @@ export function App() {
                 <Section
                   title="In progress"
                   subtitle="Work already started, in T3 Code or elsewhere."
-                  count={
-                    items.filter(
-                      (item) =>
-                        item.kind === "commitment" &&
-                        ["in_progress", "in_review"].includes(item.status),
-                    ).length
-                  }
+                  count={inProgress.length}
                 >
-                  {items
-                    .filter(
-                      (item) =>
-                        item.kind === "commitment" &&
-                        ["in_progress", "in_review"].includes(item.status),
-                    )
-                    .map((item) => row(item))}
-                  {!items.some(
-                    (item) =>
-                      item.kind === "commitment" &&
-                      ["in_progress", "in_review"].includes(item.status),
-                  ) && (
+                  {inProgress.map((item) => row(item))}
+                  {!inProgress.length && (
                     <p className="muted-text">
                       Start a task or mark work in progress to keep it here.
                     </p>
@@ -428,10 +514,13 @@ export function App() {
                   </button>
                 </div>
                 <div className="small-card">
-                  <span className="eyebrow">WAITING FOR A MOMENT</span>
+                  <span className="eyebrow">NEEDS YOUR ATTENTION</span>
                   <strong>{pending}</strong>
-                  <p>{pending === 1 ? "capture to organize" : "captures to organize"}</p>
-                  <button type="button" className="text-button" onClick={() => setView("inbox")}>
+                  <p>
+                    {pending === 1 ? "capture needs your help" : "captures need your help"}
+                    {refining > 0 && ` · ${refining} refining`}
+                  </p>
+                  <button type="button" className="text-button" onClick={() => navigate("inbox")}>
                     Open inbox <ChevronRight size={15} />
                   </button>
                 </div>
@@ -461,8 +550,24 @@ export function App() {
             </div>
           )}
 
-          {(view === "inbox" || view === "notebook") && (
+          {(view === "inbox" || view === "tasks" || view === "notebook") && (
             <section className="collection">
+              <div className="section-title">
+                <h2>
+                  {view === "inbox"
+                    ? "Your inbox"
+                    : view === "tasks"
+                      ? "Your tasks"
+                      : "Your notebook"}
+                </h2>
+              </div>
+              <p className="section-subtitle">
+                {view === "inbox"
+                  ? `${pending} ${pending === 1 ? "needs" : "need"} your attention · ${refining} refining`
+                  : view === "tasks"
+                    ? `${activeTasks.length} active ${activeTasks.length === 1 ? "task" : "tasks"} · ${attention} ${attention === 1 ? "needs" : "need"} your attention`
+                    : "A place for ideas, without a to-do list."}
+              </p>
               <div className="collection-toolbar">
                 <label className="search">
                   <Search size={17} />
@@ -470,16 +575,17 @@ export function App() {
                     aria-label="Search items"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Find a thought or commitment"
+                    placeholder={view === "tasks" ? "Find a task" : "Find a capture or idea"}
                   />
                 </label>
-                {view === "inbox" && (
+                {view === "tasks" && (
                   <select
                     aria-label="Filter task status"
                     value={statusFilter}
                     onChange={(event) => setStatusFilter(event.target.value)}
                   >
-                    <option value="all">All statuses</option>
+                    <option value="all">All active tasks</option>
+                    <option value="attention">Needs your attention ({attention})</option>
                     {Object.entries(statusLabels).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
@@ -487,31 +593,125 @@ export function App() {
                     ))}
                   </select>
                 )}
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={showClosed}
-                    onChange={(event) => setShowClosed(event.target.checked)}
-                  />
-                  Include completed & archived
-                </label>
+                {view !== "inbox" && (
+                  <select
+                    aria-label="Filter by project"
+                    value={projectFilter}
+                    onChange={(event) => setProjectFilter(event.target.value)}
+                  >
+                    <option value="">All projects</option>
+                    {projects.map((project) => (
+                      <option key={project} value={project}>
+                        {project}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {view === "notebook" && (
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={showClosed}
+                      onChange={(event) => setShowClosed(event.target.checked)}
+                    />
+                    Include completed & archived
+                  </label>
+                )}
               </div>
-              <div className="section-title">
-                <h2>{view === "inbox" ? "All captures" : "Your notebook"}</h2>
-                <span className="count">{filtered.length}</span>
-              </div>
+              {view === "tasks" && (
+                <p className="section-subtitle">
+                  Within each group: earliest deadline, then high priority, then oldest first.
+                </p>
+              )}
               {filtered.length ? (
-                filtered.map((item) => row(item))
+                view === "inbox" ? (
+                  [
+                    {
+                      title: "Needs your attention",
+                      running: false,
+                      subtitle: "Open a capture to clarify, retry, or resume refinement.",
+                    },
+                    {
+                      title: "Refining",
+                      running: true,
+                      subtitle: "Your assistant is working. Nothing for you to do here.",
+                    },
+                  ].map((group) => {
+                    const entries = filtered.filter(
+                      (item) => (item.refinement === "running") === group.running,
+                    );
+                    return (
+                      entries.length > 0 && (
+                        <Section
+                          key={group.title}
+                          title={group.title}
+                          subtitle={group.subtitle}
+                          count={entries.length}
+                        >
+                          {entries.map((item) => row(item))}
+                        </Section>
+                      )
+                    );
+                  })
+                ) : view === "tasks" ? (
+                  [
+                    { status: "in_review", title: "Ready for review" },
+                    { status: "in_progress", title: "In progress" },
+                    { status: "open", title: "Backlog" },
+                    { status: "waiting", title: "Waiting" },
+                    { status: "done", title: "Completed" },
+                    { status: "archived", title: "Archived" },
+                  ].map((group) => {
+                    const entries = filtered.filter((item) => item.status === group.status);
+                    return (
+                      entries.length > 0 && (
+                        <Section key={group.status} title={group.title} count={entries.length}>
+                          {entries.map((item) =>
+                            row(
+                              item,
+                              !["done", "archived"].includes(item.status) &&
+                                item.dueDate &&
+                                daily &&
+                                item.dueDate <= daily.date
+                                ? `${item.dueDate < daily.date ? "Overdue" : "Due today"} · ${item.dueDate}`
+                                : undefined,
+                            ),
+                          )}
+                        </Section>
+                      )
+                    );
+                  })
+                ) : (
+                  <div className="item-list">{filtered.map((item) => row(item))}</div>
+                )
               ) : (
                 <Empty
-                  icon={<BookOpen size={25} />}
-                  title={view === "notebook" ? "Let an idea take shape" : "A fresh page"}
-                  text={
-                    query
-                      ? "No items match this search."
+                  icon={
+                    view === "inbox" ? (
+                      <Inbox size={25} />
+                    ) : view === "tasks" ? (
+                      <ListTodo size={25} />
+                    ) : (
+                      <BookOpen size={25} />
+                    )
+                  }
+                  title={
+                    query || projectFilter || statusFilter !== "all"
+                      ? "No matching items"
                       : view === "notebook"
-                        ? "Ideas stay here. Notes await incorporation into your profile."
-                        : "Your next thought belongs in the capture box above."
+                        ? "Let an idea take shape"
+                        : view === "tasks"
+                          ? "Room for your next task"
+                          : "Your inbox is clear"
+                  }
+                  text={
+                    query || projectFilter || statusFilter !== "all"
+                      ? "No items match these filters."
+                      : view === "notebook"
+                        ? "Ideas arrive here automatically after refinement."
+                        : view === "tasks"
+                          ? "Capture a task above. It will arrive here once refinement is complete."
+                          : "New captures appear here while they are being refined."
                   }
                 />
               )}
@@ -522,9 +722,10 @@ export function App() {
               settings={settings}
               report={report}
               onCapture={async (text) => {
-                await api("/captures", "POST", { text });
+                const captured = await api<Item>("/captures", "POST", { text });
+                previousCollections.current.set(captured.id, "inbox");
+                setNotice({ text: "Saved to your inbox." });
                 await reload();
-                setNotice("Saved to your inbox.");
               }}
             />
           )}
@@ -544,7 +745,35 @@ export function App() {
       {notice && (
         <div className="toast" role="status">
           <Check size={17} />
-          {notice}
+          <span>{notice.text}</span>
+          {notice.destination && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setSelected(null);
+                if (notice.destination) navigate(notice.destination);
+                setNotice(null);
+              }}
+            >
+              View {notice.destination === "tasks" ? "Tasks" : "Notebook"}
+            </button>
+          )}
+          {notice.undo && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={updating.includes(notice.undo.item.id)}
+              onClick={() => {
+                if (!notice.undo) return;
+                void updateItem(notice.undo.item, { status: notice.undo.status })
+                  .then(() => setNotice(null))
+                  .catch(report);
+              }}
+            >
+              Undo
+            </button>
+          )}
         </div>
       )}
       {selected && (
@@ -579,8 +808,8 @@ export function App() {
               ...fields,
               revision: selected.revision,
             });
+            setNotice({ text: "Changes saved." });
             await reload();
-            setNotice("Changes saved.");
             return updated;
           }}
           onRetry={async (resetReferences = false) => {
@@ -603,17 +832,17 @@ function Section({
   children,
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   count: number;
   children: React.ReactNode;
 }) {
   return (
-    <section className="section">
+    <section className="section" aria-label={title}>
       <div className="section-title">
         <h2>{title}</h2>
         <span className="count">{count}</span>
       </div>
-      <p className="section-subtitle">{subtitle}</p>
+      {subtitle && <p className="section-subtitle">{subtitle}</p>}
       <div className="item-list">{children}</div>
     </section>
   );
@@ -632,18 +861,36 @@ function ItemRow({
   reason,
   onOpen,
   onComplete,
+  updating,
 }: {
   item: Item;
   reason?: string;
   onOpen: () => void;
   onComplete: () => void;
+  updating: boolean;
 }) {
+  const description =
+    reason ||
+    (item.refinement === "running"
+      ? "Refining…"
+      : item.refinement === "failed"
+        ? "Refinement failed · Open to retry"
+        : item.refinement === "paused"
+          ? "Refinement paused · Open to resume"
+          : item.kind === "note"
+            ? "Profile note needs attention"
+            : item.refinement === "review"
+              ? "Needs clarification · Open to add details"
+              : item.kind === "idea"
+                ? "Idea"
+                : "");
   return (
     <article className={`item-row ${item.status === "done" ? "completed" : ""}`}>
       {item.kind === "commitment" ? (
         <button
           type="button"
           className="complete-button"
+          disabled={updating || item.refinement === "running"}
           aria-label={`${item.status === "done" ? "Reopen" : "Complete"} ${item.title}`}
           onClick={onComplete}
         >
@@ -656,34 +903,17 @@ function ItemRow({
       )}
       <button type="button" className="item-main" onClick={onOpen}>
         <strong>{item.title}</strong>
-        {item.kind === "commitment" && (
-          <span className={`task-status task-status-${item.status}`}>
-            {statusLabels[item.status]}
-          </span>
-        )}
         <span>
+          {item.kind === "commitment" && (
+            <span className={`task-status task-status-${item.status}`}>
+              {statusLabels[item.status]}
+            </span>
+          )}
           {item.project && <span className="project-tag">{item.project}</span>}
-          {reason ||
-            (item.kind === "note"
-              ? item.profilePath && item.status === "done"
-                ? "Added to profile"
-                : item.status === "done"
-                  ? "Done"
-                  : item.processingError
-                    ? "Profile update needs attention"
-                    : "Pending profile note"
-              : item.refinement === "failed"
-                ? "Refinement failed"
-                : item.refinement === "running"
-                  ? "Refining…"
-                  : item.processing !== "ready"
-                    ? item.processing === "review"
-                      ? "Needs clarification"
-                      : "Awaiting organization"
-                    : item.kind)}
-          {item.status === "waiting" && " · Waiting"}
-          {item.status === "archived" && " · Archived"}
-          {!reason && item.dueDate && ` · ${item.dueDate}`}
+          {item.priority === "high" && <span>High priority</span>}
+          {description && <span>{description}</span>}
+          {item.status === "archived" && item.kind !== "commitment" && <span>Archived</span>}
+          {!reason && item.dueDate && <span>Due {item.dueDate}</span>}
         </span>
       </button>
       <ChevronRight className="row-arrow" size={17} />

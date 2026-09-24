@@ -81,7 +81,7 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
     if (path === `/api/items/${item.id}` && route.request().method() === "PATCH") {
       saves++;
       const fields = route.request().postDataJSON();
-      const bodyChanged = fields.body !== item.body;
+      const bodyChanged = fields.body !== undefined && fields.body !== item.body;
       item = { ...item, ...fields, revision: item.revision + 1 };
       if (bodyChanged) item = { ...item, refinement: "running", processing: "pending" };
       return route.fulfill({ json: item });
@@ -95,6 +95,9 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
   });
   await page.clock.install();
   await page.goto("/");
+  await page
+    .getByRole("button", { name: item.refinement === "ready" ? "Tasks" : "Inbox", exact: true })
+    .click();
   await page.getByRole("button", { name: /^Add Kiana to GitHub/ }).click();
   return {
     options,
@@ -166,6 +169,7 @@ test("dismisses drafts without saving and does not reopen when refinement finish
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await state.update({ refinement: "ready", processing: "ready", revision: 1 });
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.getByRole("button", { name: /^Add Kiana to GitHub/ }).click();
   await expect(page.getByLabel("Title", { exact: true })).toHaveValue("Add Kiana to GitHub");
   for (const close of ["Escape", "Close item"]) {
@@ -317,9 +321,7 @@ test("reviews agent output and completes after a local merge without pull reques
 
 test("tracks outside work without T3 and filters started and completed tasks", async ({ page }) => {
   const state = await capturePage(page, {
-    prompt: "",
-    processing: "pending",
-    refinement: "paused",
+    prompt: "Add the specified access and verify it.",
   });
   state.options.configured = false;
   await state.update({ revision: 1 });
@@ -329,11 +331,12 @@ test("tracks outside work without T3 and filters started and completed tasks", a
   await page.getByRole("button", { name: "Mark waiting", exact: true }).click();
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
   const active = page
     .locator(".section")
     .filter({ has: page.getByRole("heading", { name: "In progress", exact: true }) });
   await expect(active).toContainText("Add Kiana to GitHub");
-  await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.getByLabel("Filter task status").selectOption("open");
   await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toHaveCount(0);
   await page.getByLabel("Filter task status").selectOption("in_progress");
