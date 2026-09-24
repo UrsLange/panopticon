@@ -740,6 +740,13 @@ footer {
   background: #080d16bb;
   backdrop-filter: blur(3px);
 }
+.completion-review p,
+.completion-review h2 {
+  overflow-wrap: anywhere;
+}
+.completion-review kbd {
+  margin-left: 6px;
+}
 .modal-top {
   display: flex;
   align-items: center;
@@ -801,6 +808,9 @@ footer {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+.completion-review .modal-actions {
+  flex-wrap: wrap;
 }
 .implementation {
   margin-top: 24px;

@@ -27,6 +27,7 @@ import type {
 import { annotatedText, statusLabels } from "../shared/schema";
 import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
+import { CompletionReviews } from "./CompletionReviews";
 import { useImplementation } from "./Implementation";
 import { Configuration, Enrichment } from "./Settings";
 
@@ -233,6 +234,7 @@ export function App() {
       <main>
         <header className="topbar">
           <span>{dateLabel}</span>
+          <CompletionReviews onChange={reload} />
           <span className="quiet">
             Personal workspace <span className="tiny-dot">·</span> MVP
           </span>

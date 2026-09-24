@@ -1,5 +1,6 @@
 import type { Item } from "../../shared/schema.js";
 import type {
+  CompletionReview,
   Implementation,
   ImplementationOptions,
   ImplementationProgress,
@@ -255,10 +256,16 @@ export function createT3({
     const firstCheck = entry.progress?.turnState == null;
     progress.error = errors.length ? errors.join(" ") : null;
     entry.progress = progress;
+    const merge = progress.localMerge;
+    if (newlyMerged && merge && current.processing === "ready" && current.prompt === entry.prompt) {
+      entry.completionReview = {
+        head: merge.head,
+        reason: `The implementation branch ${merge.branch} was merged into ${merge.mainBranch}, with no uncommitted work detected.`,
+      };
+    }
     records.saveImplementation(entry);
     if (current.processing !== "ready" || current.prompt !== entry.prompt) return;
-    if (newlyMerged) records.update(itemId, { status: "done" }, current.revision);
-    else if (
+    if (
       (current.status === "in_progress" || (current.status === "open" && firstCheck)) &&
       newlyFinished
     )
@@ -278,9 +285,63 @@ export function createT3({
     return check;
   };
   let refreshing: Promise<void> | null = null;
+  const completionReviews = (): CompletionReview[] =>
+    records.list().flatMap((item) => {
+      const entry = records.latestImplementation(item.id, getProfile().root);
+      if (
+        !entry?.completionReview ||
+        item.kind !== "commitment" ||
+        ["done", "archived"].includes(item.status) ||
+        item.processing !== "ready" ||
+        item.prompt !== entry.prompt
+      )
+        return [];
+      return [
+        {
+          itemId: item.id,
+          implementationId: entry.id,
+          revision: item.revision,
+          title: item.title,
+          ...entry.completionReview,
+        },
+      ];
+    });
   return {
     status,
     options,
+    completionReviews,
+    reviewCompletion: (
+      itemId: string,
+      input: {
+        implementationId: string;
+        head: string;
+        revision: number;
+        decision: "confirm" | "keep_open";
+      },
+    ) => {
+      const candidate = completionReviews().find((review) => review.itemId === itemId);
+      const entry = records.latestImplementation(itemId, getProfile().root);
+      if (
+        !entry ||
+        !candidate ||
+        candidate.implementationId !== input.implementationId ||
+        candidate.head !== input.head
+      )
+        throw new ApplicationError(
+          "conflict",
+          "This completion suggestion changed. Reload before reviewing.",
+        );
+      const current = records.get(itemId);
+      assertRevision(current, input.revision);
+      const updated = records.update(
+        itemId,
+        { status: input.decision === "confirm" ? "done" : current.status },
+        input.revision,
+      );
+      delete entry.completionReview;
+      records.saveImplementation(entry);
+      return updated;
+    },
     refresh: async (itemId: string) => {
       await checkProgress(itemId);
       return options(itemId);

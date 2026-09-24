@@ -61,6 +61,18 @@ export function createHttpApp(services: Application, port: number) {
     return preferences.chooseDirectory();
   });
   app.get("/api/settings/t3", async () => services.t3.status());
+  app.get("/api/completion-reviews", async () => services.t3.completionReviews());
+  app.post<{ Params: { id: string } }>("/api/items/:id/completion-review", async (request) => {
+    const input = z
+      .object({
+        implementationId: z.string().min(1).max(200),
+        head: z.string().min(1).max(200),
+        revision: z.number().int().nonnegative(),
+        decision: z.enum(["confirm", "keep_open"]),
+      })
+      .parse(request.body);
+    return services.t3.reviewCompletion(request.params.id, input);
+  });
   app.put("/api/settings/t3", async (request) =>
     services.t3.connect(t3ConnectionSchema.parse(request.body)),
   );

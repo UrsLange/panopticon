@@ -639,7 +639,7 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
     .screenshot({ path: "test-results/t3-implementation-mobile.png" });
   expect(
     await page
-      .locator(".editor-modal")
+      .locator(".capture-editor")
       .evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
   await page.setViewportSize({ width: 1280, height: 900 });

@@ -63,7 +63,16 @@ export type Implementation = {
   state: "pending" | "submitted";
   error: string | null;
   mergedCommit?: string;
+  completionReview?: { head: string; reason: string };
   progress?: ImplementationProgress;
+};
+export type CompletionReview = {
+  itemId: string;
+  implementationId: string;
+  revision: number;
+  title: string;
+  head: string;
+  reason: string;
 };
 export type ImplementationSummary = Pick<
   Implementation,

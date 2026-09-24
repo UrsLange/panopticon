@@ -151,7 +151,7 @@ it("moves finished turns to review, respects manual resume, and never treats a t
   expect(store.get(item.id)?.status).toBe("in_progress");
 });
 
-it("completes only after a local merge and does not undo reopening", async () => {
+it("requires confirmation after a local merge and does not undo reopening", async () => {
   const { service, store, item, ports, client } = fixture();
   await service.implement(item.id, { revision: item.revision });
   await service.refreshActive();
@@ -166,9 +166,12 @@ it("completes only after a local merge and does not undo reopening", async () =>
   });
   vi.mocked(client.progress).mockRejectedValue(new Error("offline private-token"));
   await service.refreshActive();
-  const completed = store.get(item.id);
-  assert(completed);
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  const [candidate] = service.completionReviews();
+  expect(candidate.reason).toContain("merged into main");
+  const completed = service.reviewCompletion(item.id, { ...candidate, decision: "confirm" });
   expect(completed.status).toBe("done");
+  expect(service.completionReviews()).toEqual([]);
   expect(service.options(item.id).latest?.progress?.error).not.toContain("private-token");
   store.update(item.id, { status: "in_progress" }, completed.revision);
   ports.localMerge.mockRejectedValueOnce(new Error("private repository diagnostic"));
@@ -181,6 +184,110 @@ it("completes only after a local merge and does not undo reopening", async () =>
   expect(store.latestImplementation(item.id, "/profile")?.mergedCommit).toBe(
     "implementation-commit",
   );
+  expect(service.completionReviews()).toEqual([]);
+});
+
+it("persists pending reviews and suppresses rejected evidence across service restarts", async () => {
+  const { service, store, item, ports } = fixture();
+  await service.implement(item.id, { revision: item.revision });
+  const merge: LocalMerge = {
+    branch: "panopticon/id-1",
+    mainBranch: "main",
+    head: "first",
+    mainHead: "main",
+    merged: true,
+    dirty: false,
+  };
+  ports.localMerge.mockResolvedValue(merge);
+  await service.refreshActive();
+  const restarted = createT3(ports);
+  expect(restarted.completionReviews()).toEqual(service.completionReviews());
+  const [candidate] = restarted.completionReviews();
+  restarted.reviewCompletion(item.id, { ...candidate, decision: "keep_open" });
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  const again = createT3(ports);
+  await again.refreshActive();
+  expect(again.completionReviews()).toEqual([]);
+  ports.localMerge.mockResolvedValue({ ...merge, head: "new-commit" });
+  await again.refreshActive();
+  expect(again.completionReviews()).toMatchObject([{ head: "new-commit" }]);
+});
+
+it("rejects stale decisions and isolates changed prompts, closed tasks, profiles and implementations", async () => {
+  const { service, store, item, ports } = fixture();
+  const implementation = await service.implement(item.id, { revision: item.revision });
+  ports.localMerge.mockResolvedValue({
+    branch: "panopticon/id-1",
+    mainBranch: "main",
+    head: "first",
+    mainHead: "main",
+    merged: true,
+    dirty: false,
+  });
+  await service.refreshActive();
+  const [candidate] = service.completionReviews();
+  for (const fields of [{ head: "stale" }, { implementationId: "old" }, { revision: 0 }])
+    expect(() =>
+      service.reviewCompletion(item.id, { ...candidate, ...fields, decision: "confirm" }),
+    ).toThrow(/changed/);
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  const otherProfile = createT3({
+    ...ports,
+    getProfile: () => ({ ...ports.getProfile(), root: "/other" }),
+  });
+  expect(otherProfile.completionReviews()).toEqual([]);
+  for (const fields of [
+    { prompt: "Changed scope" },
+    { status: "done" as const },
+    { status: "archived" as const },
+  ]) {
+    const current = store.get(item.id);
+    assert(current);
+    const updated = store.update(item.id, fields, current.revision);
+    expect(service.completionReviews()).toEqual([]);
+    expect(() =>
+      service.reviewCompletion(item.id, {
+        ...candidate,
+        revision: updated.revision,
+        decision: "confirm",
+      }),
+    ).toThrow(/changed/);
+    store.update(item.id, { prompt: item.prompt, status: "in_progress" }, updated.revision);
+  }
+  const current = store.get(item.id);
+  assert(current && implementation);
+  await service.implement(item.id, {
+    revision: current.revision,
+    previousAttemptId: implementation.id,
+  });
+  expect(service.completionReviews()).toEqual([]);
+});
+
+it("does not resurrect a rejection when an earlier progress check finishes", async () => {
+  const { service, item, ports, client } = fixture();
+  await service.implement(item.id, { revision: item.revision });
+  ports.localMerge.mockResolvedValue({
+    branch: "panopticon/id-1",
+    mainBranch: "main",
+    head: "first",
+    mainHead: "main",
+    merged: true,
+    dirty: false,
+  });
+  await service.refreshActive();
+  const [candidate] = service.completionReviews();
+  let finish: (state: "running") => void = () => {};
+  vi.mocked(client.progress).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = service.refresh(item.id);
+  service.reviewCompletion(item.id, { ...candidate, decision: "keep_open" });
+  finish("running");
+  await pending;
+  expect(service.completionReviews()).toEqual([]);
 });
 
 it("preserves paused tasks, changed scope, and edits made during progress checks", async () => {
@@ -301,7 +408,7 @@ it.each(["--ff-only", "--no-ff"])(
   },
 );
 
-it("completes a submitted task from real local Git evidence without T3 connectivity", async () => {
+it("proposes completion from real local Git evidence without T3 connectivity", async () => {
   const { entry, repository, git, commitWork } = localMergeFixture();
   const { ports, item, store, repositories, client } = fixture();
   repositories[0].path = repository;
@@ -314,7 +421,8 @@ it("completes a submitted task from real local Git evidence without T3 connectiv
   git("-C", repository, "merge", "--ff-only", "panopticon/test");
   vi.mocked(client.progress).mockRejectedValue(new Error("offline"));
   await service.refreshActive();
-  expect(store.get(item.id)?.status).toBe("done");
+  expect(store.get(item.id)?.status).toBe("in_progress");
+  expect(service.completionReviews()).toMatchObject([{ itemId: item.id }]);
   expect(service.options(item.id).latest?.progress?.localMerge?.merged).toBe(true);
 });
 
@@ -662,9 +770,17 @@ it("persists private settings and handoffs, and exposes only sanitized connectio
   await source.implement(sourceItem.id, { revision: sourceItem.revision });
   const entry = sourceStore.latestImplementation(sourceItem.id, "/profile");
   assert(entry);
+  store.update(
+    item.id,
+    { kind: "commitment", processing: "ready", prompt: entry.prompt },
+    item.revision,
+  );
   store.saveImplementation({
     ...entry,
     itemId: item.id,
+    profileRoot: defaults.profileDir,
+    mergedCommit: "merged-head",
+    completionReview: { head: "merged-head", reason: "Merged into main with no uncommitted work." },
   });
   store.db.close();
   const reopened = new Store(join(root, "assistant.sqlite"));
@@ -673,7 +789,32 @@ it("persists private settings and handoffs, and exposes only sanitized connectio
     await app.close();
     reopened.db.close();
   });
-  expect(reopened.latestImplementation(item.id, "/profile")?.state).toBe("submitted");
+  expect(reopened.latestImplementation(item.id, defaults.profileDir)?.state).toBe("submitted");
+  const pending = await app.inject({
+    url: "/api/completion-reviews",
+    headers: { host: "localhost" },
+  });
+  expect(pending.statusCode).toBe(200);
+  const [candidate] = pending.json();
+  expect(candidate).toMatchObject({ itemId: item.id, head: "merged-head", revision: 1 });
+  const review = (body: unknown) =>
+    app.inject({
+      method: "POST",
+      url: `/api/items/${item.id}/completion-review`,
+      headers: { host: "localhost", "content-type": "application/json" },
+      payload: JSON.stringify(body),
+    });
+  expect((await review({ ...candidate, decision: "invalid" })).statusCode).toBe(400);
+  expect((await review({ ...candidate, revision: 0, decision: "confirm" })).statusCode).toBe(409);
+  expect(reopened.get(item.id)?.status).toBe("open");
+  expect((await review({ ...candidate, decision: "confirm" })).json().status).toBe("done");
+  expect(
+    reopened.latestImplementation(item.id, defaults.profileDir)?.completionReview,
+  ).toBeUndefined();
+  expect(
+    (await app.inject({ url: "/api/completion-reviews", headers: { host: "localhost" } })).json(),
+  ).toEqual([]);
+  expect((await review({ ...candidate, decision: "confirm" })).statusCode).toBe(409);
   const response = await app.inject({ url: "/api/settings/t3", headers: { host: "localhost" } });
   expect(response.json()).toMatchObject({ configured: true, endpoint: connection.endpoint });
   expect(response.body).not.toContain(connection.accessToken);
