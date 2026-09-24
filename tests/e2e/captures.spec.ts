@@ -133,6 +133,51 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
   };
 }
 
+test("refreshes capture details without changing the visible content while waiting", async ({
+  page,
+}) => {
+  const state = await capturePage(page);
+  const action = page.getByRole("button", { name: "Start in T3 Code", exact: true });
+  await expect(action).toBeEnabled();
+  const title = page.getByLabel("Title", { exact: true });
+  await title.fill("Unsaved title");
+  const status = page.getByRole("region", { name: "Capture status" });
+  for (const revision of [1, 2]) {
+    const content = await status.textContent();
+    const bounds = await status.boundingBox();
+    const scrollTop = await page.getByRole("dialog").evaluate((element) => element.scrollTop);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/items/capture-test/implementation", async (route) => {
+      await pending;
+      await route.fallback();
+    });
+    const request = page.waitForRequest("**/api/items/capture-test/implementation");
+    await state.update({ revision });
+    await request;
+    await expect(page.getByText("Checking T3 Code readiness…", { exact: true })).toHaveCount(0);
+    expect(await status.textContent()).toBe(content);
+    expect(await status.boundingBox()).toEqual(bounds);
+    await expect(title).toBeFocused();
+    await expect(title).toHaveValue("Unsaved title");
+    expect(await page.getByRole("dialog").evaluate((element) => element.scrollTop)).toBe(scrollTop);
+
+    state.options.repositories[0].name = `Updated repository ${revision}`;
+    release();
+    await expect(
+      page.getByRole("option", {
+        name: `Updated repository ${revision} — /repos/access`,
+        exact: true,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: "Save and start in T3 Code", exact: true }),
+    ).toBeEnabled();
+  }
+});
+
 test("explains failures and previous clarification, and prevents duplicate refinement", async ({
   page,
 }) => {

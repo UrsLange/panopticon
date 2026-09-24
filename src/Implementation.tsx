@@ -18,11 +18,10 @@ export function useImplementation(
     const { id, kind } = item;
     if (kind !== "commitment") return;
     const current = ++request.current;
-    setLoading(true);
-    setError("");
     await api<ImplementationOptions>(`/items/${id}/implementation`)
       .then((next) => {
         if (current === request.current) {
+          setError("");
           setOptions(next);
           const previousSuggestion = suggested.current;
           setRepositoryId((selected) =>
