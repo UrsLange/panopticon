@@ -162,6 +162,7 @@ describe("capture and planning", () => {
         {
           kind: "commitment",
           dueDate: i < 8 ? "2026-09-16" : "2026-09-17",
+          processing: "ready",
           status: i === 0 ? "waiting" : i === 1 ? "in_progress" : i === 2 ? "in_review" : "open",
         },
         0,
@@ -179,12 +180,12 @@ describe("capture and planning", () => {
     const db = store();
     for (const kind of ["idea", "note", "commitment"] as const) {
       const item = db.capture(kind);
-      db.update(item.id, { kind }, 0);
+      db.update(item.id, { kind, processing: "ready" }, 0);
     }
     expect(db.today("2026-09-17").suggested.map((item) => item.kind)).toEqual(["commitment"]);
     for (const status of ["in_progress", "in_review", "waiting", "done"] as const) {
       const item = db.capture(status);
-      db.update(item.id, { kind: "commitment", status }, 0);
+      db.update(item.id, { kind: "commitment", status, processing: "ready" }, 0);
     }
     expect(db.today("2026-09-17").suggested.map((item) => item.status)).toEqual(["open"]);
   });
