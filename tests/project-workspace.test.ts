@@ -374,11 +374,13 @@ it("reads only requested reviews and Dependabot alerts and rejects invalid links
   expect(result.securityErrors).toEqual([]);
   expect(result.reviewError).toBeNull();
   expect(run.mock.calls.some(([args]) => args.includes("--paginate"))).toBe(true);
-  expect(run).toHaveBeenCalledTimes(2);
-  expect(run.mock.calls.filter(([args]) => args[0] === "api")[0][0]).toContain(
-    "repos/acme/app/dependabot/alerts?state=open&per_page=100",
+  expect(run).toHaveBeenCalledTimes(3);
+  const securityCalls = run.mock.calls.filter(([args]) =>
+    args.some((arg) => arg.includes("/dependabot/")),
   );
-  for (const [args] of run.mock.calls.filter(([args]) => args[0] === "api")) {
+  expect(securityCalls).toHaveLength(1);
+  expect(securityCalls[0][0]).toContain("repos/acme/app/dependabot/alerts?state=open&per_page=100");
+  for (const [args] of securityCalls) {
     expect(args).not.toContain("--slurp");
     expect(args[args.indexOf("--jq") + 1]).toMatch(/^\.\[\] \| /);
   }

@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Workflow,
   X,
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -37,6 +38,7 @@ const icons = {
   branch: GitBranch,
   reviews: GitPullRequest,
   security: ShieldAlert,
+  pipelines: Workflow,
 };
 const date = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleString() : "Not checked yet";
@@ -410,8 +412,10 @@ export function Projects({
                           ? project.insights?.reviews
                           : kind === "security"
                             ? project.insights?.findings
-                            : undefined;
-                      const className = `project-slot ${kind === "security" && project.insights?.findings.length ? "project-risk" : ""}`;
+                            : kind === "pipelines"
+                              ? project.insights?.pipelines?.failures
+                              : undefined;
+                      const className = `project-slot ${(kind === "security" || kind === "pipelines") && links?.length ? "project-risk" : ""}`;
                       return !label ? (
                         <span className="project-slot-empty" aria-hidden="true" key={kind} />
                       ) : (
@@ -491,6 +495,7 @@ export function Projects({
                         branch: "Return to default branch",
                         reviews: "Requested reviews",
                         security: "Dependabot alerts",
+                        pipelines: "Failing default-branch pipelines",
                       }[kind]
                     }
                   </span>
@@ -567,7 +572,7 @@ export function Projects({
             />
           </section>
           <section className="project-info-panel">
-            <h2>Reviews & security</h2>
+            <h2>Repository insights</h2>
             <RepositoryInformation project={detail.project} />
           </section>
           <section className="project-info-panel project-profile-panel">
@@ -634,7 +639,9 @@ export function Projects({
               {error}
             </div>
           )}
-          {action.kind === "reviews" || action.kind === "security" ? (
+          {action.kind === "reviews" ||
+          action.kind === "security" ||
+          action.kind === "pipelines" ? (
             <RepositoryInformation project={action.detail.project} kind={action.kind} />
           ) : (
             <>
@@ -856,20 +863,20 @@ function RepositoryInformation({
   kind,
 }: {
   project: Project;
-  kind?: "reviews" | "security";
+  kind?: "reviews" | "security" | "pipelines";
 }) {
   const insights = project.insights;
   if (!insights)
     return (
       <p className="muted-text">
         {project.git?.repositoryUrl
-          ? "Refresh to check requested reviews and Dependabot alerts. GitHub repositories use your local GitHub CLI sign-in."
+          ? "Refresh to check requested reviews, Dependabot alerts, and pipelines. GitHub repositories use your local GitHub CLI sign-in."
           : "No supported remote repository is linked."}
       </p>
     );
   return (
     <div className="project-repository-information">
-      {kind !== "security" && (
+      {(!kind || kind === "reviews") && (
         <>
           <h3>Reviews requested from you</h3>
           {insights.reviewError && <p className="warning-text">{insights.reviewError}</p>}
@@ -887,7 +894,7 @@ function RepositoryInformation({
           )}
         </>
       )}
-      {kind !== "reviews" && (
+      {(!kind || kind === "security") && (
         <>
           <h3>Dependabot alerts</h3>
           {insights.securityErrors.map((error) => (
@@ -909,6 +916,48 @@ function RepositoryInformation({
           ))}
           {!insights.findings.length && !insights.securityErrors.length && (
             <p className="muted-text">No open Dependabot alerts.</p>
+          )}
+        </>
+      )}
+      {(!kind || kind === "pipelines") && (
+        <>
+          <h3>
+            Default-branch pipelines
+            {insights.pipelines?.branch ? ` · ${insights.pipelines.branch}` : ""}
+          </h3>
+          {!insights.pipelines ? (
+            <p className="muted-text">Refresh to check pipelines.</p>
+          ) : (
+            <>
+              <p className="muted-text">
+                Latest run of each active GitHub Actions workflow on the remote default branch.
+              </p>
+              {insights.pipelines.error && (
+                <p className="warning-text">{insights.pipelines.error}</p>
+              )}
+              {insights.pipelines.failures.map((run) => (
+                <a key={run.url} href={run.url} target="_blank" rel="noreferrer">
+                  <Workflow size={16} />
+                  <span>
+                    {run.title}
+                    <small>Failed · Open run and logs</small>
+                  </span>
+                  <ExternalLink size={14} />
+                </a>
+              ))}
+              {insights.pipelines.pending > 0 && (
+                <p className="muted-text">
+                  {insights.pipelines.pending} workflows awaiting a result.
+                </p>
+              )}
+              {!insights.pipelines.error && !insights.pipelines.failures.length && (
+                <p className="muted-text">
+                  {insights.pipelines.checked
+                    ? "No failing pipelines detected."
+                    : "No active workflows."}
+                </p>
+              )}
+            </>
           )}
         </>
       )}

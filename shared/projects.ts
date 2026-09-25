@@ -26,6 +26,13 @@ export type ProjectInsights = {
   findings: SecurityFinding[];
   reviewError: string | null;
   securityErrors: string[];
+  pipelines?: {
+    branch: string | null;
+    failures: RepositoryLink[];
+    pending: number;
+    checked: number;
+    error: string | null;
+  };
 };
 
 export type Project = {
@@ -65,13 +72,20 @@ export const projectActionSchema = z.object({
   files: z.array(z.string().min(1).max(4096)).min(1).max(5000).optional(),
 });
 export type ProjectAction = z.infer<typeof projectActionSchema>;
-export type ProjectAttention = "local" | "incoming" | "branch" | "reviews" | "security";
+export type ProjectAttention =
+  | "local"
+  | "incoming"
+  | "branch"
+  | "reviews"
+  | "security"
+  | "pipelines";
 export const projectAttentionOrder: ProjectAttention[] = [
   "local",
   "incoming",
   "branch",
   "reviews",
   "security",
+  "pipelines",
 ];
 
 export function projectAttention(project: Project): Record<ProjectAttention, string | null> {
@@ -113,6 +127,9 @@ export function projectAttention(project: Project): Record<ProjectAttention, str
         ? "Check review access"
         : null,
     security: insights?.findings.length ? "Review Dependabot alerts" : null,
+    pipelines: insights?.pipelines?.failures.length
+      ? `Open failing pipelines on ${insights.pipelines.branch}`
+      : null,
   };
 }
 

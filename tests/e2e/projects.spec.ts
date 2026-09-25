@@ -31,7 +31,7 @@ function project(index: number): Project {
       conflicts: false,
       operation: false,
       ahead: 0,
-      behind: index > 0 && index < 8 ? 1 : 0,
+      behind: index > 0 && index < 7 ? 1 : 0,
       version: `version-${index}`,
     },
     insights: {
@@ -60,6 +60,20 @@ function project(index: number): Project {
           : [],
       reviewError: null,
       securityErrors: [],
+      pipelines: {
+        branch: "main",
+        pending: 0,
+        checked: 3,
+        error: null,
+        failures:
+          index === 0 || index === 7
+            ? Array.from({ length: index === 0 ? 1 : 2 }, (_, i) => ({
+                title: i === 0 ? "Build" : "Tests",
+                number: 10 + i,
+                url: `https://github.com/example/project/actions/runs/${10 + i}`,
+              }))
+            : [],
+      },
     },
   };
 }
@@ -166,7 +180,7 @@ test("shows dense equal tiles, fixed icon positions, and searches all 100 projec
   expect(
     await page
       .locator(".project-icon-slots")
-      .evaluateAll((nodes) => nodes.every((node) => node.children.length === 5)),
+      .evaluateAll((nodes) => nodes.every((node) => node.children.length === 6)),
   ).toBe(true);
   await expect(page.getByRole("link", { name: /Open requested reviews/ })).toHaveAttribute(
     "href",
@@ -218,6 +232,44 @@ test("hides projects from both views and search, and restores them through Show 
   await expect(page.locator(".project-tile")).toHaveCount(1);
 });
 
+test("opens failing default-branch pipelines and removes recovered projects from attention", async ({
+  page,
+}) => {
+  const { state } = await setup(page);
+  await expect(
+    page.getByRole("link", { name: /Open failing pipelines on main: Panopticon/ }),
+  ).toHaveAttribute("href", "https://github.com/example/project/actions/runs/10");
+  await page
+    .getByRole("button", { name: "Open failing pipelines on main: Project 007", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("link")).toHaveCount(2);
+  await expect(
+    dialog.getByRole("heading", { name: "Default-branch pipelines · main" }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/project-pipeline-actions.png", fullPage: true });
+  await page.getByRole("button", { name: "Close project action" }).click();
+  await page.getByRole("button", { name: "Project 007", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Default-branch pipelines · main" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: /Tests.*Open run and logs/ })).toHaveAttribute(
+    "href",
+    "https://github.com/example/project/actions/runs/11",
+  );
+  await page.getByRole("button", { name: "Projects", exact: true }).last().click();
+  const pipelines = state.projects[7].insights?.pipelines;
+  if (!pipelines) throw new Error("Missing pipeline fixture");
+  pipelines.failures = [];
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.locator(".project-tile")).toHaveCount(7);
+  pipelines.error = "Cannot check pipelines";
+  await page.getByLabel("Search all projects").fill("007");
+  await page.getByRole("button", { name: "Project 007", exact: true }).click();
+  await expect(page.getByText("Cannot check pipelines", { exact: true })).toBeVisible();
+  await expect(page.getByText("No failing pipelines detected.")).toHaveCount(0);
+});
+
 test("pulls directly from a tile and commits and pushes from one action form", async ({ page }) => {
   const { actions } = await setup(page);
   await page.getByRole("button", { name: "Pull updates: Project 001", exact: true }).click();
@@ -242,7 +294,7 @@ test("keeps all project information and profile edits on one detail page", async
   for (const name of [
     "Checkout",
     "Local changes & commits",
-    "Reviews & security",
+    "Repository insights",
     "Profile description",
   ])
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();

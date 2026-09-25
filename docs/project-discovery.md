@@ -10,7 +10,7 @@ Project discovery turns local repositories into profile documents describing the
 
 The default **Attention** view shows projects with local changes, unpublished commits or branches, incoming commits, a reminder to return to the default branch, requested reviews, security findings, or unavailable status information. **All projects**, directory filtering, and search provide access to the complete inventory. Search always includes projects outside the Attention filter.
 
-Tiles have five fixed action positions: local work, incoming changes, default branch, reviews, and security. Clean checkouts do not show healthy-state labels. Names are truncated visually, with the full name and path available on hover and in details. The responsive grid keeps tile dimensions consistent and displays several columns on desktop.
+Tiles have six fixed action positions: local work, incoming changes, default branch, reviews, Dependabot alerts, and failing pipelines. Clean checkouts do not show healthy-state labels. Names are truncated visually, with the full name and path available on hover and in details. The responsive grid keeps tile dimensions consistent and displays several columns on desktop.
 
 Click a project name for one detail page containing checkout metadata, files and diffs, incoming/outgoing commits, remote findings, and the linked profile description. Descriptions can be edited inline with stale-document protection; these profile edits are not committed automatically. Returning to the repository's default branch is an individual project preference, initially enabled. The default is read from the remote HEAD when available, with local `main`/`master` detection before the first remote check.
 
@@ -30,6 +30,8 @@ The workspace reads local status independently of profile scans. On opening Proj
 GitHub.com repositories use the local **GitHub CLI** (`gh`) to load pull requests requesting your review and open Dependabot alerts. Install the CLI and run `gh auth login` if necessary. The application uses existing permissions and does not request new scopes automatically. Disabled Dependabot, insufficient permissions, missing credentials, and unsupported hosts are reported as unavailable in project details, never as zero findings. The security icon appears only for open Dependabot alerts. Only alert titles, severity, source, and links are retained.
 
 A single review or finding opens directly at GitHub. Multiple items open a compact link list. Opening a link does not mark it resolved; a subsequent remote check updates the result. Other Git hosts still support local Git actions, with remote insights available through the repository link.
+
+Pipeline checks use GitHub's remote default branch, regardless of the locally checked-out branch. The latest run of each active GitHub Actions workflow is checked independently. Any failure, timeout, or startup failure adds the project to Attention and lights up its pipeline icon. A newer successful run clears that workflow's failure; queued or running reruns are shown as pending in details. Cancelled, skipped, and neutral runs are not failures. One failing workflow links directly to its run and logs; multiple failures open a link list. Partial or unavailable checks remain visible in details. Pipelines use the same refresh schedule as other repository insights. The GitHub [workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs) supplies these results.
 
 ## Configure
 

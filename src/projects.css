@@ -133,8 +133,8 @@
 }
 .project-icon-slots {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
   margin-top: 20px;
 }
 .project-action-tip {
@@ -422,7 +422,7 @@
 }
 @media (pointer: coarse) {
   .projects-grid {
-    grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(318px, 100%), 1fr));
   }
   .project-slot {
     height: 44px;
