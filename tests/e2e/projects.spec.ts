@@ -171,7 +171,7 @@ test("shows dense equal tiles, fixed icon positions, and searches all 100 projec
     "href",
     "https://github.com/example/project/pull/1",
   );
-  await expect(page.getByRole("link", { name: /Review security findings/ })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: /Review Dependabot alerts/ })).toHaveAttribute(
     "href",
     /dependabot\/2/,
   );
@@ -253,10 +253,11 @@ test("shows security actions only for findings and keeps coverage errors in deta
   }
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.locator(".project-tile")).toHaveCount(8);
-  await expect(page.getByRole("link", { name: /Review security findings/ })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: /Review Dependabot alerts/ })).toHaveCount(1);
   await expect(page.getByRole("button", { name: /Check security coverage/ })).toHaveCount(0);
   await page.getByLabel("Search all projects").fill("099");
   await page.locator(".project-name").click();
   await expect(page.getByText("Dependabot unavailable", { exact: true })).toBeVisible();
-  await expect(page.getByText("No open findings in the checked security tools.")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Dependabot alerts", exact: true })).toBeVisible();
+  await expect(page.getByText("No open Dependabot alerts.")).toHaveCount(0);
 });

@@ -231,34 +231,39 @@ it("reports unreadable roots and does not operate on replaced symlink checkouts"
   );
 });
 
-it("reads requested reviews and each security category without exposing secrets or invalid links", async () => {
+it("reads only requested reviews and Dependabot alerts and rejects invalid links", async () => {
   const run = vi.fn(async (args: string[]) => {
     if (args[0] === "pr")
       return JSON.stringify([
         { number: 2, title: "Review me", url: "https://github.com/acme/app/pull/2" },
       ]);
     if (args.some((value) => value.includes("/dependabot/")))
-      return JSON.stringify({
-        number: 1,
-        title: "Dependency",
-        url: "https://github.com/acme/app/security/dependabot/1",
-        severity: "high",
-      });
-    if (args.some((value) => value.includes("/secret-scanning/")))
-      return JSON.stringify({
-        number: 3,
-        title: "Token",
-        url: "https://evil.test/secret",
-        severity: "high",
-      });
+      return [
+        JSON.stringify({
+          number: 1,
+          title: "Dependency",
+          url: "https://github.com/acme/app/security/dependabot/1",
+          severity: "high",
+        }),
+        JSON.stringify({
+          number: 3,
+          title: "Invalid link",
+          url: "https://evil.test/alert",
+          severity: "high",
+        }),
+      ].join("\n");
     throw new Error("Forbidden");
   });
   const result = await repositoryInsights("https://github.com/acme/app", run);
   expect(result.reviews).toHaveLength(1);
   expect(result.findings).toHaveLength(1);
-  expect(result.securityErrors).toHaveLength(1);
+  expect(result.securityErrors).toEqual([]);
   expect(result.reviewError).toBeNull();
   expect(run.mock.calls.some(([args]) => args.includes("--paginate"))).toBe(true);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls.filter(([args]) => args[0] === "api")[0][0]).toContain(
+    "repos/acme/app/dependabot/alerts?state=open&per_page=100",
+  );
   for (const [args] of run.mock.calls.filter(([args]) => args[0] === "api")) {
     expect(args).not.toContain("--slurp");
     expect(args[args.indexOf("--jq") + 1]).toMatch(/^\.\[\] \| /);
@@ -267,7 +272,8 @@ it("reads requested reviews and each security category without exposing secrets 
     throw new Error("No gh");
   });
   expect(unavailable.reviewError).toContain("GitHub CLI");
-  expect(unavailable.securityErrors).toHaveLength(3);
+  expect(unavailable.securityErrors).toHaveLength(1);
+  expect(unavailable.securityErrors[0]).toContain("Dependabot unavailable");
 });
 
 it("reads findings across pages and accepts empty security results", async () => {
@@ -285,6 +291,11 @@ it("reads findings across pages and accepts empty security results", async () =>
   });
   expect(result.findings).toEqual(findings.map((entry) => ({ ...entry, source: "Dependabot" })));
   expect(result.securityErrors).toEqual([]);
+  const empty = await repositoryInsights("https://github.com/acme/app", async (args) =>
+    args[0] === "pr" ? "[]" : "",
+  );
+  expect(empty.findings).toEqual([]);
+  expect(empty.securityErrors).toEqual([]);
 });
 
 it("reserves security attention for findings while retaining coverage errors", async () => {
@@ -309,7 +320,7 @@ it("reserves security attention for findings while retaining coverage errors", a
     source: "Dependabot",
     severity: "high",
   });
-  expect(projectAttention(p).security).toBe("Review security findings");
+  expect(projectAttention(p).security).toBe("Review Dependabot alerts");
   expect(projectNeedsAttention(p)).toBe(true);
   expect(p.insights.securityErrors).toEqual(["Dependabot unavailable"]);
 });

@@ -471,7 +471,7 @@ export function Projects({
                         incoming: "Incoming changes",
                         branch: "Return to default branch",
                         reviews: "Requested reviews",
-                        security: "Security findings",
+                        security: "Dependabot alerts",
                       }[kind]
                     }
                   </span>
@@ -835,7 +835,7 @@ function RepositoryInformation({
     return (
       <p className="muted-text">
         {project.git?.repositoryUrl
-          ? "Refresh to check requested reviews and security findings. GitHub repositories use your local GitHub CLI sign-in."
+          ? "Refresh to check requested reviews and Dependabot alerts. GitHub repositories use your local GitHub CLI sign-in."
           : "No supported remote repository is linked."}
       </p>
     );
@@ -861,7 +861,7 @@ function RepositoryInformation({
       )}
       {kind !== "reviews" && (
         <>
-          <h3>Security findings</h3>
+          <h3>Dependabot alerts</h3>
           {insights.securityErrors.map((error) => (
             <p className="warning-text" key={error}>
               {error}
@@ -880,7 +880,7 @@ function RepositoryInformation({
             </a>
           ))}
           {!insights.findings.length && !insights.securityErrors.length && (
-            <p className="muted-text">No open findings in the checked security tools.</p>
+            <p className="muted-text">No open Dependabot alerts.</p>
           )}
         </>
       )}

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
-import type { ProjectInsights, SecurityFinding } from "../shared/projects.js";
+import type { ProjectInsights } from "../shared/projects.js";
 
 const execute = promisify(execFile);
 const link = z.object({ number: z.number(), title: z.string(), url: z.string().url() });
@@ -61,47 +61,29 @@ export async function repositoryInsights(
           "Cannot read requested reviews. Install GitHub CLI and sign in with gh auth login, then refresh.";
       }
     })(),
-    ...(
-      [
-        [
-          "Dependabot",
-          "dependabot",
-          "{number,title: .security_advisory.summary,url:.html_url,severity:.security_advisory.severity}",
-        ],
-        [
-          "Code scanning",
-          "code-scanning",
-          '{number,title:.rule.description,url:.html_url,severity:(.rule.security_severity_level // .rule.severity // "unknown")}',
-        ],
-        [
-          "Secret scanning",
-          "secret-scanning",
-          '{number,title:.secret_type_display_name,url:.html_url,severity:"high"}',
-        ],
-      ] as const
-    ).map(async ([source, endpoint, projection]) => {
+    (async () => {
       try {
         const output = await run([
           "api",
           "--paginate",
-          `repos/${repo}/${endpoint}/alerts?state=open&per_page=100`,
+          `repos/${repo}/dependabot/alerts?state=open&per_page=100`,
           "--jq",
-          `.[] | ${projection}`,
+          ".[] | {number,title:.security_advisory.summary,url:.html_url,severity:.security_advisory.severity}",
         ]);
         const entries = output
           .trim()
           .split("\n")
           .filter(Boolean)
           .map((line) => finding.parse(JSON.parse(line)));
-        result.findings.push(
-          ...entries.filter(valid).map((entry) => ({ ...entry, source }) as SecurityFinding),
-        );
+        result.findings = entries
+          .filter(valid)
+          .map((entry) => ({ ...entry, source: "Dependabot" }));
       } catch {
         result.securityErrors.push(
-          `${source} unavailable. Check that it is enabled and your GitHub account can read its alerts.`,
+          "Dependabot unavailable. Check that it is enabled and your GitHub account can read its alerts.",
         );
       }
-    }),
+    })(),
   ]);
   return result;
 }

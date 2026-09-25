@@ -17,7 +17,7 @@ export type ProjectGit = {
 
 export type RepositoryLink = { title: string; url: string; number: number };
 export type SecurityFinding = RepositoryLink & {
-  source: "Dependabot" | "Code scanning" | "Secret scanning";
+  source: "Dependabot";
   severity: string;
 };
 export type ProjectInsights = {
@@ -111,7 +111,7 @@ export function projectAttention(project: Project): Record<ProjectAttention, str
       : insights?.reviewError
         ? "Check review access"
         : null,
-    security: insights?.findings.length ? "Review security findings" : null,
+    security: insights?.findings.length ? "Review Dependabot alerts" : null,
   };
 }
 
