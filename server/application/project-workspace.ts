@@ -75,6 +75,7 @@ export function createProjectWorkspace(deps: {
             document: null,
             documentSource: "discovery",
             returnToDefault: true,
+            hidden: false,
             git: null,
             insights: null,
             checkedAt: null,
@@ -215,7 +216,10 @@ export function createProjectWorkspace(deps: {
       void job.finally(() => pending.delete(job)).catch(() => {});
       return job;
     },
-    update(id: string, fields: { returnToDefault?: boolean; document?: string | null }) {
+    update(
+      id: string,
+      fields: { returnToDefault?: boolean; document?: string | null; hidden?: boolean },
+    ) {
       const project = find(id);
       if (fields.document && !deps.documents().some((doc) => doc.path === fields.document))
         throw new ApplicationError("invalid", "Choose an existing profile document.");

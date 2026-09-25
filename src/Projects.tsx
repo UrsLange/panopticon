@@ -4,6 +4,7 @@ import {
   ArrowUpFromLine,
   BookOpen,
   ExternalLink,
+  EyeOff,
   FilePenLine,
   FolderGit2,
   GitBranch,
@@ -56,6 +57,7 @@ export function Projects({
   const [workspace, setWorkspace] = useState<ProjectWorkspace | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("attention");
+  const [showHidden, setShowHidden] = useState(false);
   const [root, setRoot] = useState("");
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [action, setAction] = useState<{ kind: ProjectAttention; detail: ProjectDetail } | null>(
@@ -214,19 +216,23 @@ export function Projects({
       void perform(project, { action: "switch" });
     else void open(project, kind);
   };
-  const attention = workspace?.projects.filter(projectNeedsAttention).length ?? 0;
+  const included = workspace?.projects.filter((project) => showHidden || !project.hidden) ?? [];
+  const attention = included.filter(projectNeedsAttention).length;
   const search = query.trim().toLowerCase();
-  const visible =
-    workspace?.projects
-      .filter(
-        (project) =>
-          (!root || project.root === root) &&
-          (search
-            ? `${project.name} ${project.path}`.toLowerCase().includes(search)
-            : filter === "all" || projectNeedsAttention(project)),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)) ?? [];
-  const changeProject = async (fields: { returnToDefault?: boolean; document?: string | null }) => {
+  const visible = included
+    .filter(
+      (project) =>
+        (!root || project.root === root) &&
+        (search
+          ? `${project.name} ${project.path}`.toLowerCase().includes(search)
+          : filter === "all" || projectNeedsAttention(project)),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+  const changeProject = async (fields: {
+    returnToDefault?: boolean;
+    document?: string | null;
+    hidden?: boolean;
+  }) => {
     if (!detail) return;
     setBusy(true);
     setError("");
@@ -333,10 +339,18 @@ export function Projects({
                   setQuery("");
                 }}
               >
-                All projects <span>{workspace?.projects.length ?? 0}</span>
+                All projects <span>{included.length}</span>
               </button>
             </div>
             <div className="projects-searches">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={showHidden}
+                  onChange={(event) => setShowHidden(event.target.checked)}
+                />
+                Show hidden projects
+              </label>
               {settings.projectRoots.length > 1 && (
                 <select
                   aria-label="Filter project directory"
@@ -377,6 +391,7 @@ export function Projects({
                     {project.name}
                   </button>
                   <div className="project-branch" title={project.git?.branch ?? "Detached HEAD"}>
+                    {project.hidden && <EyeOff size={13} aria-label="Hidden project" />}
                     <GitBranch size={13} />
                     <span>
                       {project.git?.branch ??
@@ -439,16 +454,20 @@ export function Projects({
               <h2>
                 {search || root
                   ? "No matching projects"
-                  : workspace.projects.length
-                    ? "Nothing needs your attention"
-                    : "No projects detected"}
+                  : !included.length && workspace.projects.length
+                    ? "All projects are hidden"
+                    : workspace.projects.length
+                      ? "Nothing needs your attention"
+                      : "No projects detected"}
               </h2>
               <p>
                 {search || root
                   ? "Try another name or directory."
-                  : workspace.projects.length
-                    ? "Search to open any project, or show all projects."
-                    : "Choose directories containing your Git repositories in Settings."}
+                  : !included.length && workspace.projects.length
+                    ? "Enable Show hidden projects to find and restore a project."
+                    : workspace.projects.length
+                      ? "Search to open any project, or show all projects."
+                      : "Choose directories containing your Git repositories in Settings."}
               </p>
               {!workspace.projects.length && (
                 <button type="button" className="secondary" onClick={onSettings}>
@@ -518,6 +537,15 @@ export function Projects({
                 <dd>{date(project?.remoteCheckedAt)}</dd>
               </div>
             </dl>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={!!project?.hidden}
+                disabled={busy || workspace?.refreshing}
+                onChange={(event) => void changeProject({ hidden: event.target.checked })}
+              />
+              Hide project from dashboard
+            </label>
             <label className="checkbox">
               <input
                 type="checkbox"

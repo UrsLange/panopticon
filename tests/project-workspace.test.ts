@@ -28,7 +28,7 @@ function git(path: string, ...args: string[]) {
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
 }
-function fixture() {
+function fixture(persistent = false) {
   for (const [key, value] of Object.entries(identity)) vi.stubEnv(key, value);
   const root = mkdtempSync(join(tmpdir(), "project-workspace-"));
   roots.push(root);
@@ -45,7 +45,7 @@ function fixture() {
   git(repo, "commit", "-m", "test: initial");
   git(repo, "push", "-u", "origin", "main");
   const io = createProjectWorkspaceIO();
-  const store = new Store(":memory:");
+  const store = new Store(persistent ? join(root, "projects.sqlite") : ":memory:");
   stores.push(store);
   let selectedRoots = [directory];
   let clock = Date.now();
@@ -98,6 +98,45 @@ it("discovers independent projects, skips symlinks and nested repositories, and 
   f.removeRoot();
   expect((await f.workspace.list()).projects).toEqual([]);
   await expect(f.workspace.detail(project.id)).rejects.toThrow("not found");
+});
+
+it("persists hidden projects across refreshes and database restarts and allows restoring them", async () => {
+  const f = fixture(true);
+  const p = (await f.workspace.list()).projects[0];
+  expect(p.hidden).toBe(false);
+  f.workspace.update(p.id, { hidden: true });
+  f.workspace.refresh();
+  await f.workspace.close();
+  expect((await f.workspace.list()).projects[0].hidden).toBe(true);
+  expect(readFileSync(join(f.repo, "README.md"), "utf8")).toBe("initial\n");
+  stores.splice(stores.indexOf(f.store), 1);
+  f.store.db.close();
+  const store = new Store(join(f.root, "projects.sqlite"));
+  stores.push(store);
+  const restarted = createProjectWorkspace({
+    records: store,
+    scope: () => ({ profile: f.profile, roots: [f.directory] }),
+    documents: () => [],
+    io: f.io,
+    now: () => new Date().toISOString(),
+  });
+  expect((await restarted.list()).projects[0].hidden).toBe(true);
+  expect((await restarted.detail(p.id)).project.hidden).toBe(true);
+  restarted.update(p.id, { hidden: false });
+  expect(store.projects(f.profile)[0].hidden).toBe(false);
+  await restarted.close();
+});
+
+it("migrates existing project records to visible by default", async () => {
+  const f = fixture(true);
+  await f.workspace.list();
+  f.store.db.exec("UPDATE projects SET snapshot = json_remove(snapshot, '$.hidden')");
+  await f.workspace.close();
+  stores.splice(stores.indexOf(f.store), 1);
+  f.store.db.close();
+  const store = new Store(join(f.root, "projects.sqlite"));
+  stores.push(store);
+  expect(store.projects(f.profile)[0].hidden).toBe(false);
 });
 
 it("tracks incoming commits and fast-forward pulls without touching local work", async () => {

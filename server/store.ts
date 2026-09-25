@@ -89,6 +89,8 @@ export class Store {
         `UPDATE item_history SET snapshot = json_set(snapshot, '$.noProject', json('false'))`,
       );
     }
+    this.db.exec(`UPDATE projects SET snapshot = json_set(snapshot, '$.hidden', json('false'))
+      WHERE json_type(snapshot, '$.hidden') IS NULL`);
     if (!columns.some((column) => column.name === "repositoryId"))
       this.db.exec("ALTER TABLE items ADD COLUMN repositoryId TEXT");
     if (!columns.some((column) => column.name === "prompt")) {

@@ -119,6 +119,7 @@ export function createHttpApp(services: Application, port: number) {
     const input = z
       .object({
         returnToDefault: z.boolean().optional(),
+        hidden: z.boolean().optional(),
         document: z.string().nullable().optional(),
       })
       .parse(request.body);

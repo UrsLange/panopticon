@@ -37,6 +37,7 @@ export type Project = {
   document: string | null;
   documentSource: "discovery" | "manual";
   returnToDefault: boolean;
+  hidden: boolean;
   git: ProjectGit | null;
   insights: ProjectInsights | null;
   checkedAt: string | null;

@@ -15,6 +15,7 @@ function project(index: number): Project {
     document: index === 0 ? "project.md" : null,
     documentSource: "discovery",
     returnToDefault: true,
+    hidden: false,
     checkedAt: "2026-09-25T10:00:00Z",
     remoteCheckedAt: "2026-09-25T10:00:00Z",
     error: null,
@@ -182,6 +183,36 @@ test("shows dense equal tiles, fixed icon positions, and searches all 100 projec
   await page.getByLabel("Search all projects").fill("099");
   await expect(page.locator(".project-tile")).toHaveCount(1);
   await expect(page.locator(".project-name")).toHaveText("Project 099");
+});
+
+test("hides projects from both views and search, and restores them through Show hidden projects", async ({
+  page,
+}) => {
+  const { state } = await setup(page);
+  await page.locator(".project-name").first().click();
+  await page.getByLabel("Hide project from dashboard").click();
+  await expect(page.getByLabel("Hide project from dashboard")).toBeChecked();
+  expect(state.projects[0].hidden).toBe(true);
+  await page.getByRole("button", { name: "Projects", exact: true }).last().click();
+  await expect(page.locator(".project-tile")).toHaveCount(7);
+  await page.getByLabel("Show hidden projects").check();
+  await expect(page.locator(".project-tile")).toHaveCount(8);
+  await expect(page.getByLabel("Hidden project", { exact: true })).toHaveCount(1);
+  await page.getByRole("button", { name: "All projects 100" }).click();
+  await expect(page.locator(".project-tile")).toHaveCount(100);
+  await page.getByLabel("Show hidden projects").uncheck();
+  await expect(page.locator(".project-tile")).toHaveCount(99);
+  await page.getByLabel("Search all projects").fill("Panopticon");
+  await expect(page.locator(".project-tile")).toHaveCount(0);
+  await page.getByLabel("Show hidden projects").check();
+  await expect(page.locator(".project-tile")).toHaveCount(1);
+  await page.locator(".project-name").click();
+  await page.getByLabel("Hide project from dashboard").click();
+  await expect(page.getByLabel("Hide project from dashboard")).not.toBeChecked();
+  expect(state.projects[0].hidden).toBe(false);
+  await page.getByRole("button", { name: "Projects", exact: true }).last().click();
+  await page.getByLabel("Show hidden projects").uncheck();
+  await expect(page.locator(".project-tile")).toHaveCount(1);
 });
 
 test("pulls directly from a tile and commits and pushes from one action form", async ({ page }) => {
