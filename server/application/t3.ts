@@ -90,9 +90,11 @@ export function createT3({
     return {
       configured: status().configured,
       repositories: available,
-      suggestedRepositoryId: item.repositoryId
-        ? (available.find((repo) => repo.id === item.repositoryId)?.id ?? null)
-        : resolveImplementationRepository(item, available, getProfile().documents()),
+      suggestedRepositoryId: item.noProject
+        ? null
+        : item.repositoryId
+          ? (available.find((repo) => repo.id === item.repositoryId)?.id ?? null)
+          : resolveImplementationRepository(item, available, getProfile().documents()),
       latest: summary(latest),
     };
   };
@@ -100,6 +102,9 @@ export function createT3({
     itemId: string,
     input: { revision: number; repositoryId?: string; previousAttemptId?: string },
   ) => {
+    const currentItem = records.get(itemId);
+    if (currentItem?.noProject)
+      throw new ApplicationError("invalid", "Assign a project before starting work in T3 Code.");
     const connection = settings.t3Connection();
     if (!connection) throw new ApplicationError("invalid", "Connect T3 Code in Settings first.");
     const profile = getProfile();
@@ -210,6 +215,7 @@ export function createT3({
       entry?.state !== "submitted" ||
       !item ||
       item.kind !== "commitment" ||
+      item.noProject ||
       ["done", "archived"].includes(item.status)
     )
       return;

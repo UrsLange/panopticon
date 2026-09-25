@@ -587,3 +587,63 @@ test("tracks outside work without T3 and filters started and completed tasks", a
   await page.getByLabel("Filter task status").selectOption("open");
   await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
 });
+
+test("chooses no project, filters it separately, and can return to a named project", async ({
+  page,
+}) => {
+  const state = await capturePage(page, { project: "GitHub access" });
+  await page.locator(".capture-details summary").click();
+  await page.getByLabel("No project (outside local repositories)", { exact: true }).check();
+  await expect(page.getByLabel("Project", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Implementation repository")).toHaveCount(0);
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Mark complete", exact: true })).toBeVisible();
+  expect(state.item).toMatchObject({ noProject: true, project: "" });
+  state.options.configured = false;
+  state.options.repositories = [];
+  await page.reload();
+  await page.getByRole("button", { name: /^Tasks/ }).click();
+  const row = page.getByRole("button", { name: /^Add Kiana to GitHub/ });
+  await page.getByLabel("Filter by project").selectOption("none");
+  await expect(row).toContainText("No project");
+  await page.getByLabel("Filter by project").selectOption("unassigned");
+  await expect(row).toHaveCount(0);
+  await page.getByLabel("Filter by project").selectOption("none");
+  await row.click();
+  await expect(page.getByText("T3 Code is not connected.")).toHaveCount(0);
+  await page.locator(".capture-details summary").click();
+  await expect(
+    page.getByLabel("No project (outside local repositories)", { exact: true }),
+  ).toBeChecked();
+  await page.getByLabel("No project (outside local repositories)", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await expect(row).toHaveCount(0);
+  await page.getByLabel("Filter by project").selectOption("unassigned");
+  await expect(row).toContainText("Unassigned");
+  await row.click();
+  await page.locator(".capture-details summary").click();
+  await page.getByLabel("Project", { exact: true }).fill("GitHub access");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByLabel("Filter by project").selectOption("project:GitHub access");
+  await expect(row).toBeVisible();
+  await page.getByLabel("Search items").fill("missing text");
+  await expect(row).toHaveCount(0);
+  await page.getByLabel("Search items").fill("");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: "test-results/project-filter-mobile.png" });
+  expect(state.launches).toHaveLength(0);
+});
+
+test("completes a no-project task without a prompt or implementation setup", async ({ page }) => {
+  const state = await capturePage(page, { noProject: true, prompt: "" });
+  await expect(page.getByLabel("Implementation repository")).toHaveCount(0);
+  await page.getByRole("button", { name: "Mark complete", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Capture status" })).toContainText("Completed");
+  expect(state.item.status).toBe("done");
+  expect(state.launches).toHaveLength(0);
+});

@@ -33,12 +33,16 @@ export const itemFieldsSchema = z.object({
   kind: kindSchema,
   status: statusSchema,
   project: z.string().max(200),
+  noProject: z.boolean(),
   dueDate: dateSchema.nullable(),
   priority: z.enum(["normal", "high"]),
   relatedId: z.string().nullable(),
 });
 export const itemPatchSchema = itemFieldsSchema.partial();
 export type ItemFields = z.infer<typeof itemFieldsSchema>;
+export function projectLabel(item: Pick<ItemFields, "project" | "noProject">) {
+  return item.noProject ? "No project" : item.project || "Unassigned";
+}
 export type EntityReference = {
   start: number;
   end: number;

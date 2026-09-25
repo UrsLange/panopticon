@@ -39,6 +39,7 @@ export function capturedItem(text: string, id: string, now: string): Item {
     prompt: "",
     repositoryId: null,
     clarifications: [],
+    noProject: false,
   };
 }
 export function revisedItem(
@@ -54,6 +55,10 @@ export function revisedItem(
     updatedAt: now,
   };
   if (next.kind !== "commitment") next.dueDate = null;
+  if (next.noProject) {
+    next.project = "";
+    next.repositoryId = null;
+  }
   return next;
 }
 export function dailyCommitments(items: Item[], date: string) {

@@ -21,7 +21,7 @@ export function createCaptures({
   context: ReturnType<typeof createContext>;
   notes: ReturnType<typeof createProfileUpdates>;
   today: () => string;
-  resolveRepository(item: Pick<Item, "project" | "references">): string | null;
+  resolveRepository(item: Pick<Item, "project" | "references" | "noProject">): string | null;
 }) {
   const processing = new Map<string, Promise<void>>();
   const captureState = (item: Item): Capture => ({
@@ -98,6 +98,7 @@ export function createCaptures({
           item.references,
         );
         const fields = itemFieldsSchema.parse({ ...item, ...interpreted });
+        if (item.noProject) fields.project = "";
         if (
           fields.relatedId &&
           !evidence.related.some((related) => related.id === fields.relatedId && related.id !== id)
@@ -292,8 +293,9 @@ export function createCaptures({
           ...fields,
           repositoryId: bodyChanged
             ? null
-            : fields.project !== undefined && fields.project !== current.project
-              ? resolveRepository({ project: fields.project, references: [] })
+            : (fields.project !== undefined && fields.project !== current.project) ||
+                (fields.noProject !== undefined && fields.noProject !== current.noProject)
+              ? resolveRepository({ ...current, ...fields, references: [] })
               : current.repositoryId,
           processing: bodyChanged
             ? "pending"

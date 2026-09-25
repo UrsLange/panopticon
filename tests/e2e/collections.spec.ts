@@ -117,7 +117,7 @@ test("routes captures exclusively and explains attention badges separately from 
   ).toBeVisible();
   await page.getByLabel("Filter task status").selectOption("attention");
   await expect(page.locator(".item-row")).toHaveCount(2);
-  await page.getByLabel("Filter by project").selectOption("Website");
+  await page.getByLabel("Filter by project").selectOption("project:Website");
   await expect(page.locator(".item-row")).toHaveCount(1);
   await expect(page.locator(".item-row")).toContainText("Review delivery");
   await nav.getByRole("button", { name: "Notebook", exact: true }).click();
@@ -222,7 +222,7 @@ test("sorts the backlog and preserves filters and position across the details pa
   ];
   await workspace(page, items);
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await page.getByLabel("Filter by project").selectOption("Website");
+  await page.getByLabel("Filter by project").selectOption("project:Website");
   await page.getByLabel("Filter task status").selectOption("open");
   await page.getByRole("textbox", { name: "Search items" }).fill("task");
   expect((await page.locator(".item-main strong").allTextContents()).slice(0, 4)).toEqual([
@@ -241,7 +241,7 @@ test("sorts the backlog and preserves filters and position across the details pa
   expect(bounds).not.toBeNull();
   expect(Math.round((bounds?.x ?? 0) + (bounds?.width ?? 0))).toBe(page.viewportSize()?.width);
   await page.getByRole("button", { name: "Close item" }).click();
-  await expect(page.getByLabel("Filter by project")).toHaveValue("Website");
+  await expect(page.getByLabel("Filter by project")).toHaveValue("project:Website");
   await expect(page.getByLabel("Filter task status")).toHaveValue("open");
   await expect(page.getByRole("textbox", { name: "Search items" })).toHaveValue("task");
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
