@@ -53,6 +53,11 @@ export function createProjectWorkspace(deps: {
     const discovered = await deps.io.discover(roots, profile);
     errors = discovered.errors;
     const documents = deps.documents();
+    const documentPaths = new Map<string, string>();
+    for (const document of documents) {
+      const id = metadata(document).data?.repository_id;
+      if (typeof id === "string") documentPaths.set(id, document.path);
+    }
     const queue = [...discovered.repositories];
     const insights = new Map<string, Promise<ProjectInsights>>();
     const seen = new Set(queue.map((p) => p.id));
@@ -68,6 +73,7 @@ export function createProjectWorkspace(deps: {
           const project: Project = {
             profileRoot: profile,
             document: null,
+            documentSource: "discovery",
             returnToDefault: true,
             git: null,
             insights: null,
@@ -78,10 +84,13 @@ export function createProjectWorkspace(deps: {
             ...entry,
             error: null,
           };
-          const document = documents.find((doc) => metadata(doc).data.repository_id === project.id);
           project.document =
-            document?.path ??
-            (documents.some((doc) => doc.path === project.document) ? project.document : null);
+            project.documentSource === "manual"
+              ? documents.some((doc) => doc.path === project.document)
+                ? project.document
+                : null
+              : (documentPaths.get(project.id) ?? null);
+          busy.add(project.id);
           try {
             await deps.io.validate(project);
             project.git = await deps.io.inspect(project.path);
@@ -114,7 +123,11 @@ export function createProjectWorkspace(deps: {
           } catch {
             project.error = "Cannot inspect this checkout. Check repository access, then refresh.";
           }
-          if (!busy.has(project.id)) deps.records.saveProject(project);
+          try {
+            deps.records.saveProject(project);
+          } finally {
+            busy.delete(project.id);
+          }
         }
       }),
     );
@@ -141,17 +154,24 @@ export function createProjectWorkspace(deps: {
   }
   async function detail(id: string) {
     const project = find(id);
-    await deps.io.validate(project);
-    const git = await deps.io.inspect(project.path);
-    const changes = await deps.io.changes(project.path);
-    const next = { ...project, git, error: null, checkedAt: deps.now() };
-    if (!busy.has(id)) deps.records.saveProject(next);
-    return { project: next, changes };
+    try {
+      await deps.io.validate(project);
+      const git = await deps.io.inspect(project.path);
+      const changes = await deps.io.changes(project.path);
+      const next = { ...project, git, error: null, checkedAt: deps.now() };
+      if (!busy.has(id)) deps.records.saveProject(next);
+      return { project: next, changes };
+    } catch {
+      const next = {
+        ...project,
+        git: null,
+        error: "Checkout unavailable. Check its directory and refresh.",
+      };
+      if (!busy.has(id)) deps.records.saveProject(next);
+      return { project: next, changes: { files: [], diff: "", commits: [] } };
+    }
   }
   async function perform(id: string, input: ProjectAction) {
-    if (busy.has(id))
-      throw new ApplicationError("conflict", "An action is already running for this project.");
-    if (active) await active;
     if (busy.has(id))
       throw new ApplicationError("conflict", "An action is already running for this project.");
     const project = find(id);
@@ -177,6 +197,7 @@ export function createProjectWorkspace(deps: {
   }
   return {
     async list() {
+      if (active) return snapshot();
       if (
         lastScope !== JSON.stringify(deps.scope()) ||
         Date.parse(deps.now()) - lastLocal > 15000
@@ -203,7 +224,11 @@ export function createProjectWorkspace(deps: {
           "conflict",
           "Wait for the current project refresh or action to finish.",
         );
-      const next = { ...project, ...fields };
+      const next = {
+        ...project,
+        ...fields,
+        ...(fields.document !== undefined ? { documentSource: "manual" as const } : {}),
+      };
       deps.records.saveProject(next);
       return next;
     },

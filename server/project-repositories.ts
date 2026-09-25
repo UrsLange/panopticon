@@ -53,12 +53,16 @@ export function repositoryWebUrl(remote: string | null) {
 
 function changedFiles(status: string) {
   const entries = status.split("\0");
-  const files: { path: string; status: string }[] = [];
+  const files: { path: string; status: string; previousPath?: string }[] = [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (!entry) continue;
-    files.push({ status: entry.slice(0, 2), path: entry.slice(3) });
-    if (/[RC]/.test(entry.slice(0, 2))) i++;
+    const renamed = /[RC]/.test(entry.slice(0, 2));
+    files.push({
+      status: entry.slice(0, 2),
+      path: entry.slice(3),
+      ...(renamed ? { previousPath: entries[++i] } : {}),
+    });
   }
   return files;
 }
@@ -173,8 +177,16 @@ async function execute(path: string, action: ProjectAction, state: ProjectGit) {
         )
       )
         throw new ApplicationError("invalid", "Choose current changed files from this checkout.");
-      const input = `${action.files.join("\0")}\0`;
-      await git(path, ["add", "--pathspec-from-file=-", "--pathspec-file-nul"], input);
+      const paths = action.files.flatMap((path) => {
+        const previous = files.find((file) => file.path === path)?.previousPath;
+        return previous ? [path, previous] : [path];
+      });
+      const input = `${paths.join("\0")}\0`;
+      await git(
+        path,
+        ["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        `${action.files.join("\0")}\0`,
+      );
       await git(
         path,
         ["commit", "--only", "-m", action.message, "--pathspec-from-file=-", "--pathspec-file-nul"],
@@ -186,8 +198,16 @@ async function execute(path: string, action: ProjectAction, state: ProjectGit) {
     if (action.action === "switch") {
       if (!state.defaultBranch)
         reject("The default branch is unknown. Set the remote HEAD in Git, then refresh.");
-      if (state.ahead || (!state.upstream && state.branch !== state.defaultBranch))
+      if (state.ahead || (state.remote && !state.upstream && state.branch !== state.defaultBranch))
         reject("Publish this branch before returning to the default branch.");
+      const worktrees = await git(path, ["worktree", "list", "--porcelain"]);
+      if (
+        state.branch !== state.defaultBranch &&
+        worktrees.includes(`\nbranch refs/heads/${state.defaultBranch}\n`)
+      )
+        reject(
+          "The default branch is already checked out in another worktree. Open that checkout, or turn off the return-to-default reminder here.",
+        );
       if (await optional(path, ["rev-parse", "--verify", `refs/heads/${state.defaultBranch}`]))
         await git(path, ["switch", "--", state.defaultBranch]);
       else if (state.remote)
@@ -201,7 +221,7 @@ async function execute(path: string, action: ProjectAction, state: ProjectGit) {
       else reject("The default branch is unavailable locally.");
       return;
     }
-    if (!state.remote || !state.upstream)
+    if (!state.remote || (!state.upstream && action.action !== "push"))
       reject("Configure an upstream branch in Git before pulling, merging, or pushing.");
     await git(path, ["fetch", "--", state.remote]);
     const current = await inspect(path);
@@ -209,6 +229,16 @@ async function execute(path: string, action: ProjectAction, state: ProjectGit) {
       reject("The checkout changed during the remote check. Refresh and review it.");
     if (action.action === "push") {
       if (current.behind) reject("Integrate incoming commits before pushing.");
+      if (!state.upstream) {
+        await git(path, [
+          "push",
+          "--set-upstream",
+          "--",
+          state.remote,
+          `HEAD:refs/heads/${state.branch}`,
+        ]);
+        return;
+      }
       const remote = await optional(path, ["config", "--get", `branch.${state.branch}.remote`]);
       const target = await optional(path, ["config", "--get", `branch.${state.branch}.merge`]);
       if (!remote || remote === "." || !target?.startsWith("refs/heads/"))

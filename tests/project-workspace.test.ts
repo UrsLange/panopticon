@@ -273,3 +273,59 @@ it("removes remote credentials and supports SSH repository URLs", () => {
   expect(repositoryWebUrl("git@github.com:acme/app.git")).toBe("https://github.com/acme/app");
   expect(repositoryWebUrl("/local/repo.git")).toBeNull();
 });
+
+it("preserves manually assigned or unlinked profile pages across discovery refreshes", async () => {
+  const f = fixture();
+  const project = (await f.workspace.list()).projects[0];
+  let time = Date.now();
+  const documents = ["automatic.md", "manual.md"].map((path) => ({
+    path,
+    title: path,
+    type: "Project",
+    description: "",
+    hash: path,
+    content: `---\ntype: Project\n${path === "automatic.md" ? `repository_id: ${project.id}\n` : ""}---\nDescription`,
+  }));
+  const workspace = createProjectWorkspace({
+    records: f.store,
+    scope: () => ({ profile: f.profile, roots: [f.directory] }),
+    documents: () => documents,
+    io: f.io,
+    now: () => new Date(time).toISOString(),
+  });
+  expect((await workspace.list()).projects[0].document).toBe("automatic.md");
+  workspace.update(project.id, { document: "manual.md" });
+  time += 16000;
+  expect((await workspace.list()).projects[0].document).toBe("manual.md");
+  workspace.update(project.id, { document: null });
+  time += 16000;
+  expect((await workspace.list()).projects[0].document).toBeNull();
+});
+
+it("publishes a new branch explicitly and then enables returning to main", async () => {
+  const f = fixture();
+  git(f.repo, "switch", "-c", "new-feature");
+  const p = (await f.workspace.list()).projects[0];
+  expect(projectAttention(p).local).toBe("Publish this branch");
+  const published = await f.workspace.action(p.id, { action: "push", version: version(p) });
+  expect(published.project.git?.upstream).toBe("origin/new-feature");
+  expect(
+    (await f.workspace.action(p.id, { action: "switch", version: version(published.project) }))
+      .project.git?.branch,
+  ).toBe("main");
+});
+
+it("commits a selected rename atomically and treats pathspec-like filenames literally", async () => {
+  const f = fixture();
+  git(f.repo, "mv", "README.md", "renamed.md");
+  writeFileSync(join(f.repo, ":(glob)*.txt"), "literal filename");
+  const p = (await f.workspace.list()).projects[0];
+  await f.workspace.action(p.id, {
+    action: "commit",
+    version: version(p),
+    message: "refactor: rename",
+    files: ["renamed.md", ":(glob)*.txt"],
+  });
+  expect(git(f.repo, "ls-tree", "--name-only", "HEAD")).toBe(":(glob)*.txt\nrenamed.md");
+  expect(git(f.repo, "status", "--porcelain")).toBe("");
+});

@@ -35,6 +35,7 @@ export type Project = {
   path: string;
   name: string;
   document: string | null;
+  documentSource: "discovery" | "manual";
   returnToDefault: boolean;
   git: ProjectGit | null;
   insights: ProjectInsights | null;
@@ -77,13 +78,17 @@ export function projectAttention(project: Project): Record<ProjectAttention, str
   return {
     local: project.error
       ? project.error
-      : git?.conflicts || git?.operation
-        ? "Resolve the Git operation"
-        : git?.dirty
-          ? "Review and commit local changes"
-          : git?.ahead
-            ? "Push local commits"
-            : null,
+      : git && !git.branch
+        ? "Check out a branch"
+        : git?.conflicts || git?.operation
+          ? "Resolve the Git operation"
+          : git?.dirty
+            ? "Review and commit local changes"
+            : git?.ahead
+              ? "Push local commits"
+              : git?.remote && git.head && !git.upstream
+                ? "Publish this branch"
+                : null,
     incoming: project.remoteError
       ? "Retry remote check"
       : git?.remote && !project.remoteCheckedAt
@@ -94,9 +99,7 @@ export function projectAttention(project: Project): Record<ProjectAttention, str
             : git.ahead
               ? "Integrate diverged changes"
               : "Pull updates"
-          : git?.remote && !git.upstream
-            ? "Set up branch tracking"
-            : null,
+          : null,
     branch:
       project.returnToDefault && git && git.branch !== git.defaultBranch
         ? git.defaultBranch
