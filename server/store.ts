@@ -76,6 +76,8 @@ export class Store {
       );
     `);
     const columns = this.db.prepare("PRAGMA table_info(items)").all();
+    if (!columns.some((column) => column.name === "clarifications"))
+      this.db.exec("ALTER TABLE items ADD COLUMN clarifications TEXT NOT NULL DEFAULT '[]'");
     if (!columns.some((column) => column.name === "repositoryId"))
       this.db.exec("ALTER TABLE items ADD COLUMN repositoryId TEXT");
     if (!columns.some((column) => column.name === "prompt")) {
@@ -228,6 +230,7 @@ export class Store {
         ...row,
         sourcePaths: JSON.parse(String(row.sourcePaths)),
         references: JSON.parse(String(row.references)),
+        clarifications: JSON.parse(String(row.clarifications)),
       })) as Item[];
   }
 
@@ -238,6 +241,7 @@ export class Store {
           ...row,
           sourcePaths: JSON.parse(String(row.sourcePaths)),
           references: JSON.parse(String(row.references)),
+          clarifications: JSON.parse(String(row.clarifications)),
         } as Item)
       : undefined;
   }
@@ -248,13 +252,14 @@ export class Store {
     this.db
       .prepare(`INSERT INTO items
       (id, original, title, body, kind, status, project, dueDate, priority, relatedId,
-       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId, clarifications)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         ...Object.values({
           ...item,
           sourcePaths: JSON.stringify(item.sourcePaths),
           references: JSON.stringify(item.references),
+          clarifications: JSON.stringify(item.clarifications),
         }),
       );
     return item;
@@ -273,6 +278,7 @@ export class Store {
           | "references"
           | "profilePath"
           | "repositoryId"
+          | "clarifications"
         >
       >,
     revision: number,
@@ -289,7 +295,7 @@ export class Store {
       this.db
         .prepare(`UPDATE items SET title=?, body=?, kind=?, status=?, project=?, dueDate=?,
         priority=?, relatedId=?, updatedAt=?, revision=?, processing=?, processingError=?,
-        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=? WHERE id=?`)
+        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=?, clarifications=? WHERE id=?`)
         .run(
           next.title,
           next.body,
@@ -309,6 +315,7 @@ export class Store {
           next.profilePath,
           next.prompt,
           next.repositoryId,
+          JSON.stringify(next.clarifications),
           id,
         );
       this.db.exec("COMMIT");

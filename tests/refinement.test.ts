@@ -39,6 +39,7 @@ const interpretation = {
   referenceIds: [],
   rationale: "Supported by prior work.",
   needsClarification: false,
+  clarificationQuestions: [],
   updateProfile: false,
   prompt: "Review the onboarding invitation flow and verify it in a browser.",
   sources: ["rules.md", "project:one/README.md", "ctx:abcdef12"],
@@ -151,6 +152,37 @@ it("researches profile, project and CTX evidence over multiple Responses turns w
     expect.any(AbortSignal),
   );
   expect(readSessionEvent).toHaveBeenCalled();
+});
+
+it("requests structured clarification questions and supplies the previous brief and answers to the provider", async () => {
+  const previousRefinement = {
+    prompt: "Plan a demo.",
+    rationale: "Identify the project and person.",
+    sourcePaths: ["rules.md"],
+    clarifications: [{ id: "0:0", question: "Which project?", answer: "Portal", resolved: false }],
+  };
+  const model = await provider((request) => {
+    expect(JSON.parse(request.input[0].content ?? "").context.previousRefinement).toEqual(
+      previousRefinement,
+    );
+    return [
+      message({
+        ...interpretation,
+        sources: ["rules.md"],
+        needsClarification: true,
+        clarificationQuestions: ["Which Benjamin do you mean?"],
+      }),
+    ];
+  });
+  const result = await createAssistant("test-key", "test", model.url)?.interpret(
+    "Plan a demo with Benjamin",
+    { ...context, previousRefinement },
+  );
+  expect(result).toMatchObject({
+    needsClarification: true,
+    clarificationQuestions: ["Which Benjamin do you mean?"],
+    sources: ["rules.md"],
+  });
 });
 
 it("resolves capture links with web search and preserves citations across local research turns", async () => {

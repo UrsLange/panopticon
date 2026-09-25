@@ -38,6 +38,28 @@ function setup(assistant: Assistant | null = null) {
 const headers = { host: "127.0.0.1:4317" };
 
 describe("local API", () => {
+  it("validates interview answers and rejects stale or unknown questions without losing saved answers", async () => {
+    const { app, store } = setup();
+    const captured = store.capture("Plan a demo");
+    const item = store.update(
+      captured.id,
+      { clarifications: [{ id: "0:0", question: "Which project?", answer: "", resolved: false }] },
+      captured.revision,
+    );
+    const answer = (revision: number, id: string, text: string) =>
+      app.inject({
+        method: "PATCH",
+        url: `/api/items/${item.id}/clarifications`,
+        headers,
+        payload: { revision, answers: [{ id, answer: text }] },
+      });
+    expect((await answer(item.revision, "0:0", "x".repeat(5001))).statusCode).toBe(400);
+    expect((await answer(item.revision, "unknown", "Portal")).statusCode).toBe(400);
+    expect((await answer(item.revision, "0:0", " Portal ")).statusCode).toBe(200);
+    expect((await answer(item.revision, "0:0", "Stale")).statusCode).toBe(409);
+    expect(store.get(item.id)?.clarifications[0].answer).toBe("Portal");
+    expect(store.get(item.id)?.body).toBe("Plan a demo");
+  });
   it.each(["idea", "commitment"] as const)(
     "manually accepts a %s without invoking a model",
     async (kind) => {
@@ -184,6 +206,7 @@ describe("local API", () => {
           relatedId: null,
           rationale: "Resolved",
           needsClarification: false,
+          clarificationQuestions: [],
           updateProfile: false,
           referenceIds: context.candidates
             .filter((candidate) => candidate.available)
@@ -270,6 +293,7 @@ describe("local API", () => {
         relatedId: null,
         rationale: "",
         needsClarification: false,
+        clarificationQuestions: [],
         updateProfile: false,
         referenceIds: ["invented"],
         prompt: "",
@@ -300,6 +324,7 @@ describe("local API", () => {
         relatedId: null,
         rationale: "",
         needsClarification: false,
+        clarificationQuestions: [],
         updateProfile: false,
         referenceIds: context.candidates.map((candidate) => candidate.id),
         prompt: "",
@@ -428,6 +453,7 @@ describe("local API", () => {
           relatedId: null,
           rationale: "Tentative idea",
           needsClarification: false,
+          clarificationQuestions: [],
           updateProfile: false,
           referenceIds: [],
           prompt: "",

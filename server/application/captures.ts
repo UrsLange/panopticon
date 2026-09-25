@@ -1,9 +1,10 @@
 import { ZodError } from "zod";
 import { type Capture, type Item, type ItemFields, itemFieldsSchema } from "../../shared/schema.js";
 import { resolveReferences, retainReferences } from "./aliases.js";
-import type { Assistant } from "./assistant.js";
+import type { Assistant, AssistantContext } from "./assistant.js";
 import type { createContext } from "./context.js";
 import { ApplicationError } from "./errors.js";
+import { assertRevision } from "./items.js";
 import type { CaptureStorage } from "./ports.js";
 import type { createProfileUpdates } from "./profile-updates.js";
 
@@ -43,7 +44,19 @@ export function createCaptures({
       try {
         const assistant = getAssistant();
         if (!assistant) return;
-        const evidence = context(item.body, [], item.references);
+        const evidence: AssistantContext = {
+          ...context(
+            item.body,
+            item.clarifications.map((entry) => entry.answer).filter(Boolean),
+            item.references,
+          ),
+          previousRefinement: {
+            prompt: item.prompt,
+            rationale: item.rationale,
+            sourcePaths: item.sourcePaths,
+            clarifications: item.clarifications,
+          },
+        };
         evidence.related = evidence.related.filter((related) => related.id !== id);
         evidence.commitments = {
           ...evidence.commitments,
@@ -52,6 +65,10 @@ export function createCaptures({
           waiting: evidence.commitments.waiting.filter((related) => related.id !== id),
         };
         const interpreted = await assistant.interpret(item.body, evidence);
+        if (interpreted.clarificationQuestions.length) {
+          interpreted.needsClarification = true;
+          interpreted.updateProfile = false;
+        }
         const unresolved = evidence.candidates.filter(
           (candidate) => interpreted.referenceIds.includes(candidate.id) && !candidate.available,
         );
@@ -61,6 +78,9 @@ export function createCaptures({
           );
           interpreted.needsClarification = true;
           interpreted.updateProfile = false;
+          interpreted.clarificationQuestions.push(
+            ...unresolved.map((candidate) => `Who or what does “${candidate.mention}” refer to?`),
+          );
           interpreted.rationale = [
             interpreted.rationale,
             ...unresolved.map(
@@ -96,6 +116,17 @@ export function createCaptures({
                 : "ready",
             processingError: null,
             rationale: interpreted.rationale,
+            clarifications: [
+              ...item.clarifications
+                .filter((entry) => entry.answer)
+                .map((entry) => ({ ...entry, resolved: true })),
+              ...[...new Set(interpreted.clarificationQuestions)].map((question, index) => ({
+                id: `${item.revision}:${index}`,
+                question,
+                answer: "",
+                resolved: false,
+              })),
+            ],
             sourcePaths: [
               ...new Set([
                 ...(referencesOnly ? item.sourcePaths : interpreted.sources),
@@ -170,6 +201,38 @@ export function createCaptures({
         store.update(id, { processing: "ready", processingError: null }, revision),
       );
     },
+    answer(id: string, input: { revision: number; answers: { id: string; answer: string }[] }) {
+      const item = store.get(id);
+      assertRevision(item, input.revision);
+      if (processing.has(id))
+        throw new ApplicationError(
+          "conflict",
+          "Wait for refinement to finish before saving answers.",
+        );
+      if (
+        input.answers.some(
+          (answer) =>
+            !item.clarifications.some((entry) => entry.id === answer.id && !entry.resolved),
+        )
+      )
+        throw new ApplicationError(
+          "invalid",
+          "These questions have changed. Reload before answering.",
+        );
+      return captureState(
+        store.update(
+          id,
+          {
+            clarifications: item.clarifications.map((entry) => ({
+              ...entry,
+              answer:
+                input.answers.find((answer) => answer.id === entry.id)?.answer ?? entry.answer,
+            })),
+          },
+          input.revision,
+        ),
+      );
+    },
     async retry(id: string, input: { resetReferences: boolean; revision?: number }) {
       const item = store.get(id);
       if (!item) throw new ApplicationError("not-found", "Item not found");
@@ -179,6 +242,7 @@ export function createCaptures({
           "conflict",
           "Refinement is already running. Wait for it to finish.",
         );
+      if (input.revision !== undefined) assertRevision(item, input.revision);
       if (!getAssistant())
         throw new ApplicationError("unavailable", "Connect and validate a model in Settings.");
       if (input.resetReferences) {

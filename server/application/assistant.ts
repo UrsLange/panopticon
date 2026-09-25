@@ -11,6 +11,7 @@ import type { ProfileContext, Today } from "./ports.js";
 import type { ProfileUpdate } from "./profile-update-model.js";
 
 export type AssistantContext = {
+  previousRefinement?: Pick<Item, "prompt" | "rationale" | "clarifications" | "sourcePaths">;
   candidates: ReferenceCandidate[];
   references: EntityReference[];
   people: PeopleContext | null;

@@ -22,6 +22,7 @@ it("uses Responses structured outputs and limits returned citations to supplied 
             relatedId: null,
             rationale: "Tentative suggestion",
             needsClarification: false,
+            clarificationQuestions: [],
             updateProfile: false,
             referenceIds: [],
             prompt: "Explore inviting a colleague to onboarding.",

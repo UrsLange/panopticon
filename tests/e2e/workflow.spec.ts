@@ -42,6 +42,58 @@ test("onboards a model and portable profile, then exposes editable settings and 
   await expect(page.getByRole("heading", { name: "A clearer day." })).toBeVisible();
 });
 
+test("clarifies a demo over two rounds, preserving saved answers across reloads", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await page.getByLabel("What’s on your mind?").fill("Plan the demo with Benjamin");
+  await page.getByRole("button", { name: "Capture", exact: true }).click();
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: /^Plan the demo with Benjamin/ }).click();
+  const project = page.getByLabel("1. Which project is this demo for?", { exact: true });
+  await project.fill("Portal");
+  await page.getByRole("button", { name: "Save answers", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save answers", exact: true })).toBeDisabled();
+  await page.reload();
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: /^Plan the demo with Benjamin/ }).click();
+  await expect(project).toHaveValue("Portal");
+  await page.getByRole("button", { name: "Refine with answers", exact: true }).click();
+  await expect(page.getByLabel("1. Which Benjamin do you mean?", { exact: true })).toBeVisible();
+  await expect(project).toHaveCount(0);
+  await page.getByText("Previous answers", { exact: true }).click();
+  await expect(page.getByText("Portal", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("1. Which Benjamin do you mean?", { exact: true })
+    .fill("Benjamin from Design");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".clarification-interview").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/clarification-interview-mobile.png" });
+  expect(
+    await page
+      .getByRole("dialog")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.getByRole("button", { name: "Refine with answers", exact: true }).click();
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
+    "Plan the Portal demo with Benjamin from Design.",
+  );
+  await expect(page.getByRole("region", { name: "Clarification questions" })).toHaveCount(0);
+  const items = await (await request.get("/api/items")).json();
+  const item = items.find(
+    (entry: { original: string }) => entry.original === "Plan the demo with Benjamin",
+  );
+  expect(item.processing).toBe("ready");
+  expect(item.clarifications.map((entry: { answer: string }) => entry.answer)).toEqual([
+    "Portal",
+    "Benjamin from Design",
+  ]);
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Plan the demo with Benjamin/ })).toBeVisible();
+});
+
 test("quick capture preserves dismissed drafts and sends only on explicit save", async ({
   page,
   request,
@@ -82,6 +134,7 @@ test("creates aliases through the profile editor and shows persisted capture ann
   await page.getByLabel("What’s on your mind?").fill("Ask about ghma");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await page.getByRole("button", { name: /Ask about ghma/ }).click();
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management]", { exact: true }),
@@ -93,6 +146,7 @@ test("creates aliases through the profile editor and shows persisted capture ann
   );
   await page.reload();
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await page.getByRole("button", { name: /Ask about ghma/ }).click();
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management] tomorrow", { exact: true }),
@@ -114,6 +168,7 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await page.getByRole("button", { name: "Capture", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Captured.");
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await page.getByRole("button", { name: /Send the revised proposal/ }).click();
   await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
     "Implement: Send the revised proposal to Anna",
@@ -158,6 +213,7 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
     .fill("Perhaps onboarding could include an invitation for a colleague");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await page.getByRole("button", { name: /Perhaps onboarding/ }).click();
   await page.locator(".capture-details summary").click();
   await page.getByLabel("Kind", { exact: true }).selectOption("idea");
@@ -191,6 +247,7 @@ test("incorporates explicit profile notes automatically and waits for approval o
     })
     .toBe("done");
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await expect(page.getByRole("button", { name: /note: I prefer browser-tested/ })).toHaveCount(0);
   await page.getByLabel("Include completed & archived").check();
   const incorporated = page.getByRole("button", { name: /note: I prefer browser-tested/ });
@@ -214,6 +271,7 @@ test("incorporates explicit profile notes automatically and waits for approval o
     before.find((doc: { path: string }) => doc.path === "browser-test-preferences.md").content,
   ).not.toContain(implicit);
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await page.getByLabel("Include completed & archived").uncheck();
   await page.getByRole("button", { name: /My browser-test review preference/ }).click();
   await expect(
@@ -229,6 +287,7 @@ test("incorporates explicit profile notes automatically and waits for approval o
   );
   await page.reload();
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await expect(page.getByRole("button", { name: /My browser-test review preference/ })).toHaveCount(
     0,
   );
@@ -562,6 +621,7 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await page.getByLabel("What’s on your mind?").fill("Implement project search in T3 Code");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
   await page.getByRole("button", { name: /^Inbox/ }).click();
+  await page.getByLabel("Include refined", { exact: true }).check();
   await page.getByRole("button", { name: /Implement project search in T3 Code/ }).click();
   await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
     "Implement: Implement project search in T3 Code",
