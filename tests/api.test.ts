@@ -38,6 +38,33 @@ function setup(assistant: Assistant | null = null) {
 const headers = { host: "127.0.0.1:4317" };
 
 describe("local API", () => {
+  it("saves explicit no-project choices and preserves them on unrelated patches", async () => {
+    const { app, store } = setup();
+    const item = store.capture("Arrange a meeting with Anna");
+    const saved = await app.inject({
+      method: "PATCH",
+      url: `/api/items/${item.id}`,
+      headers,
+      payload: { revision: 0, noProject: true },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ noProject: true, project: "", repositoryId: null });
+    const updated = await app.inject({
+      method: "PATCH",
+      url: `/api/items/${item.id}`,
+      headers,
+      payload: { revision: 1, status: "waiting" },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ noProject: true, status: "waiting" });
+    const invalid = await app.inject({
+      method: "PATCH",
+      url: `/api/items/${item.id}`,
+      headers,
+      payload: { revision: 2, noProject: "true" },
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
   it("maintains project links on creation, edits, and profile loads", async () => {
     const { app, profile } = setup();
     profile.initialize();

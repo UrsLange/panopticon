@@ -8,10 +8,11 @@ export type ImplementationRepository = {
 };
 
 export function resolveImplementationRepository(
-  item: Pick<Item, "project" | "references">,
+  item: Pick<Item, "project" | "references" | "noProject">,
   repositories: ImplementationRepository[],
   documents: ProfileDocument[],
 ) {
+  if (item.noProject) return null;
   const targets = new Set(
     item.references.filter((ref) => ref.kind !== "person").map((ref) => ref.target),
   );

@@ -16,6 +16,38 @@ afterEach(() => {
 });
 
 describe("capture and planning", () => {
+  it("migrates unassigned projects and persists deliberate no-project choices and history", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pa-no-project-")), "assistant.sqlite");
+    const original = new Store(path);
+    const item = original.capture("Ask Anna for an answer");
+    original.update(item.id, { project: "Portal", repositoryId: "portal" }, 0);
+    original.db.exec(`ALTER TABLE items DROP COLUMN noProject;
+      UPDATE item_history SET snapshot = json_remove(snapshot, '$.noProject')`);
+    original.db.close();
+    const migrated = new Store(path);
+    expect(migrated.get(item.id)?.noProject).toBe(false);
+    expect(migrated.history(item.id)[0].item.noProject).toBe(false);
+    expect(migrated.update(item.id, { noProject: true }, 1)).toMatchObject({
+      noProject: true,
+      project: "",
+      repositoryId: null,
+    });
+    migrated.update(item.id, { status: "waiting" }, 2);
+    migrated.db.close();
+    const reopened = new Store(path);
+    stores.push(reopened);
+    expect(reopened.get(item.id)).toMatchObject({
+      noProject: true,
+      project: "",
+      status: "waiting",
+    });
+    expect(reopened.list()[0].noProject).toBe(true);
+    expect(reopened.history(item.id).map(({ item }) => item.noProject)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+  });
   it("migrates repository associations and preserves them across restarts and history", () => {
     const path = join(mkdtempSync(join(tmpdir(), "pa-repository-")), "assistant.sqlite");
     const original = new Store(path);

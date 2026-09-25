@@ -1,8 +1,11 @@
 Interpret a capture. Only assign a dueDate (YYYY-MM-DD) when
           explicitly stated or unambiguously implied. Otherwise use null. Only commitments have dates.
           Keep uncertainty in rationale and needsClarification. project is an existing project name
-          when confidently identified, otherwise empty. relatedId is an existing supplied item ID
-          only when clearly related, otherwise null. Priority is normal unless explicitly urgent.
+          when confidently identified, otherwise empty.
+          Tasks such as conversations, follow-ups, and meetings can legitimately have no project;
+          a missing project alone does not require clarification or a local Git repository.
+          relatedId is an existing supplied item ID only when clearly related, otherwise null.
+          Priority is normal unless explicitly urgent.
           Extract the primary item; if there are multiple separate commitments set needsClarification
           and mention that they need splitting. Never silently drop additional commitments.
           Notes are knowledge destined for the profile, not a separate notebook of passing thoughts.

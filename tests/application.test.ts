@@ -349,6 +349,43 @@ it("regenerates the full interpretation after input edits but preserves prompt-o
   expect(f.assistant.interpret).not.toHaveBeenCalled();
 });
 
+it("preserves a deliberate no-project choice through refinement and allows reassignment", async () => {
+  const f = fixture();
+  const base = await f.assistant.interpret("", context);
+  vi.mocked(f.assistant.interpret).mockResolvedValue({
+    ...base,
+    kind: "commitment",
+    project: "Activation",
+    prompt: "Ask Anna about activation",
+  });
+  const item = f.captures.capture("Ask Anna about activation");
+  await f.captures.close();
+  const saved = f.store.get(item.id);
+  assert(saved);
+  const outside = f.captures.edit(item.id, { noProject: true }, saved.revision);
+  expect(outside).toMatchObject({ noProject: true, project: "", repositoryId: null });
+  for (const resetReferences of [false, true]) {
+    const current = f.store.get(item.id);
+    assert(current);
+    await f.captures.retry(item.id, { resetReferences, revision: current.revision });
+    expect(f.store.get(item.id)).toMatchObject({
+      noProject: true,
+      project: "",
+      repositoryId: null,
+    });
+  }
+  const current = f.store.get(item.id);
+  assert(current);
+  f.captures.edit(item.id, { body: "Ask Anna tomorrow" }, current.revision);
+  await f.captures.close();
+  const refined = f.store.get(item.id);
+  assert(refined);
+  expect(refined).toMatchObject({ noProject: true, project: "", repositoryId: null });
+  expect(
+    f.captures.edit(item.id, { noProject: false, project: "Portal" }, refined.revision),
+  ).toMatchObject({ noProject: false, project: "Portal", repositoryId: "portal" });
+});
+
 it("regenerates only the latest input when it changes during refinement", async () => {
   const f = fixture();
   const base = await f.assistant.interpret("", context);

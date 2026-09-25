@@ -726,6 +726,7 @@ function ItemEditor({
     kind: item.kind,
     status: item.status,
     project: item.project,
+    noProject: item.noProject,
     dueDate: item.dueDate,
     priority: item.priority,
     relatedId: item.relatedId,

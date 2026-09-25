@@ -76,6 +76,12 @@ export class Store {
       );
     `);
     const columns = this.db.prepare("PRAGMA table_info(items)").all();
+    if (!columns.some((column) => column.name === "noProject")) {
+      this.db.exec("ALTER TABLE items ADD COLUMN noProject INTEGER NOT NULL DEFAULT 0");
+      this.db.exec(
+        `UPDATE item_history SET snapshot = json_set(snapshot, '$.noProject', json('false'))`,
+      );
+    }
     if (!columns.some((column) => column.name === "repositoryId"))
       this.db.exec("ALTER TABLE items ADD COLUMN repositoryId TEXT");
     if (!columns.some((column) => column.name === "prompt")) {
@@ -226,6 +232,7 @@ export class Store {
       .all()
       .map((row) => ({
         ...row,
+        noProject: Boolean(row.noProject),
         sourcePaths: JSON.parse(String(row.sourcePaths)),
         references: JSON.parse(String(row.references)),
       })) as Item[];
@@ -236,6 +243,7 @@ export class Store {
     return row
       ? ({
           ...row,
+          noProject: Boolean(row.noProject),
           sourcePaths: JSON.parse(String(row.sourcePaths)),
           references: JSON.parse(String(row.references)),
         } as Item)
@@ -248,11 +256,12 @@ export class Store {
     this.db
       .prepare(`INSERT INTO items
       (id, original, title, body, kind, status, project, dueDate, priority, relatedId,
-       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId, noProject)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         ...Object.values({
           ...item,
+          noProject: Number(item.noProject),
           sourcePaths: JSON.stringify(item.sourcePaths),
           references: JSON.stringify(item.references),
         }),
@@ -289,7 +298,7 @@ export class Store {
       this.db
         .prepare(`UPDATE items SET title=?, body=?, kind=?, status=?, project=?, dueDate=?,
         priority=?, relatedId=?, updatedAt=?, revision=?, processing=?, processingError=?,
-        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=? WHERE id=?`)
+        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=?, noProject=? WHERE id=?`)
         .run(
           next.title,
           next.body,
@@ -309,6 +318,7 @@ export class Store {
           next.profilePath,
           next.prompt,
           next.repositoryId,
+          Number(next.noProject),
           id,
         );
       this.db.exec("COMMIT");

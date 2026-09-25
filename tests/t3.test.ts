@@ -133,6 +133,36 @@ it("routes exact references, sends saved context, and marks the commitment in pr
   expect(client.launch).toHaveBeenCalledTimes(1);
 });
 
+it("does not infer or launch a repository for deliberate no-project tasks", async () => {
+  const { service, store, item, client, ports } = fixture();
+  const outside = store.update(item.id, { noProject: true }, item.revision);
+  expect(service.options(item.id).suggestedRepositoryId).toBeNull();
+  await expect(
+    service.implement(item.id, { revision: outside.revision, repositoryId: "repo" }),
+  ).rejects.toThrow("Assign a project");
+  expect(ports.workspace).not.toHaveBeenCalled();
+  expect(client.launch).not.toHaveBeenCalled();
+});
+
+it("blocks pending retries and automatic progress after choosing no project", async () => {
+  const { service, store, item, client, ports } = fixture();
+  vi.mocked(client.launch).mockRejectedValueOnce(new Error("Unconfirmed"));
+  await expect(service.implement(item.id, { revision: item.revision })).rejects.toThrow();
+  const outside = store.update(item.id, { noProject: true }, item.revision);
+  await expect(service.implement(item.id, { revision: outside.revision })).rejects.toThrow(
+    "Assign a project",
+  );
+  expect(client.launch).toHaveBeenCalledTimes(1);
+  const entry = store.latestImplementation(item.id, "/profile");
+  assert(entry);
+  store.saveImplementation({ ...entry, state: "submitted" });
+  await service.refresh(item.id);
+  expect(client.progress).not.toHaveBeenCalled();
+  expect(ports.localMerge).not.toHaveBeenCalled();
+  expect(store.get(item.id)?.status).toBe("open");
+  expect(service.options(item.id).latest?.id).toBe(entry.id);
+});
+
 it("moves finished turns to review, respects manual resume, and never treats a turn as task completion", async () => {
   const { service, store, item, client } = fixture();
   await service.implement(item.id, { revision: item.revision });
