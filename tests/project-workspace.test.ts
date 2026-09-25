@@ -127,6 +127,81 @@ it("persists hidden projects across refreshes and database restarts and allows r
   await restarted.close();
 });
 
+it.each([true, false])("preserves hidden=%s when a remote check finishes", async (hidden) => {
+  const f = fixture();
+  const p = (await f.workspace.list()).projects[0];
+  f.workspace.update(p.id, { hidden: !hidden });
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const checking = vi.spyOn(f.io, "refreshRemote").mockImplementation(() => gate);
+  f.workspace.refresh();
+  await vi.waitFor(() => expect(checking).toHaveBeenCalled());
+  try {
+    expect(f.workspace.update(p.id, { hidden }).hidden).toBe(hidden);
+    expect((await f.workspace.list()).projects[0].hidden).toBe(hidden);
+    expect(() => f.workspace.update(p.id, { hidden: !hidden, returnToDefault: false })).toThrow(
+      "Wait for",
+    );
+  } finally {
+    release();
+    await f.workspace.close();
+  }
+  expect(f.store.projects(f.profile)[0].hidden).toBe(hidden);
+});
+
+it("preserves hiding while discovery finds an unavailable checkout", async () => {
+  const f = fixture();
+  const p = (await f.workspace.list()).projects[0];
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.spyOn(f.io, "discover").mockImplementation(async () => {
+    await gate;
+    return { repositories: [], errors: [] };
+  });
+  f.workspace.refresh();
+  try {
+    f.workspace.update(p.id, { hidden: true });
+  } finally {
+    release();
+    await f.workspace.close();
+  }
+  expect(f.store.projects(f.profile)[0]).toMatchObject({
+    hidden: true,
+    error: "Checkout unavailable. Check its directory.",
+  });
+});
+
+it.each([true, false])(
+  "preserves hiding during a detail check with success=%s",
+  async (success) => {
+    const f = fixture();
+    const p = (await f.workspace.list()).projects[0];
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inspect = f.io.inspect;
+    const checking = vi.spyOn(f.io, "inspect").mockImplementation(async (path) => {
+      await gate;
+      if (!success) throw new Error("Checkout unavailable");
+      return inspect(path);
+    });
+    const detail = f.workspace.detail(p.id);
+    await vi.waitFor(() => expect(checking).toHaveBeenCalled());
+    try {
+      f.workspace.update(p.id, { hidden: true });
+    } finally {
+      release();
+    }
+    expect((await detail).project.hidden).toBe(true);
+    expect(f.store.projects(f.profile)[0].hidden).toBe(true);
+  },
+);
+
 it("migrates existing project records to visible by default", async () => {
   const f = fixture(true);
   await f.workspace.list();

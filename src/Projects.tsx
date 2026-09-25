@@ -541,7 +541,7 @@ export function Projects({
               <input
                 type="checkbox"
                 checked={!!project?.hidden}
-                disabled={busy || workspace?.refreshing}
+                disabled={busy}
                 onChange={(event) => void changeProject({ hidden: event.target.checked })}
               />
               Hide project from dashboard

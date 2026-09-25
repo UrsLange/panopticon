@@ -39,6 +39,10 @@ export function createProjectWorkspace(deps: {
   let errors: string[] = [];
   const busy = new Set<string>();
   const pending = new Set<Promise<unknown>>();
+  function withLatestVisibility(project: Project): Project {
+    const current = deps.records.projects(project.profileRoot).find((p) => p.id === project.id);
+    return { ...project, hidden: current?.hidden ?? project.hidden };
+  }
   const snapshot = (): ProjectWorkspace => {
     const { profile, roots } = deps.scope();
     return {
@@ -63,7 +67,9 @@ export function createProjectWorkspace(deps: {
     const seen = new Set(queue.map((p) => p.id));
     for (const old of previous) {
       if (roots.includes(old.root) && !seen.has(old.id))
-        deps.records.saveProject({ ...old, error: "Checkout unavailable. Check its directory." });
+        deps.records.saveProject(
+          withLatestVisibility({ ...old, error: "Checkout unavailable. Check its directory." }),
+        );
     }
     await Promise.all(
       Array.from({ length: 4 }, async () => {
@@ -125,7 +131,7 @@ export function createProjectWorkspace(deps: {
             project.error = "Cannot inspect this checkout. Check repository access, then refresh.";
           }
           try {
-            deps.records.saveProject(project);
+            deps.records.saveProject(withLatestVisibility(project));
           } finally {
             busy.delete(project.id);
           }
@@ -159,15 +165,15 @@ export function createProjectWorkspace(deps: {
       await deps.io.validate(project);
       const git = await deps.io.inspect(project.path);
       const changes = await deps.io.changes(project.path);
-      const next = { ...project, git, error: null, checkedAt: deps.now() };
+      const next = withLatestVisibility({ ...project, git, error: null, checkedAt: deps.now() });
       if (!busy.has(id)) deps.records.saveProject(next);
       return { project: next, changes };
     } catch {
-      const next = {
+      const next = withLatestVisibility({
         ...project,
         git: null,
         error: "Checkout unavailable. Check its directory and refresh.",
-      };
+      });
       if (!busy.has(id)) deps.records.saveProject(next);
       return { project: next, changes: { files: [], diff: "", commits: [] } };
     }
@@ -223,7 +229,10 @@ export function createProjectWorkspace(deps: {
       const project = find(id);
       if (fields.document && !deps.documents().some((doc) => doc.path === fields.document))
         throw new ApplicationError("invalid", "Choose an existing profile document.");
-      if (active || busy.has(id))
+      if (
+        (active || busy.has(id)) &&
+        (fields.returnToDefault !== undefined || fields.document !== undefined)
+      )
         throw new ApplicationError(
           "conflict",
           "Wait for the current project refresh or action to finish.",

@@ -189,6 +189,9 @@ test("hides projects from both views and search, and restores them through Show 
   page,
 }) => {
   const { state } = await setup(page);
+  state.refreshing = true;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Checking…", exact: true })).toBeDisabled();
   await page.locator(".project-name").first().click();
   await page.getByLabel("Hide project from dashboard").click();
   await expect(page.getByLabel("Hide project from dashboard")).toBeChecked();
