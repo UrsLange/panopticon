@@ -57,6 +57,7 @@ export function App() {
   const [profileDocument, setProfileDocument] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  const [showRefined, setShowRefined] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const input = useRef<HTMLTextAreaElement>(null);
   const report = useCallback(
@@ -155,6 +156,11 @@ export function App() {
         (view === "inbox" && ["done", "archived"].includes(statusFilter)) ||
         !["done", "archived"].includes(item.status)) &&
       (view !== "inbox" || statusFilter === "all" || item.status === statusFilter) &&
+      (view !== "inbox" ||
+        showRefined ||
+        statusFilter !== "all" ||
+        showClosed ||
+        item.processing !== "ready") &&
       (view !== "notebook" || ["idea", "note"].includes(item.kind)) &&
       `${item.title} ${item.body} ${item.prompt} ${item.project}`
         .toLowerCase()
@@ -487,6 +493,16 @@ export function App() {
                     ))}
                   </select>
                 )}
+                {view === "inbox" && (
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={showRefined}
+                      onChange={(event) => setShowRefined(event.target.checked)}
+                    />
+                    Include refined
+                  </label>
+                )}
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -497,7 +513,7 @@ export function App() {
                 </label>
               </div>
               <div className="section-title">
-                <h2>{view === "inbox" ? "All captures" : "Your notebook"}</h2>
+                <h2>{view === "inbox" ? "Your captures" : "Your notebook"}</h2>
                 <span className="count">{filtered.length}</span>
               </div>
               {filtered.length ? (
@@ -582,6 +598,16 @@ export function App() {
             await reload();
             setNotice("Changes saved.");
             return updated;
+          }}
+          onMarkRefined={async () => {
+            await api(`/items/${selected.id}/refined`, "POST", { revision: selected.revision });
+            await reload();
+            setNotice(
+              selected.kind === "idea"
+                ? "Marked as refined. Find it in your notebook."
+                : "Marked as refined. Find it in Today.",
+            );
+            setSelected(null);
           }}
           onRetry={async (resetReferences = false) => {
             await api(`/items/${selected.id}/process`, "POST", {
@@ -699,6 +725,7 @@ function ItemEditor({
   onSave,
   onReload,
   onRetry,
+  onMarkRefined,
   onAddToProfile,
   onOpenProfile,
   profileAvailable,
@@ -712,6 +739,7 @@ function ItemEditor({
   onSave: (fields: ItemFields) => Promise<Item>;
   onReload: () => Promise<void>;
   onRetry: (resetReferences?: boolean) => Promise<void>;
+  onMarkRefined: () => Promise<void>;
   onAddToProfile: () => Promise<void>;
   onOpenProfile: (path: string) => void;
   profileAvailable: boolean;
@@ -1028,6 +1056,26 @@ function ItemEditor({
                 </button>
               </details>
             )}
+            {!closed &&
+              item.processing !== "ready" &&
+              ["idea", "commitment"].includes(item.kind) && (
+                <div>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy || running || dirty}
+                    onClick={() => void run("Marking as refined…", onMarkRefined)}
+                  >
+                    Mark as refined
+                  </button>
+                  <p>
+                    Accept the current brief and keep it in{" "}
+                    {item.kind === "idea" ? "your notebook" : "Today"}. This does not complete the
+                    task.
+                  </p>
+                  {dirty && <p>Save your changes before accepting this brief.</p>}
+                </div>
+              )}
             {!closed &&
               !running &&
               !failed &&

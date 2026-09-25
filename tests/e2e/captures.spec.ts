@@ -91,6 +91,17 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
       item = { ...item, refinement: "running", processing: "pending", processingError: null };
       return route.fulfill({ json: item });
     }
+    if (path.endsWith("/refined")) {
+      expect(route.request().postDataJSON()).toEqual({ revision: item.revision });
+      item = {
+        ...item,
+        refinement: "ready",
+        processing: "ready",
+        processingError: null,
+        revision: item.revision + 1,
+      };
+      return route.fulfill({ json: item });
+    }
     return route.fulfill({ status: 404, json: { error: `Unexpected test request: ${path}` } });
   });
   await page.clock.install();
@@ -115,6 +126,22 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
     },
   };
 }
+
+test("accepts the current brief and removes it from the refinement inbox", async ({ page }) => {
+  const state = await capturePage(page, {
+    refinement: "review",
+    processing: "review",
+    rationale: "Which Benjamin?",
+  });
+  await page.getByRole("button", { name: "Mark as refined", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.item.status).toBe("open");
+  expect(state.refinements).toBe(0);
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toHaveCount(0);
+  await page.getByLabel("Include refined", { exact: true }).check();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+});
 
 test("explains failures and previous clarification, and prevents duplicate refinement", async ({
   page,

@@ -159,6 +159,10 @@ export function createHttpApp(services: Application, port: number) {
       .parse(request.body ?? {});
     return captures.retry(request.params.id, input);
   });
+  app.post<{ Params: { id: string } }>("/api/items/:id/refined", async (request) => {
+    const { revision } = z.object({ revision: z.number().int().nonnegative() }).parse(request.body);
+    return captures.markRefined(request.params.id, revision);
+  });
   app.post<{ Params: { id: string } }>("/api/items/:id/profile", async (request) => {
     const { revision } = z.object({ revision: z.number().int().nonnegative() }).parse(request.body);
     return notes.add(request.params.id, revision);

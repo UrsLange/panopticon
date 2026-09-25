@@ -153,6 +153,23 @@ export function createCaptures({
     close: async () => {
       while (processing.size) await Promise.all(processing.values());
     },
+    markRefined(id: string, revision: number) {
+      const item = store.get(id);
+      if (!item) throw new ApplicationError("not-found", "Item not found");
+      if (processing.has(id))
+        throw new ApplicationError(
+          "conflict",
+          "Wait for refinement to finish before accepting this brief.",
+        );
+      if (!["idea", "commitment"].includes(item.kind))
+        throw new ApplicationError(
+          "invalid",
+          "Choose Task or Idea before marking this capture as refined.",
+        );
+      return captureState(
+        store.update(id, { processing: "ready", processingError: null }, revision),
+      );
+    },
     async retry(id: string, input: { resetReferences: boolean; revision?: number }) {
       const item = store.get(id);
       if (!item) throw new ApplicationError("not-found", "Item not found");

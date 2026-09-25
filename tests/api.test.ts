@@ -38,6 +38,59 @@ function setup(assistant: Assistant | null = null) {
 const headers = { host: "127.0.0.1:4317" };
 
 describe("local API", () => {
+  it.each(["idea", "commitment"] as const)(
+    "manually accepts a %s without invoking a model",
+    async (kind) => {
+      const { app, store } = setup();
+      const captured = store.capture("Discuss the plan with Benjamin");
+      const item = store.update(
+        captured.id,
+        {
+          kind,
+          processing: "review",
+          prompt: "Discuss the current plan.",
+          rationale: "Which Benjamin?",
+        },
+        captured.revision,
+      );
+      const accept = (revision: number) =>
+        app.inject({
+          method: "POST",
+          url: `/api/items/${item.id}/refined`,
+          headers,
+          payload: { revision },
+        });
+      expect((await accept(0)).statusCode).toBe(409);
+      const response = await accept(item.revision);
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        ...item,
+        revision: item.revision + 1,
+        updatedAt: expect.any(String),
+        processing: "ready",
+        refinement: "ready",
+      });
+      expect(store.history(item.id)[0].item.processing).toBe("review");
+    },
+  );
+
+  it("requires classification and preserves the separate note approval flow", async () => {
+    const { app, store } = setup();
+    let item = store.capture("A capture");
+    for (const kind of ["unclassified", "note"] as const) {
+      const current = store.update(item.id, { kind }, item.revision);
+      item = current;
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/items/${item.id}/refined`,
+        headers,
+        payload: { revision: current.revision },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(store.get(item.id)?.processing).toBe("pending");
+    }
+  });
+
   it("maintains project links on creation, edits, and profile loads", async () => {
     const { app, profile } = setup();
     profile.initialize();
