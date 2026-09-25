@@ -127,11 +127,12 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
   };
 }
 
-test("accepts the current brief and removes it from the refinement inbox", async ({ page }) => {
+test("accepts the current brief and keeps future tasks in Tasks", async ({ page }) => {
   const state = await capturePage(page, {
     refinement: "review",
     processing: "review",
     rationale: "Which Benjamin?",
+    dueDate: "2099-01-01",
   });
   await page.getByRole("button", { name: "Mark as refined", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -141,6 +142,27 @@ test("accepts the current brief and removes it from the refinement inbox", async
   await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toHaveCount(0);
   await page.getByLabel("Include refined", { exact: true }).check();
   await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+});
+
+test("moves a manually accepted idea into the notebook without refinement", async ({ page }) => {
+  const state = await capturePage(page, {
+    kind: "idea",
+    refinement: "review",
+    processing: "review",
+  });
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: /^Add Kiana to GitHub/ }).click();
+  await page.getByRole("button", { name: "Mark as refined", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+  expect(state.refinements).toBe(0);
+  expect(state.item.kind).toBe("idea");
 });
 
 test("explains failures and previous clarification, and prevents duplicate refinement", async ({

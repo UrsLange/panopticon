@@ -30,12 +30,13 @@ import { PanopticonMark, Wordmark } from "./Brand";
 import { useImplementation } from "./Implementation";
 import { Configuration, Enrichment } from "./Settings";
 
-type View = "today" | "inbox" | "notebook" | "ask" | "profile" | "settings";
+type View = "today" | "inbox" | "tasks" | "notebook" | "ask" | "profile" | "settings";
 type Daily = { date: string; due: Item[]; suggested: Item[]; waiting: Item[] };
 type Message = { id: number; role: string; content: string; sources: string[] };
 const navigation = [
   { id: "today", label: "Today", icon: Sun },
   { id: "inbox", label: "Inbox", icon: Inbox },
+  { id: "tasks", label: "Tasks", icon: Check },
   { id: "notebook", label: "Notebook", icon: BookOpen },
   { id: "ask", label: "Conversation", icon: MessageCircle },
   { id: "profile", label: "Your context", icon: FileText },
@@ -153,15 +154,20 @@ export function App() {
   const filtered = items.filter(
     (item) =>
       (showClosed ||
-        (view === "inbox" && ["done", "archived"].includes(statusFilter)) ||
+        (["inbox", "tasks"].includes(view) && ["done", "archived"].includes(statusFilter)) ||
         !["done", "archived"].includes(item.status)) &&
-      (view !== "inbox" || statusFilter === "all" || item.status === statusFilter) &&
+      (!["inbox", "tasks"].includes(view) ||
+        statusFilter === "all" ||
+        item.status === statusFilter) &&
+      (view !== "tasks" || (item.kind === "commitment" && item.processing === "ready")) &&
       (view !== "inbox" ||
         showRefined ||
         statusFilter !== "all" ||
         showClosed ||
         item.processing !== "ready") &&
-      (view !== "notebook" || ["idea", "note"].includes(item.kind)) &&
+      (view !== "notebook" ||
+        item.kind === "note" ||
+        (item.kind === "idea" && item.processing === "ready")) &&
       `${item.title} ${item.body} ${item.prompt} ${item.project}`
         .toLowerCase()
         .includes(query.toLowerCase()),
@@ -263,6 +269,7 @@ export function App() {
                     {
                       today: "A clearer day.",
                       inbox: "Out of your head.",
+                      tasks: "Ready for your next step.",
                       notebook: "Ideas and context worth keeping.",
                       ask: "Think it through.",
                       profile: "A little context goes a long way.",
@@ -274,7 +281,8 @@ export function App() {
                   {
                     {
                       today: "Your commitments, a few next steps, and space for what’s new.",
-                      inbox: "Everything you captured. Organize it when you have a moment.",
+                      inbox: "Captures that need refinement. Organize them when you have a moment.",
+                      tasks: "Your refined tasks, including upcoming deadlines and undated work.",
                       notebook: "Develop ideas and add pending notes to your profile.",
                       ask: "Build on your notes, your context, and what came before.",
                       profile: "An independent knowledge repository, shaped around you.",
@@ -467,7 +475,7 @@ export function App() {
             </div>
           )}
 
-          {(view === "inbox" || view === "notebook") && (
+          {(view === "inbox" || view === "tasks" || view === "notebook") && (
             <section className="collection">
               <div className="collection-toolbar">
                 <label className="search">
@@ -479,7 +487,7 @@ export function App() {
                     placeholder="Find a thought or commitment"
                   />
                 </label>
-                {view === "inbox" && (
+                {(view === "inbox" || view === "tasks") && (
                   <select
                     aria-label="Filter task status"
                     value={statusFilter}
@@ -513,7 +521,13 @@ export function App() {
                 </label>
               </div>
               <div className="section-title">
-                <h2>{view === "inbox" ? "Your captures" : "Your notebook"}</h2>
+                <h2>
+                  {view === "inbox"
+                    ? "Your captures"
+                    : view === "tasks"
+                      ? "Your tasks"
+                      : "Your notebook"}
+                </h2>
                 <span className="count">{filtered.length}</span>
               </div>
               {filtered.length ? (
@@ -605,7 +619,7 @@ export function App() {
             setNotice(
               selected.kind === "idea"
                 ? "Marked as refined. Find it in your notebook."
-                : "Marked as refined. Find it in Today.",
+                : "Marked as refined. Find it in Tasks.",
             );
             setSelected(null);
           }}
@@ -1127,7 +1141,7 @@ function ItemEditor({
                   </button>
                   <p>
                     Accept the current brief and keep it in{" "}
-                    {item.kind === "idea" ? "your notebook" : "Today"}. This does not complete the
+                    {item.kind === "idea" ? "your notebook" : "Tasks"}. This does not complete the
                     task.
                   </p>
                   {dirty && <p>Save your changes before accepting this brief.</p>}

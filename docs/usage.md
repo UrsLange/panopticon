@@ -8,15 +8,21 @@ Capture from any view. **Command–K** focuses the browser capture box; **Comman
 
 A capture is saved before model processing. The assistant classifies it and refines its description using available context. Failed processing retains the capture and can be retried.
 
-In **Inbox**, open an item to edit its kind, project, status, deadline, priority, or related item. **Description** holds the refined text; **Notes** retains the capture text with resolved aliases. Original wording and revision history remain available. Review items with unresolved questions or incomplete research.
+In **Inbox**, open an item to edit its kind, project, status, deadline, priority, or related item. **Prompt** holds the refined brief; **User input** retains your capture text. Original wording and revision history remain available. The default inbox shows captures awaiting refinement; **Include refined** also shows accepted captures.
+
+If the current brief is sufficient, choose **Mark as refined**. This accepts a task or idea without calling the model or marking the work done. Save edits first and wait for any running refinement to finish. Accepted tasks appear in **Tasks**, and accepted ideas appear in **Notebook**. Notes still use the separate **Add to profile** flow.
+
+When refinement needs more information, **Let’s clarify the brief** presents individual questions. Type answers and choose **Save answers** to return later, or **Refine with answers** to continue. Partial answers work: subsequent rounds use the previous brief and all saved answers, asking about remaining gaps. Answers survive reloads and failed refinement attempts; earlier rounds remain under **Previous answers**. Original capture text is preserved. Older captures with prose-only clarification need **Refine again** once to generate structured questions.
 
 ## Plan your day
 
 **Today** shows started commitments in **In progress**, including those without deadlines. **Due & overdue** includes every unfinished commitment due today or earlier, using your configured timezone. Suggested next actions are the three oldest undated commitments that have not started, with high priority first. The app does not infer deadlines.
 
+**Tasks** shows every refined commitment, including future deadlines and undated tasks beyond Today's suggestions. Search or filter by status, and enable **Include completed & archived** to browse finished work.
+
 Use **Mark in progress** for work you do outside T3 Code. **Mark waiting** pauses a task; **Resume** returns it to progress. Use **Mark done** when non-code work is complete. Code tasks are complete after their implementation is merged. Every commitment shows its status in the list, and Inbox can filter by status. The status selector also supports **Ready for review**, reopening, and archiving.
 
-**Notebook** holds ideas and pending profile notes. Discovering a repository does not create a commitment or assign it a priority.
+**Notebook** holds refined ideas and pending profile notes. Discovering a repository does not create a commitment or assign it a priority.
 
 ## Implement a commitment
 
