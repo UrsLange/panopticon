@@ -259,11 +259,59 @@ it("reads requested reviews and each security category without exposing secrets 
   expect(result.securityErrors).toHaveLength(1);
   expect(result.reviewError).toBeNull();
   expect(run.mock.calls.some(([args]) => args.includes("--paginate"))).toBe(true);
+  for (const [args] of run.mock.calls.filter(([args]) => args[0] === "api")) {
+    expect(args).not.toContain("--slurp");
+    expect(args[args.indexOf("--jq") + 1]).toMatch(/^\.\[\] \| /);
+  }
   const unavailable = await repositoryInsights("https://github.com/acme/app", async () => {
     throw new Error("No gh");
   });
   expect(unavailable.reviewError).toContain("GitHub CLI");
   expect(unavailable.securityErrors).toHaveLength(3);
+});
+
+it("reads findings across pages and accepts empty security results", async () => {
+  const findings = [1, 2].map((number) => ({
+    number,
+    title: `Dependency ${number}`,
+    url: `https://github.com/acme/app/security/dependabot/${number}`,
+    severity: "high",
+  }));
+  const result = await repositoryInsights("https://github.com/acme/app", async (args) => {
+    if (args[0] === "pr") return "[]";
+    if (args.some((value) => value.includes("/dependabot/")))
+      return `${findings.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+    return "";
+  });
+  expect(result.findings).toEqual(findings.map((entry) => ({ ...entry, source: "Dependabot" })));
+  expect(result.securityErrors).toEqual([]);
+});
+
+it("reserves security attention for findings while retaining coverage errors", async () => {
+  const f = fixture();
+  await f.workspace.list();
+  f.workspace.refresh();
+  await f.workspace.close();
+  const p = (await f.workspace.list()).projects[0];
+  p.insights = {
+    checkedAt: new Date().toISOString(),
+    reviews: [],
+    findings: [],
+    reviewError: null,
+    securityErrors: ["Dependabot unavailable"],
+  };
+  expect(projectAttention(p).security).toBeNull();
+  expect(projectNeedsAttention(p)).toBe(false);
+  p.insights.findings.push({
+    number: 1,
+    title: "Update dependency",
+    url: "https://github.com/acme/app/security/dependabot/1",
+    source: "Dependabot",
+    severity: "high",
+  });
+  expect(projectAttention(p).security).toBe("Review security findings");
+  expect(projectNeedsAttention(p)).toBe(true);
+  expect(p.insights.securityErrors).toEqual(["Dependabot unavailable"]);
 });
 
 it("removes remote credentials and supports SSH repository URLs", () => {

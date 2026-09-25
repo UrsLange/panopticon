@@ -111,11 +111,7 @@ export function projectAttention(project: Project): Record<ProjectAttention, str
       : insights?.reviewError
         ? "Check review access"
         : null,
-    security: insights?.findings.length
-      ? "Review security findings"
-      : insights?.securityErrors.length
-        ? "Check security coverage"
-        : null,
+    security: insights?.findings.length ? "Review security findings" : null,
   };
 }
 

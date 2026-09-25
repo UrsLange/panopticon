@@ -243,3 +243,20 @@ test("preserves unknown remote status and fits tiles on narrow screens", async (
     await page.getByRole("dialog").evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);
 });
+
+test("shows security actions only for findings and keeps coverage errors in details", async ({
+  page,
+}) => {
+  const { state } = await setup(page);
+  for (const p of state.projects) {
+    if (p.insights) p.insights.securityErrors = ["Dependabot unavailable"];
+  }
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.locator(".project-tile")).toHaveCount(8);
+  await expect(page.getByRole("link", { name: /Review security findings/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Check security coverage/ })).toHaveCount(0);
+  await page.getByLabel("Search all projects").fill("099");
+  await page.locator(".project-name").click();
+  await expect(page.getByText("Dependabot unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("No open findings in the checked security tools.")).toHaveCount(0);
+});

@@ -84,10 +84,9 @@ export async function repositoryInsights(
         const output = await run([
           "api",
           "--paginate",
-          "--slurp",
           `repos/${repo}/${endpoint}/alerts?state=open&per_page=100`,
           "--jq",
-          `.[][] | ${projection}`,
+          `.[] | ${projection}`,
         ]);
         const entries = output
           .trim()
