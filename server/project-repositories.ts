@@ -120,11 +120,15 @@ async function inspect(path: string): Promise<ProjectGit> {
     "sequencer",
   ].some((file) => existsSync(join(gitDir, file)));
   const files = changedFiles(status);
+  const remoteUrl = remote ? await optional(path, ["remote", "get-url", remote]) : null;
+  const pushUrl = remote ? await optional(path, ["remote", "get-url", "--push", remote]) : null;
   const hash = createHash("sha256")
     .update(status)
     .update(head ?? "")
     .update(branch ?? "")
-    .update(upstream ?? "");
+    .update(upstream ?? "")
+    .update(remoteUrl ?? "")
+    .update(pushUrl ?? "");
   hash.update(await git(path, ["diff", "--no-ext-diff", "--no-textconv", "--binary"]));
   hash.update(await git(path, ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--binary"]));
   for (const file of files) {
@@ -141,9 +145,7 @@ async function inspect(path: string): Promise<ProjectGit> {
     upstream,
     remote,
     defaultBranch,
-    repositoryUrl: repositoryWebUrl(
-      remote ? await optional(path, ["remote", "get-url", remote]) : null,
-    ),
+    repositoryUrl: repositoryWebUrl(remoteUrl),
     dirty: !!status,
     conflicts: files.some((file) => /U|AA|DD/.test(file.status)),
     operation,
