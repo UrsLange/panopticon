@@ -14,40 +14,46 @@ export function useImplementation(
   const [loading, setLoading] = useState(true);
   const suggested = useRef<string | null>(null);
   const request = useRef(0);
-  const refresh = useCallback(async () => {
-    const { id, kind } = item;
-    if (kind !== "commitment") return;
-    const current = ++request.current;
-    setLoading(true);
-    setError("");
-    await api<ImplementationOptions>(`/items/${id}/implementation`)
-      .then((next) => {
-        if (current === request.current) {
-          setOptions(next);
-          const previousSuggestion = suggested.current;
-          setRepositoryId((selected) =>
-            !selected ||
-            selected === previousSuggestion ||
-            !next.repositories.some((repo) => repo.id === selected)
-              ? (next.suggestedRepositoryId ?? "")
-              : selected,
-          );
-          suggested.current = next.suggestedRepositoryId;
-        }
-      })
-      .catch((reason) => {
-        if (current === request.current)
-          setError(
-            reason instanceof Error ? reason.message : "Could not load implementation settings.",
-          );
-      })
-      .finally(() => {
-        if (current === request.current) setLoading(false);
-      });
-  }, [item]);
+  const refresh = useCallback(
+    async (background = false) => {
+      const { id, kind } = item;
+      if (kind !== "commitment") return;
+      const current = ++request.current;
+      if (!background) {
+        setLoading(true);
+        setError("");
+      }
+      await api<ImplementationOptions>(`/items/${id}/implementation`)
+        .then((next) => {
+          if (current === request.current) {
+            setError("");
+            setOptions(next);
+            const previousSuggestion = suggested.current;
+            setRepositoryId((selected) =>
+              !selected ||
+              selected === previousSuggestion ||
+              !next.repositories.some((repo) => repo.id === selected)
+                ? (next.suggestedRepositoryId ?? "")
+                : selected,
+            );
+            suggested.current = next.suggestedRepositoryId;
+          }
+        })
+        .catch((reason) => {
+          if (current === request.current)
+            setError(
+              reason instanceof Error ? reason.message : "Could not load implementation settings.",
+            );
+        })
+        .finally(() => {
+          if (current === request.current) setLoading(false);
+        });
+    },
+    [item],
+  );
   useEffect(() => {
     if (!settingsSection) void refresh();
-    const timer = settingsSection ? undefined : setInterval(() => void refresh(), 5000);
+    const timer = settingsSection ? undefined : setInterval(() => void refresh(true), 5000);
     return () => {
       clearInterval(timer);
       request.current++;
@@ -84,7 +90,7 @@ export function useImplementation(
     error,
     loading,
     start,
-    refresh,
+    refresh: () => refresh(),
     checkProgress,
   };
 }

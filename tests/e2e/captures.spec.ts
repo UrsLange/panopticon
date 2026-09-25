@@ -127,6 +127,36 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
   };
 }
 
+test("keeps capture details stable while implementation readiness refreshes", async ({ page }) => {
+  const state = await capturePage(page);
+  const start = page.getByRole("button", { name: "Start in T3 Code", exact: true });
+  await expect(start).toBeEnabled();
+  const title = page.getByLabel("Title", { exact: true });
+  const before = await title.boundingBox();
+  let release = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route("**/api/items/capture-test/implementation", async (route) => {
+    requested = true;
+    await pending;
+    await route.fulfill({ json: { ...state.options, configured: false } });
+  });
+  await page.clock.fastForward(5000);
+  await expect.poll(() => requested).toBe(true);
+  try {
+    await expect(page.getByText("Checking T3 Code readiness…", { exact: true })).toHaveCount(0);
+    await expect(start).toBeEnabled();
+    expect(await title.boundingBox()).toEqual(before);
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("region", { name: "Capture status" })).toContainText(
+    "T3 Code is not connected.",
+  );
+});
+
 test("accepts the current brief and keeps future tasks in Tasks", async ({ page }) => {
   const state = await capturePage(page, {
     refinement: "review",
