@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import Fastify from "fastify";
 import { ZodError, z } from "zod";
 import { entraSchema } from "../shared/people.js";
+import { projectActionSchema } from "../shared/projects.js";
 import { clarificationAnswersSchema, itemPatchSchema } from "../shared/schema.js";
 import { t3ConnectionSchema } from "../shared/t3.js";
 import type { Application } from "./application/application.js";
@@ -104,6 +105,25 @@ export function createHttpApp(services: Application, port: number) {
     return reply.code(202).send(peopleSync.request());
   });
   app.get("/api/projects", async () => scanner.status());
+  app.get("/api/project-workspace", async () => services.projects.list());
+  app.post("/api/project-workspace/refresh", async (_request, reply) =>
+    reply.code(202).send(services.projects.refresh()),
+  );
+  app.get<{ Params: { id: string } }>("/api/project-workspace/:id", async (request) =>
+    services.projects.detail(request.params.id),
+  );
+  app.post<{ Params: { id: string } }>("/api/project-workspace/:id/actions", async (request) =>
+    services.projects.action(request.params.id, projectActionSchema.parse(request.body)),
+  );
+  app.patch<{ Params: { id: string } }>("/api/project-workspace/:id", async (request) => {
+    const input = z
+      .object({
+        returnToDefault: z.boolean().optional(),
+        document: z.string().nullable().optional(),
+      })
+      .parse(request.body);
+    return services.projects.update(request.params.id, input);
+  });
   app.put("/api/settings/projects", async (request) => {
     const { roots } = z
       .object({

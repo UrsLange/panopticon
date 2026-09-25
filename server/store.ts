@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { type PeopleContext, type Person, peopleColumns } from "../shared/people.js";
+import type { Project } from "../shared/projects.js";
 import type { Item, ItemFields } from "../shared/schema.js";
 import type { Implementation } from "../shared/t3.js";
 import {
@@ -39,6 +40,10 @@ export class Store {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
+      CREATE TABLE IF NOT EXISTS projects (
+        profileRoot TEXT NOT NULL, id TEXT NOT NULL, snapshot TEXT NOT NULL,
+        PRIMARY KEY (profileRoot, id)
+      );
       CREATE TABLE IF NOT EXISTS items (
         id TEXT PRIMARY KEY, original TEXT NOT NULL, title TEXT NOT NULL,
         body TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
@@ -118,6 +123,20 @@ export class Store {
         this.update(item.id, { status: "open", processing: "review" }, item.revision);
       }
     }
+  }
+
+  projects(profileRoot: string): Project[] {
+    return this.db
+      .prepare("SELECT snapshot FROM projects WHERE profileRoot = ? ORDER BY id")
+      .all(profileRoot)
+      .map((row) => JSON.parse(String(row.snapshot)) as Project);
+  }
+
+  saveProject(project: Project) {
+    this.db
+      .prepare(`INSERT INTO projects (profileRoot, id, snapshot) VALUES (?, ?, ?)
+      ON CONFLICT(profileRoot, id) DO UPDATE SET snapshot = excluded.snapshot`)
+      .run(project.profileRoot, project.id, JSON.stringify(project));
   }
 
   peopleSyncedAt(profilePath: string, tenantId: string): string | null {

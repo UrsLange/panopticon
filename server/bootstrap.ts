@@ -14,6 +14,10 @@ import type { PeopleSync } from "./application/people-sync.js";
 import { createPreferences } from "./application/preferences.js";
 import { createProfileService } from "./application/profile.js";
 import { createProfileUpdates } from "./application/profile-updates.js";
+import {
+  createProjectWorkspace,
+  type ProjectWorkspaceIO,
+} from "./application/project-workspace.js";
 import type { ProjectScanner } from "./application/projects.js";
 import { createT3, type T3Client } from "./application/t3.js";
 import { createAssistant } from "./assistant.js";
@@ -23,6 +27,7 @@ import { chooseDirectory } from "./directory-picker.js";
 import { createPeopleSync, detectEntraTenant } from "./people.js";
 import { Profile } from "./profile.js";
 import { profileAdapter } from "./profile-adapter.js";
+import { createProjectWorkspaceIO } from "./project-repositories.js";
 import { createProjectScanner } from "./projects.js";
 import { createResearch } from "./research-tools.js";
 import { SettingsStore, settingsModels } from "./settings.js";
@@ -30,6 +35,7 @@ import { Store } from "./store.js";
 import { createT3Client, implementationWorkspace, readLocalMerge } from "./t3.js";
 
 export type AppOptions = {
+  projectIO?: ProjectWorkspaceIO;
   chooseDirectory?: () => Promise<string | null>;
   t3Client?: T3Client;
   store?: Store;
@@ -109,6 +115,13 @@ export function createApplication(options: AppOptions = {}) {
       resolveImplementationRepository(item, repositories(), profileNotes.documents()),
   });
   const profiles = createProfileService(() => profileNotes);
+  const projects = createProjectWorkspace({
+    records: store,
+    scope: () => ({ profile: profileNotes.root, roots: settings.projectRoots }),
+    documents: () => profileNotes.documents(),
+    io: options.projectIO ?? createProjectWorkspaceIO(),
+    now: () => now().toISOString(),
+  });
   const conversation = createConversation({ store, getAssistant, context, searchSessions });
   const t3 = createT3({
     records: store,
@@ -158,6 +171,7 @@ export function createApplication(options: AppOptions = {}) {
     chooseDirectory: options.chooseDirectory ?? chooseDirectory,
   });
   return {
+    projects,
     t3,
     notes,
     captures,
@@ -167,6 +181,7 @@ export function createApplication(options: AppOptions = {}) {
     scanner,
     peopleSync,
     async close() {
+      await projects.close();
       await t3.close();
       await peopleSync.close();
       await scanner.close();

@@ -1,0 +1,275 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, assert, expect, it, vi } from "vitest";
+import { createProjectWorkspace } from "../server/application/project-workspace.js";
+import { createProjectWorkspaceIO, repositoryWebUrl } from "../server/project-repositories.js";
+import { repositoryInsights } from "../server/repository-insights.js";
+import { Store } from "../server/store.js";
+import { type Project, projectAttention, projectNeedsAttention } from "../shared/projects.js";
+
+const roots: string[] = [];
+const stores: Store[] = [];
+function version(project: Project) {
+  assert(project.git);
+  return project.git.version;
+}
+const identity = {
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "test@example.test",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "test@example.test",
+};
+function git(path: string, ...args: string[]) {
+  return execFileSync("git", ["-C", path, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, ...identity },
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+}
+function fixture() {
+  for (const [key, value] of Object.entries(identity)) vi.stubEnv(key, value);
+  const root = mkdtempSync(join(tmpdir(), "project-workspace-"));
+  roots.push(root);
+  const directory = join(root, "projects");
+  const profile = join(root, "profile");
+  mkdirSync(directory);
+  mkdirSync(profile);
+  const remote = join(root, "remote.git");
+  git(root, "init", "--bare", "--initial-branch=main", remote);
+  const repo = join(directory, "example");
+  git(root, "clone", remote, repo);
+  writeFileSync(join(repo, "README.md"), "initial\n");
+  git(repo, "add", "README.md");
+  git(repo, "commit", "-m", "test: initial");
+  git(repo, "push", "-u", "origin", "main");
+  const io = createProjectWorkspaceIO();
+  const store = new Store(":memory:");
+  stores.push(store);
+  let selectedRoots = [directory];
+  let clock = Date.now();
+  const workspace = createProjectWorkspace({
+    records: store,
+    scope: () => ({ profile, roots: selectedRoots }),
+    documents: () => [],
+    io,
+    now: () => new Date(clock).toISOString(),
+  });
+  return {
+    root,
+    directory,
+    profile,
+    remote,
+    repo,
+    io,
+    store,
+    workspace,
+    removeRoot: () => {
+      selectedRoots = [];
+    },
+    tick: () => {
+      clock += 16000;
+    },
+  };
+}
+afterEach(() => {
+  for (const store of stores.splice(0)) store.db.close();
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  vi.unstubAllEnvs();
+});
+
+it("discovers independent projects, skips symlinks and nested repositories, and persists preferences", async () => {
+  const f = fixture();
+  symlinkSync(f.repo, join(f.directory, "alias"));
+  mkdirSync(join(f.directory, "container"));
+  git(f.root, "init", join(f.directory, "container", "nested"));
+  const state = await f.workspace.list();
+  expect(state.projects).toHaveLength(1);
+  const project = state.projects[0];
+  expect(project).toMatchObject({
+    name: "example",
+    document: null,
+    git: { branch: "main", dirty: false },
+  });
+  f.workspace.update(project.id, { returnToDefault: false });
+  expect(f.store.projects(f.profile)[0].returnToDefault).toBe(false);
+  expect(f.store.projects("/another-profile")).toEqual([]);
+  f.removeRoot();
+  expect((await f.workspace.list()).projects).toEqual([]);
+  await expect(f.workspace.detail(project.id)).rejects.toThrow("not found");
+});
+
+it("tracks incoming commits and fast-forward pulls without touching local work", async () => {
+  const f = fixture();
+  const other = join(f.root, "other");
+  git(f.root, "clone", f.remote, other);
+  writeFileSync(join(other, "remote.txt"), "incoming");
+  git(other, "add", "remote.txt");
+  git(other, "commit", "-m", "test: remote");
+  git(other, "push");
+  await f.workspace.list();
+  f.workspace.refresh();
+  await f.workspace.close();
+  const p = (await f.workspace.list()).projects[0];
+  expect(p.git?.behind).toBe(1);
+  expect(p.remoteCheckedAt).toBeTruthy();
+  expect(projectAttention(p).incoming).toBe("Pull updates");
+  const result = await f.workspace.action(p.id, { action: "pull", version: version(p) });
+  expect(result.project.git?.behind).toBe(0);
+  expect(readFileSync(join(f.repo, "remote.txt"), "utf8")).toBe("incoming");
+  expect(projectNeedsAttention(result.project)).toBe(false);
+});
+
+it("rejects stale actions and commits selected files without including unrelated staged work", async () => {
+  const f = fixture();
+  const p = (await f.workspace.list()).projects[0];
+  writeFileSync(join(f.repo, "chosen.txt"), "chosen");
+  writeFileSync(join(f.repo, "other.txt"), "other");
+  git(f.repo, "add", "other.txt");
+  await expect(
+    f.workspace.action(p.id, {
+      action: "commit",
+      version: version(p),
+      files: ["chosen.txt"],
+      message: "feat: chosen",
+    }),
+  ).rejects.toThrow("checkout changed");
+  const before = await f.workspace.detail(p.id);
+  const result = await f.workspace.action(p.id, {
+    action: "commit",
+    version: version(before.project),
+    files: ["chosen.txt"],
+    message: "feat: chosen",
+  });
+  expect(git(f.repo, "show", "--format=", "--name-only", "HEAD")).toBe("chosen.txt");
+  expect(git(f.repo, "diff", "--cached", "--name-only")).toBe("other.txt");
+  expect(result.project.git?.ahead).toBe(1);
+});
+
+it("respects commit hooks and does not amend a previous commit after failure", async () => {
+  const f = fixture();
+  const p = (await f.workspace.list()).projects[0];
+  const head = git(f.repo, "rev-parse", "HEAD");
+  writeFileSync(join(f.repo, "README.md"), "edited");
+  writeFileSync(join(f.repo, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 1\n", {
+    mode: 0o755,
+  });
+  const detail = await f.workspace.detail(p.id);
+  await expect(
+    f.workspace.action(p.id, {
+      action: "commit",
+      version: version(detail.project),
+      message: "fix: edit",
+      files: ["README.md"],
+    }),
+  ).rejects.toThrow("Git could not complete");
+  expect(git(f.repo, "rev-parse", "HEAD")).toBe(head);
+  expect((await f.workspace.detail(p.id)).project.git?.dirty).toBe(true);
+});
+
+it("publishes commits and switches to the default branch only after work is safe", async () => {
+  const f = fixture();
+  git(f.repo, "switch", "-c", "feature");
+  git(f.repo, "push", "-u", "origin", "feature");
+  const p = (await f.workspace.list()).projects[0];
+  writeFileSync(join(f.repo, "work.txt"), "work");
+  git(f.repo, "add", "work.txt");
+  git(f.repo, "commit", "-m", "feat: work");
+  let detail = await f.workspace.detail(p.id);
+  await expect(
+    f.workspace.action(p.id, { action: "switch", version: version(detail.project) }),
+  ).rejects.toThrow("Publish this branch");
+  detail = await f.workspace.action(p.id, { action: "push", version: version(detail.project) });
+  expect(detail.project.git?.ahead).toBe(0);
+  detail = await f.workspace.action(p.id, {
+    action: "switch",
+    version: version(detail.project),
+  });
+  expect(detail.project.git?.branch).toBe("main");
+  expect(git(f.repo, "branch", "--list", "feature")).toBe("feature");
+});
+
+it("refuses to pull dirty or diverged checkouts and exposes an explicit merge", async () => {
+  const f = fixture();
+  const other = join(f.root, "other");
+  git(f.root, "clone", f.remote, other);
+  writeFileSync(join(other, "remote.txt"), "remote");
+  git(other, "add", "remote.txt");
+  git(other, "commit", "-m", "feat: remote");
+  git(other, "push");
+  const p = (await f.workspace.list()).projects[0];
+  writeFileSync(join(f.repo, "local.txt"), "local");
+  let detail = await f.workspace.detail(p.id);
+  await expect(
+    f.workspace.action(p.id, { action: "pull", version: version(detail.project) }),
+  ).rejects.toThrow("Commit your local");
+  git(f.repo, "add", "local.txt");
+  git(f.repo, "commit", "-m", "feat: local");
+  detail = await f.workspace.detail(p.id);
+  await expect(
+    f.workspace.action(p.id, { action: "pull", version: version(detail.project) }),
+  ).rejects.toThrow("diverged");
+  detail = await f.workspace.detail(p.id);
+  detail = await f.workspace.action(p.id, {
+    action: "merge",
+    version: version(detail.project),
+  });
+  expect(detail.project.git).toMatchObject({ behind: 0, dirty: false });
+  expect(git(f.repo, "rev-list", "--parents", "-n", "1", "HEAD").split(" ")).toHaveLength(3);
+});
+
+it("reports unreadable roots and does not operate on replaced symlink checkouts", async () => {
+  const f = fixture();
+  const p = (await f.workspace.list()).projects[0];
+  const result = await f.io.discover([join(f.root, "absent")], f.profile);
+  expect(result.errors).toHaveLength(1);
+  const alias = join(f.directory, "alias");
+  symlinkSync(f.repo, alias);
+  await expect(f.io.validate({ ...p, name: "alias", path: alias })).rejects.toThrow(
+    "configured checkout",
+  );
+});
+
+it("reads requested reviews and each security category without exposing secrets or invalid links", async () => {
+  const run = vi.fn(async (args: string[]) => {
+    if (args[0] === "pr")
+      return JSON.stringify([
+        { number: 2, title: "Review me", url: "https://github.com/acme/app/pull/2" },
+      ]);
+    if (args.some((value) => value.includes("/dependabot/")))
+      return JSON.stringify({
+        number: 1,
+        title: "Dependency",
+        url: "https://github.com/acme/app/security/dependabot/1",
+        severity: "high",
+      });
+    if (args.some((value) => value.includes("/secret-scanning/")))
+      return JSON.stringify({
+        number: 3,
+        title: "Token",
+        url: "https://evil.test/secret",
+        severity: "high",
+      });
+    throw new Error("Forbidden");
+  });
+  const result = await repositoryInsights("https://github.com/acme/app", run);
+  expect(result.reviews).toHaveLength(1);
+  expect(result.findings).toHaveLength(1);
+  expect(result.securityErrors).toHaveLength(1);
+  expect(result.reviewError).toBeNull();
+  expect(run.mock.calls.some(([args]) => args.includes("--paginate"))).toBe(true);
+  const unavailable = await repositoryInsights("https://github.com/acme/app", async () => {
+    throw new Error("No gh");
+  });
+  expect(unavailable.reviewError).toContain("GitHub CLI");
+  expect(unavailable.securityErrors).toHaveLength(3);
+});
+
+it("removes remote credentials and supports SSH repository URLs", () => {
+  expect(repositoryWebUrl("https://user:secret@github.com/acme/app.git")).toBe(
+    "https://github.com/acme/app",
+  );
+  expect(repositoryWebUrl("git@github.com:acme/app.git")).toBe("https://github.com/acme/app");
+  expect(repositoryWebUrl("/local/repo.git")).toBeNull();
+});

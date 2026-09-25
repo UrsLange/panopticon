@@ -1,0 +1,121 @@
+import { z } from "zod";
+
+export type ProjectGit = {
+  branch: string | null;
+  head: string;
+  upstream: string | null;
+  remote: string | null;
+  repositoryUrl: string | null;
+  defaultBranch: string | null;
+  dirty: boolean;
+  conflicts: boolean;
+  operation: boolean;
+  ahead: number;
+  behind: number;
+  version: string;
+};
+
+export type RepositoryLink = { title: string; url: string; number: number };
+export type SecurityFinding = RepositoryLink & {
+  source: "Dependabot" | "Code scanning" | "Secret scanning";
+  severity: string;
+};
+export type ProjectInsights = {
+  checkedAt: string;
+  reviews: RepositoryLink[];
+  findings: SecurityFinding[];
+  reviewError: string | null;
+  securityErrors: string[];
+};
+
+export type Project = {
+  id: string;
+  profileRoot: string;
+  root: string;
+  path: string;
+  name: string;
+  document: string | null;
+  returnToDefault: boolean;
+  git: ProjectGit | null;
+  insights: ProjectInsights | null;
+  checkedAt: string | null;
+  remoteCheckedAt: string | null;
+  error: string | null;
+  remoteError: string | null;
+};
+
+export type ProjectWorkspace = {
+  projects: Project[];
+  refreshing: boolean;
+  errors: string[];
+};
+export type ProjectChanges = {
+  files: { path: string; status: string }[];
+  diff: string;
+  commits: { direction: "incoming" | "outgoing"; hash: string; subject: string }[];
+};
+export type ProjectDetail = { project: Project; changes: ProjectChanges };
+
+export const projectActionSchema = z.object({
+  action: z.enum(["pull", "push", "commit", "switch", "merge"]),
+  version: z.string().min(1),
+  message: z.string().trim().min(1).max(2000).optional(),
+  files: z.array(z.string().min(1).max(4096)).min(1).max(5000).optional(),
+});
+export type ProjectAction = z.infer<typeof projectActionSchema>;
+export type ProjectAttention = "local" | "incoming" | "branch" | "reviews" | "security";
+export const projectAttentionOrder: ProjectAttention[] = [
+  "local",
+  "incoming",
+  "branch",
+  "reviews",
+  "security",
+];
+
+export function projectAttention(project: Project): Record<ProjectAttention, string | null> {
+  const { git, insights } = project;
+  return {
+    local: project.error
+      ? project.error
+      : git?.conflicts || git?.operation
+        ? "Resolve the Git operation"
+        : git?.dirty
+          ? "Review and commit local changes"
+          : git?.ahead
+            ? "Push local commits"
+            : null,
+    incoming: project.remoteError
+      ? "Retry remote check"
+      : git?.remote && !project.remoteCheckedAt
+        ? "Check remote changes"
+        : git?.behind
+          ? git.dirty
+            ? "Save local changes before pulling"
+            : git.ahead
+              ? "Integrate diverged changes"
+              : "Pull updates"
+          : git?.remote && !git.upstream
+            ? "Set up branch tracking"
+            : null,
+    branch:
+      project.returnToDefault && git && git.branch !== git.defaultBranch
+        ? git.defaultBranch
+          ? `Return to ${git.defaultBranch}`
+          : "Identify the default branch"
+        : null,
+    reviews: insights?.reviews.length
+      ? "Open requested reviews"
+      : insights?.reviewError
+        ? "Check review access"
+        : null,
+    security: insights?.findings.length
+      ? "Review security findings"
+      : insights?.securityErrors.length
+        ? "Check security coverage"
+        : null,
+  };
+}
+
+export function projectNeedsAttention(project: Project) {
+  return Object.values(projectAttention(project)).some(Boolean);
+}
