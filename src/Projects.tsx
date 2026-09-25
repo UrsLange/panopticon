@@ -15,7 +15,7 @@ import {
   Workflow,
   X,
 } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   type Project,
   type ProjectAction,
@@ -133,9 +133,11 @@ export function Projects({
   useEffect(() => {
     if (action && !modal.current?.open) modal.current?.showModal();
   }, [action]);
-  useEffect(() => {
-    if (detail && !detailsModal.current?.open) detailsModal.current?.showModal();
-  }, [detail]);
+  useLayoutEffect(() => {
+    if (!detail?.project.id || !detailsModal.current) return;
+    if (!detailsModal.current.open) detailsModal.current.showModal();
+    detailsModal.current.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [detail?.project.id]);
   const closeDetails = () => {
     if (busy) return;
     if (profileDirtyRef.current && !window.confirm("Discard your unsaved profile edits?")) return;

@@ -359,6 +359,33 @@ test("preserves the project grid, filters, scroll position, and focus when closi
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
 });
 
+test("starts each project's details at the top without resetting scroll on a saved change", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.setViewportSize({ width: 800, height: 600 });
+  const dialog = page.getByRole("dialog");
+  for (const name of ["Project 001", "Project 002", "Project 001"]) {
+    await page.getByRole("button", { name, exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await expect.poll(() => dialog.evaluate((node) => node.scrollTop)).toBe(0);
+    const reminder = dialog.getByLabel("Remind me to return to the default branch");
+    await reminder.evaluate((node) => node.scrollIntoView({ block: "center" }));
+    const position = await dialog.evaluate((node) => node.scrollTop);
+    expect(position).toBeGreaterThan(0);
+    const wasChecked = await reminder.isChecked();
+    await reminder.click();
+    await expect(reminder).toBeChecked({ checked: !wasChecked });
+    expect(await dialog.evaluate((node) => node.scrollTop)).toBe(position);
+    await dialog.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+    });
+    await expect.poll(() => dialog.evaluate((node) => node.scrollTop)).toBeGreaterThan(100);
+    await page.getByRole("button", { name: "Close project details" }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+});
+
 test("protects unsaved profile edits when dismissing project details", async ({ page }) => {
   await setup(page);
   await page.locator(".project-name").first().click();
