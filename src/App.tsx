@@ -6,6 +6,7 @@ import {
   Circle,
   Command,
   FileText,
+  FolderGit2,
   Inbox,
   ListTodo,
   LoaderCircle,
@@ -31,9 +32,10 @@ import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
 import { CompletionReviews } from "./CompletionReviews";
 import { useImplementation } from "./Implementation";
+import { Projects } from "./Projects";
 import { Configuration, Enrichment } from "./Settings";
 
-type View = "today" | "inbox" | "tasks" | "notebook" | "ask" | "profile" | "settings";
+type View = "today" | "inbox" | "tasks" | "notebook" | "ask" | "profile" | "projects" | "settings";
 type Notice = {
   text: string;
   destination?: "tasks" | "notebook";
@@ -48,6 +50,7 @@ const navigation = [
   { id: "notebook", label: "Notebook", icon: BookOpen },
   { id: "ask", label: "Conversation", icon: MessageCircle },
   { id: "profile", label: "Your context", icon: FileText },
+  { id: "projects", label: "Projects", icon: FolderGit2 },
   { id: "settings", label: "Settings", icon: Settings2 },
 ] as const;
 
@@ -348,7 +351,7 @@ export function App() {
               </button>
             </div>
           )}
-          {view !== "settings" && (
+          {view !== "settings" && view !== "projects" && (
             <div className="page-heading">
               <div>
                 <div className="eyebrow">
@@ -363,6 +366,7 @@ export function App() {
                       notebook: "Ideas worth keeping.",
                       ask: "Think it through.",
                       profile: "A little context goes a long way.",
+                      projects: "Projects",
                       settings: "Settings",
                     }[view]
                   }
@@ -378,6 +382,7 @@ export function App() {
                       notebook: "Your refined ideas, ready to revisit and develop.",
                       ask: "Build on your notes, your context, and what came before.",
                       profile: "An independent knowledge repository, shaped around you.",
+                      projects: "",
                       settings: "",
                     }[view]
                   }
@@ -391,7 +396,7 @@ export function App() {
             </div>
           )}
 
-          {view !== "settings" && (
+          {view !== "settings" && view !== "projects" && (
             <form
               className="capture"
               onSubmit={(event) => {
@@ -745,6 +750,16 @@ export function App() {
               report={report}
             />
           )}
+          <div hidden={view !== "projects"}>
+            <Projects
+              key={settings.profilePath}
+              active={view === "projects"}
+              settings={settings}
+              documents={documents}
+              onProfileSave={reloadProfile}
+              onSettings={() => setView("settings")}
+            />
+          </div>
           <footer>Keep the thought. Find the next step.</footer>
         </div>
       </main>

@@ -1,0 +1,433 @@
+.projects-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+.projects-heading > div {
+  min-width: 0;
+}
+.projects-heading h1 {
+  font-size: 30px;
+  overflow-wrap: anywhere;
+}
+.projects-heading p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.projects-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 16px;
+}
+.projects-toolbar,
+.projects-searches,
+.projects-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.projects-toolbar {
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+.projects-filters {
+  gap: 4px;
+}
+.projects-filters button {
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.projects-filters button[aria-pressed="true"] {
+  background: var(--raised);
+  color: var(--text);
+}
+.projects-filters span {
+  color: var(--accent);
+  margin-left: 5px;
+  font-size: 12px;
+}
+.projects-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.projects-search input {
+  width: 150px;
+  min-width: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+}
+.projects-searches select {
+  max-width: 220px;
+  padding: 9px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+}
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+  gap: 14px;
+}
+.project-tile {
+  height: 146px;
+  padding: 18px 16px 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  min-width: 0;
+}
+.project-name {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-family: "Manrope Variable", sans-serif;
+  font-size: 16px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-name:hover {
+  color: var(--accent);
+}
+.project-branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  height: 18px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.project-branch svg {
+  flex-shrink: 0;
+}
+.project-branch span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.project-icon-slots {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 20px;
+}
+.project-action-tip {
+  position: relative;
+  min-width: 0;
+}
+.project-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  text-decoration: none;
+}
+.project-slot:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.project-slot.project-risk {
+  color: var(--danger);
+  background: var(--danger-surface);
+}
+.project-slot-empty {
+  height: 32px;
+}
+.project-tooltip {
+  display: none;
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 180px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--sidebar);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 4px 18px #0003;
+  pointer-events: none;
+}
+.project-action-tip:hover .project-tooltip,
+.project-action-tip:focus-within .project-tooltip {
+  display: block;
+}
+.project-icon-guide {
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.project-icon-guide summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.project-icon-guide > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 12px;
+}
+.project-icon-guide span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.project-icon-guide p {
+  margin-top: 10px;
+}
+.projects-empty {
+  padding: 60px 20px;
+  color: var(--muted);
+  text-align: center;
+}
+.projects-empty h2 {
+  font-size: 20px;
+  color: var(--text);
+  margin: 14px 0 8px;
+}
+.projects-empty p {
+  margin-bottom: 18px;
+}
+.project-notice {
+  color: var(--success);
+  margin-bottom: 18px;
+}
+.project-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.project-info-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 24px;
+  min-width: 0;
+}
+.project-info-panel h2 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 18px;
+}
+.project-info-panel h3 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+.project-info-panel .section-title {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.project-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 22px 0;
+}
+.project-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.project-facts dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.project-info-panel .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.project-inline-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+.project-inline-actions button {
+  font-size: 12px;
+}
+.project-git-controls {
+  margin-top: 18px;
+}
+.project-git-controls .warning-text {
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.project-file-list {
+  max-height: 270px;
+  overflow: auto;
+}
+.project-file {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.project-file span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.project-file code {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.project-diff {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.project-diff summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.project-diff pre {
+  max-height: 350px;
+  overflow: auto;
+  font-size: 11px;
+  background: var(--background);
+  padding: 12px;
+  border-radius: 6px;
+  margin: 10px 0;
+}
+.project-commits > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0;
+  font-size: 12px;
+}
+.project-commits > div > span:last-child {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.project-commits code {
+  font-size: 11px;
+}
+.project-repository-information h3 {
+  font-size: 14px;
+  margin: 18px 0 10px;
+}
+.project-repository-information a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  text-decoration: none;
+}
+.project-repository-information a:hover {
+  color: var(--accent);
+}
+.project-repository-information a span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.project-repository-information small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.project-repository-information .warning-text {
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 8px 0;
+}
+.project-profile-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 18px 0;
+}
+.project-action-dialog {
+  width: min(760px, 94vw);
+}
+@media (max-width: 1000px) {
+  .project-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .projects-heading {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .projects-heading h1 {
+    font-size: 26px;
+  }
+  .projects-searches,
+  .projects-search {
+    width: 100%;
+  }
+  .projects-search input {
+    width: 100%;
+  }
+  .projects-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(208px, 100%), 1fr));
+  }
+  .project-info-panel {
+    padding: 18px;
+  }
+  .project-facts {
+    grid-template-columns: 1fr;
+  }
+  .project-action-dialog {
+    padding: 20px;
+  }
+}
+@media (pointer: coarse) {
+  .projects-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr));
+  }
+  .project-slot {
+    height: 44px;
+  }
+  .project-tile {
+    height: 162px;
+  }
+}

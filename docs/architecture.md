@@ -57,6 +57,7 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 | --- | --- |
 | Independent profile Git repository | `~/.local/share/personal-assistant-profile` |
 | Captures, revisions, conversations, people, implementation handoffs | `~/.local/share/personal-assistant/assistant.sqlite` |
+| Project inventory, profile-page assignments, checkout status, remote findings | `projects` table in the same SQLite database, scoped by profile |
 | Credentials and configuration | `~/.local/share/personal-assistant/settings.json` |
 | Discovery and sync status | `project-scan.json` and `people-sync.json` in the data directory |
 

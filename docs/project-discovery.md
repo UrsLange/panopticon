@@ -4,6 +4,33 @@
 
 Project discovery turns local repositories into profile documents describing their purpose, architecture, technologies, development commands, and source references. It does not execute project commands or create commitments.
 
+## Projects workspace
+
+**Projects** in the main navigation is the operational view of your configured directories. It discovers checkouts independently of AI description scans and stores first-class project records in SQLite, scoped to the selected profile. Each local checkout, including a worktree, has its own project identity. Existing generated descriptions are linked through their repository identity; assigning a different profile page manually preserves that choice.
+
+The default **Attention** view shows projects with local changes, unpublished commits or branches, incoming commits, a reminder to return to the default branch, requested reviews, security findings, or unavailable status information. **All projects**, directory filtering, and search provide access to the complete inventory. Search always includes projects outside the Attention filter.
+
+Tiles have five fixed action positions: local work, incoming changes, default branch, reviews, and security. Clean checkouts do not show healthy-state labels. Names are truncated visually, with the full name and path available on hover and in details. The responsive grid keeps tile dimensions consistent and displays several columns on desktop.
+
+Click a project name for one detail page containing checkout metadata, files and diffs, incoming/outgoing commits, remote findings, and the linked profile description. Descriptions can be edited inline with stale-document protection; these profile edits are not committed automatically. Returning to the repository's default branch is an individual project preference, initially enabled. The default is read from the remote HEAD when available, with local `main`/`master` detection before the first remote check.
+
+### Git actions
+
+- A clean checkout with incoming changes offers a direct fast-forward pull. Dirty checkouts open the local-change form instead. Diverged branches require an explicit merge, and conflicts must be resolved in the editor.
+- Local changes open file selection and a commit message in one dialog. **Commit & push** is available when no known incoming commits block publishing. Unselected staged files stay out of the commit; hooks and signing remain enabled. New untracked file contents should be inspected in the editor before selection.
+- Publishing a branch without an upstream explicitly creates or updates that branch on the selected remote and establishes tracking. Pushes are never forced. A failed push after a successful commit leaves the commit intact and reports that publishing remains outstanding.
+- Switching back preserves all branches and requires local work to be saved and, when a remote exists, published. If the default branch is already checked out in another worktree, open that checkout instead or disable the reminder for this worktree.
+
+Actions recheck checkout state and reject stale requests. Git operations are serialized per checkout. The application does not discard files, reset branches, automatically stash edits, delete branches, or skip hooks. A merge failure can leave a normal in-progress Git merge; resolve it in the editor and refresh.
+
+### Remote checks and GitHub
+
+The workspace reads local status independently of profile scans. On opening Projects, every ten minutes while it remains active, and on **Refresh**, it checks remotes using your existing Git credentials. Remote checks run in the background with bounded concurrency. Status records distinguish never-checked and failed checks from successful results; the details page shows timestamps.
+
+GitHub.com repositories use the local **GitHub CLI** (`gh`) to load pull requests requesting your review and open Dependabot, code-scanning, and secret-scanning alerts. Install the CLI and run `gh auth login` if necessary. The application uses existing permissions and does not request new scopes automatically. Disabled tools, insufficient permissions, missing credentials, and unsupported hosts are reported as unavailable, never as zero findings. Only alert titles, severity, source, and links are retained; secret values are not returned to the application.
+
+A single review or finding opens directly at GitHub. Multiple items open a compact link list. Opening a link does not mark it resolved; a subsequent remote check updates the result. Other Git hosts still support local Git actions, with remote insights available through the repository link.
+
 ## Configure
 
 1. Configure and validate the endpoint, API key, and model in **Settings**. Discovery uses this same connection and exact model ID, with no separate agent installation or credentials. The model must support the Responses API, tool calling, and structured JSON outputs.
