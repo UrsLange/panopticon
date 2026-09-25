@@ -18,12 +18,6 @@
   margin-top: 8px;
   overflow-wrap: anywhere;
 }
-.projects-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 16px;
-}
 .projects-toolbar,
 .projects-searches,
 .projects-filters {
@@ -233,6 +227,39 @@
   gap: 20px;
   align-items: start;
 }
+.editor-modal.project-details-dialog {
+  width: min(1100px, 94vw);
+  overscroll-behavior: contain;
+}
+.project-details-dialog .modal-top {
+  align-items: flex-start;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+.project-details-dialog :where(.modal-top h2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.project-details-dialog :where(.modal-top button) {
+  flex-shrink: 0;
+}
+.project-details-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.project-details-meta p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+body:has(.project-details-dialog[open]) {
+  overflow: hidden;
+}
 .project-info-panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -244,6 +271,9 @@
   display: flex;
   gap: 8px;
   align-items: center;
+  font-size: 18px;
+}
+.project-details-dialog .project-info-panel h2 {
   font-size: 18px;
 }
 .project-info-panel h3 {

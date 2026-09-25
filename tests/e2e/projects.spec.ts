@@ -210,7 +210,7 @@ test("hides projects from both views and search, and restores them through Show 
   await page.getByLabel("Hide project from dashboard").click();
   await expect(page.getByLabel("Hide project from dashboard")).toBeChecked();
   expect(state.projects[0].hidden).toBe(true);
-  await page.getByRole("button", { name: "Projects", exact: true }).last().click();
+  await page.getByRole("button", { name: "Close project details" }).click();
   await expect(page.locator(".project-tile")).toHaveCount(7);
   await page.getByLabel("Show hidden projects").check();
   await expect(page.locator(".project-tile")).toHaveCount(8);
@@ -227,7 +227,7 @@ test("hides projects from both views and search, and restores them through Show 
   await page.getByLabel("Hide project from dashboard").click();
   await expect(page.getByLabel("Hide project from dashboard")).not.toBeChecked();
   expect(state.projects[0].hidden).toBe(false);
-  await page.getByRole("button", { name: "Projects", exact: true }).last().click();
+  await page.getByRole("button", { name: "Close project details" }).click();
   await page.getByLabel("Show hidden projects").uncheck();
   await expect(page.locator(".project-tile")).toHaveCount(1);
 });
@@ -257,7 +257,7 @@ test("opens failing default-branch pipelines and removes recovered projects from
     "href",
     "https://github.com/example/project/actions/runs/11",
   );
-  await page.getByRole("button", { name: "Projects", exact: true }).last().click();
+  await page.getByRole("button", { name: "Close project details" }).click();
   const pipelines = state.projects[7].insights?.pipelines;
   if (!pipelines) throw new Error("Missing pipeline fixture");
   pipelines.failures = [];
@@ -288,9 +288,13 @@ test("pulls directly from a tile and commits and pushes from one action form", a
   ]);
 });
 
-test("keeps all project information and profile edits on one detail page", async ({ page }) => {
+test("keeps all project information and profile edits in one modal", async ({ page }) => {
   await setup(page);
   await page.locator(".project-name").first().click();
+  await expect(page.getByRole("dialog")).toHaveAttribute(
+    "aria-labelledby",
+    "project-details-heading",
+  );
   for (const name of [
     "Checkout",
     "Local changes & commits",
@@ -305,12 +309,68 @@ test("keeps all project information and profile edits on one detail page", async
     .fill("---\ntype: Project\n---\nUpdated project description.");
   await page.getByRole("button", { name: "Save description", exact: true }).click();
   await expect(page.locator(".project-profile-text")).toHaveText("Updated project description.");
+  await page.getByRole("dialog").evaluate((node) => {
+    node.scrollTop = 0;
+  });
+  expect(await page.getByRole("dialog").evaluate((node) => node.clientWidth)).toBeGreaterThan(900);
   await page.screenshot({ path: "test-results/project-information.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: "test-results/project-information-mobile.png", fullPage: true });
+  await page.getByRole("dialog").evaluate((node) => {
+    node.scrollTop = 0;
+  });
+  await page.screenshot({ path: "test-results/project-information-mobile.png" });
+  expect(
+    await page.getByRole("dialog").evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+});
+
+test("preserves the project grid, filters, scroll position, and focus when closing details", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.getByRole("button", { name: "All projects 100" }).click();
+  await page.getByLabel("Show hidden projects").check();
+  await page.getByLabel("Search all projects").fill("Project");
+  const tile = page.getByRole("button", { name: "Project 090", exact: true });
+  await tile.scrollIntoViewIfNeeded();
+  const before = await page.evaluate(() => window.scrollY);
+  expect(before).toBeGreaterThan(500);
+  await tile.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator(".project-tile")).toHaveCount(100);
+  await dialog.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  expect(await page.evaluate(() => window.scrollY)).toBe(before);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(tile).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(before);
+  await expect(page.getByLabel("Search all projects")).toHaveValue("Project");
+  await expect(page.getByLabel("Show hidden projects")).toBeChecked();
+  await tile.click();
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(2, 2);
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(before);
+});
+
+test("protects unsaved profile edits when dismissing project details", async ({ page }) => {
+  await setup(page);
+  await page.locator(".project-name").first().click();
+  await page.getByRole("button", { name: "Edit description" }).click();
+  await page.getByLabel("Project profile document").fill("Unsaved description");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByLabel("Project profile document")).toHaveValue("Unsaved description");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Close project details" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("preserves unknown remote status and fits tiles on narrow screens", async ({ page }) => {

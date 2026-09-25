@@ -1,6 +1,5 @@
 import {
   ArrowDownToLine,
-  ArrowLeft,
   ArrowUpFromLine,
   BookOpen,
   ExternalLink,
@@ -70,7 +69,15 @@ export function Projects({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [profileDirty, setProfileDirty] = useState(false);
+  const profileDirtyRef = useRef(false);
+  const detailOpener = useRef<HTMLElement | null>(null);
+  const changeProfileDirty = useCallback((dirty: boolean) => {
+    profileDirtyRef.current = dirty;
+    setProfileDirty(dirty);
+  }, []);
   const modal = useRef<HTMLDialogElement>(null);
+  const detailsModal = useRef<HTMLDialogElement>(null);
+  const backdropPointer = useRef(false);
   const request = useRef(0);
   const refreshDetail = useRef(false);
   const detailId = useRef<string | null>(null);
@@ -126,6 +133,20 @@ export function Projects({
   useEffect(() => {
     if (action && !modal.current?.open) modal.current?.showModal();
   }, [action]);
+  useEffect(() => {
+    if (detail && !detailsModal.current?.open) detailsModal.current?.showModal();
+  }, [detail]);
+  const closeDetails = () => {
+    if (busy) return;
+    if (profileDirtyRef.current && !window.confirm("Discard your unsaved profile edits?")) return;
+    detailsModal.current?.close();
+    detailOpener.current?.focus({ preventScroll: true });
+    setDetail(null);
+    changeProfileDirty(false);
+    setError("");
+    refreshDetail.current = false;
+    request.current++;
+  };
   const closeAction = () => {
     if (busy) return;
     modal.current?.close();
@@ -133,6 +154,7 @@ export function Projects({
   };
   const open = async (project: Project, kind?: ProjectAttention) => {
     if (profileDirty && !window.confirm("Discard your unsaved profile edits?")) return;
+    if (!kind) detailOpener.current = document.activeElement as HTMLElement | null;
     const current = ++request.current;
     setLoading(true);
     setError("");
@@ -143,7 +165,7 @@ export function Projects({
       if (kind) setAction({ kind, detail: next });
       else {
         setDetail(next);
-        setProfileDirty(false);
+        changeProfileDirty(false);
       }
     } catch (reason) {
       report(reason);
@@ -258,28 +280,11 @@ export function Projects({
     <section className="projects-page" aria-label="Projects workspace">
       <div className="projects-heading">
         <div>
-          {detail && (
-            <button
-              type="button"
-              className="text-button projects-back"
-              onClick={() => {
-                if (profileDirty && !window.confirm("Discard your unsaved profile edits?")) return;
-                setDetail(null);
-                setProfileDirty(false);
-                setError("");
-              }}
-            >
-              <ArrowLeft size={16} />
-              Projects
-            </button>
-          )}
-          <h1>{project?.name ?? "Projects"}</h1>
+          <h1>Projects</h1>
           <p>
-            {project
-              ? project.path
-              : workspace
-                ? `${attention} ${attention === 1 ? "project needs" : "projects need"} your attention.`
-                : "Finding your projects…"}
+            {workspace
+              ? `${attention} ${attention === 1 ? "project needs" : "projects need"} your attention.`
+              : "Finding your projects…"}
           </p>
         </div>
         <button
@@ -299,12 +304,12 @@ export function Projects({
           {workspace?.refreshing ? "Checking…" : "Refresh"}
         </button>
       </div>
-      {!action && error && (
+      {!action && !detail && error && (
         <div role="alert" className="banner error">
           {error}
         </div>
       )}
-      {notice && (
+      {!detail && notice && (
         <p role="status" className="project-notice">
           {notice}
         </p>
@@ -319,299 +324,366 @@ export function Projects({
           {message}
         </p>
       ))}
-      {!detail ? (
-        <>
-          <div className="projects-toolbar">
-            <div className="projects-filters">
+      <div className="projects-toolbar">
+        <div className="projects-filters">
+          <button
+            type="button"
+            aria-pressed={filter === "attention" && !search}
+            onClick={() => {
+              setFilter("attention");
+              setQuery("");
+            }}
+          >
+            Attention <span>{attention}</span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={filter === "all" && !search}
+            onClick={() => {
+              setFilter("all");
+              setQuery("");
+            }}
+          >
+            All projects <span>{included.length}</span>
+          </button>
+        </div>
+        <div className="projects-searches">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={showHidden}
+              onChange={(event) => setShowHidden(event.target.checked)}
+            />
+            Show hidden projects
+          </label>
+          {settings.projectRoots.length > 1 && (
+            <select
+              aria-label="Filter project directory"
+              value={root}
+              onChange={(event) => setRoot(event.target.value)}
+            >
+              <option value="">All directories</option>
+              {settings.projectRoots.map((path) => (
+                <option value={path} key={path}>
+                  {path}
+                </option>
+              ))}
+            </select>
+          )}
+          <label className="projects-search">
+            <Search size={16} />
+            <input
+              aria-label="Search all projects"
+              placeholder="Search all projects"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+        </div>
+      </div>
+      <div className="projects-grid">
+        {visible.map((project) => {
+          const actions = projectAttention(project);
+          return (
+            <article className="project-tile" key={project.id} aria-label={project.name}>
               <button
                 type="button"
-                aria-pressed={filter === "attention" && !search}
-                onClick={() => {
-                  setFilter("attention");
-                  setQuery("");
-                }}
+                className="project-name"
+                title={`${project.name}\n${project.path}`}
+                disabled={busy || loading}
+                onClick={() => void open(project)}
               >
-                Attention <span>{attention}</span>
+                {project.name}
               </button>
-              <button
-                type="button"
-                aria-pressed={filter === "all" && !search}
-                onClick={() => {
-                  setFilter("all");
-                  setQuery("");
-                }}
-              >
-                All projects <span>{included.length}</span>
-              </button>
+              <div className="project-branch" title={project.git?.branch ?? "Detached HEAD"}>
+                {project.hidden && <EyeOff size={13} aria-label="Hidden project" />}
+                <GitBranch size={13} />
+                <span>
+                  {project.git?.branch ?? (project.git ? "Detached HEAD" : "Checkout unavailable")}
+                </span>
+              </div>
+              <div className="project-icon-slots">
+                {projectAttentionOrder.map((kind) => {
+                  const label = actions[kind];
+                  const Icon =
+                    kind === "local" && !project.git?.dirty && project.git?.ahead
+                      ? ArrowUpFromLine
+                      : icons[kind];
+                  const links =
+                    kind === "reviews"
+                      ? project.insights?.reviews
+                      : kind === "security"
+                        ? project.insights?.findings
+                        : kind === "pipelines"
+                          ? project.insights?.pipelines?.failures
+                          : undefined;
+                  const className = `project-slot ${(kind === "security" || kind === "pipelines") && links?.length ? "project-risk" : ""}`;
+                  return !label ? (
+                    <span className="project-slot-empty" aria-hidden="true" key={kind} />
+                  ) : (
+                    <span className="project-action-tip" key={kind}>
+                      {links?.length === 1 ? (
+                        <a
+                          className={className}
+                          href={links[0].url}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`${label}: ${project.name}`}
+                        >
+                          <Icon size={18} />
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          className={className}
+                          disabled={busy || loading}
+                          aria-label={`${label}: ${project.name}`}
+                          onClick={() => actFromTile(project, kind)}
+                        >
+                          <Icon size={18} />
+                        </button>
+                      )}
+                      <span className="project-tooltip" role="tooltip">
+                        {label}
+                      </span>
+                    </span>
+                  );
+                })}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {workspace && !visible.length && (
+        <div className="projects-empty">
+          <FolderGit2 size={28} />
+          <h2>
+            {search || root
+              ? "No matching projects"
+              : !included.length && workspace.projects.length
+                ? "All projects are hidden"
+                : workspace.projects.length
+                  ? "Nothing needs your attention"
+                  : "No projects detected"}
+          </h2>
+          <p>
+            {search || root
+              ? "Try another name or directory."
+              : !included.length && workspace.projects.length
+                ? "Enable Show hidden projects to find and restore a project."
+                : workspace.projects.length
+                  ? "Search to open any project, or show all projects."
+                  : "Choose directories containing your Git repositories in Settings."}
+          </p>
+          {!workspace.projects.length && (
+            <button type="button" className="secondary" onClick={onSettings}>
+              Configure directories
+            </button>
+          )}
+        </div>
+      )}
+      <details className="project-icon-guide">
+        <summary>Action icon guide</summary>
+        <div>
+          {projectAttentionOrder.map((kind) => {
+            const Icon = icons[kind];
+            return (
+              <span key={kind}>
+                <Icon size={16} />
+                {
+                  {
+                    local: "Commit & push",
+                    incoming: "Incoming changes",
+                    branch: "Return to default branch",
+                    reviews: "Requested reviews",
+                    security: "Dependabot alerts",
+                    pipelines: "Failing default-branch pipelines",
+                  }[kind]
+                }
+              </span>
+            );
+          })}
+        </div>
+        <p>
+          Positions stay fixed. A missing icon means no known action. Access failures remain
+          visible.
+        </p>
+      </details>
+      {detail && (
+        <dialog
+          ref={detailsModal}
+          className="editor-modal project-details-dialog"
+          aria-labelledby="project-details-heading"
+          onCancel={(event) => {
+            event.preventDefault();
+            closeDetails();
+          }}
+          onPointerDown={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            backdropPointer.current =
+              event.target === event.currentTarget &&
+              (event.clientX < bounds.left ||
+                event.clientX > bounds.right ||
+                event.clientY < bounds.top ||
+                event.clientY > bounds.bottom);
+          }}
+          onPointerUp={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            if (
+              backdropPointer.current &&
+              event.target === event.currentTarget &&
+              (event.clientX < bounds.left ||
+                event.clientX > bounds.right ||
+                event.clientY < bounds.top ||
+                event.clientY > bounds.bottom)
+            )
+              closeDetails();
+            backdropPointer.current = false;
+          }}
+        >
+          <div className="modal-top">
+            <h2 id="project-details-heading">{project?.name}</h2>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Close project details"
+              disabled={busy}
+              onClick={closeDetails}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="project-details-meta">
+            <p className="muted-text">{project?.path}</p>
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || workspace?.refreshing}
+              onClick={() => {
+                refreshDetail.current = true;
+                void refresh().catch(report);
+              }}
+            >
+              <RefreshCw size={16} />
+              {workspace?.refreshing ? "Checking…" : "Refresh"}
+            </button>
+          </div>
+          {error && (
+            <div role="alert" className="banner error">
+              {error}
             </div>
-            <div className="projects-searches">
+          )}
+          {notice && (
+            <p role="status" className="project-notice">
+              {notice}
+            </p>
+          )}
+          <div className="project-details">
+            <section className="project-info-panel">
+              <div className="section-title">
+                <h2>Checkout</h2>
+                {project?.git?.repositoryUrl && (
+                  <a
+                    className="text-button"
+                    href={project.git.repositoryUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Repository <ExternalLink size={14} />
+                  </a>
+                )}
+              </div>
+              <dl className="project-facts">
+                <div>
+                  <dt>Branch</dt>
+                  <dd>{project?.git?.branch ?? "Detached HEAD"}</dd>
+                </div>
+                <div>
+                  <dt>Default branch</dt>
+                  <dd>{project?.git?.defaultBranch ?? "Unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Upstream</dt>
+                  <dd>{project?.git?.upstream ?? "Not configured"}</dd>
+                </div>
+                <div>
+                  <dt>Remote checked</dt>
+                  <dd>{date(project?.remoteCheckedAt)}</dd>
+                </div>
+              </dl>
               <label className="checkbox">
                 <input
                   type="checkbox"
-                  checked={showHidden}
-                  onChange={(event) => setShowHidden(event.target.checked)}
+                  checked={!!project?.hidden}
+                  disabled={busy}
+                  onChange={(event) => void changeProject({ hidden: event.target.checked })}
                 />
-                Show hidden projects
+                Hide project from dashboard
               </label>
-              {settings.projectRoots.length > 1 && (
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={!!project?.returnToDefault}
+                  disabled={busy || workspace?.refreshing}
+                  onChange={(event) =>
+                    void changeProject({ returnToDefault: event.target.checked })
+                  }
+                />{" "}
+                Remind me to return to the default branch
+              </label>
+              <GitControls detail={detail} busy={busy} onAction={perform} />
+            </section>
+            <section className="project-info-panel">
+              <h2>Local changes & commits</h2>
+              <ProjectChangeForm
+                key={`${detail.project.id}:${detail.project.git?.version}`}
+                detail={detail}
+                busy={busy}
+                onAction={perform}
+              />
+            </section>
+            <section className="project-info-panel">
+              <h2>Repository insights</h2>
+              <RepositoryInformation project={detail.project} />
+            </section>
+            <section className="project-info-panel project-profile-panel">
+              <div className="section-title">
+                <h2>
+                  <BookOpen size={18} /> Profile description
+                </h2>
+              </div>
+              <label className="field">
+                Linked profile page
                 <select
-                  aria-label="Filter project directory"
-                  value={root}
-                  onChange={(event) => setRoot(event.target.value)}
+                  value={project?.document ?? ""}
+                  disabled={busy || profileDirty || workspace?.refreshing}
+                  onChange={(event) => void changeProject({ document: event.target.value || null })}
                 >
-                  <option value="">All directories</option>
-                  {settings.projectRoots.map((path) => (
-                    <option value={path} key={path}>
-                      {path}
+                  <option value="">No profile page assigned</option>
+                  {documents.map((doc) => (
+                    <option key={doc.path} value={doc.path}>
+                      {doc.title}
                     </option>
                   ))}
                 </select>
-              )}
-              <label className="projects-search">
-                <Search size={16} />
-                <input
-                  aria-label="Search all projects"
-                  placeholder="Search all projects"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
               </label>
-            </div>
-          </div>
-          <div className="projects-grid">
-            {visible.map((project) => {
-              const actions = projectAttention(project);
-              return (
-                <article className="project-tile" key={project.id} aria-label={project.name}>
-                  <button
-                    type="button"
-                    className="project-name"
-                    title={`${project.name}\n${project.path}`}
-                    disabled={busy || loading}
-                    onClick={() => void open(project)}
-                  >
-                    {project.name}
-                  </button>
-                  <div className="project-branch" title={project.git?.branch ?? "Detached HEAD"}>
-                    {project.hidden && <EyeOff size={13} aria-label="Hidden project" />}
-                    <GitBranch size={13} />
-                    <span>
-                      {project.git?.branch ??
-                        (project.git ? "Detached HEAD" : "Checkout unavailable")}
-                    </span>
-                  </div>
-                  <div className="project-icon-slots">
-                    {projectAttentionOrder.map((kind) => {
-                      const label = actions[kind];
-                      const Icon =
-                        kind === "local" && !project.git?.dirty && project.git?.ahead
-                          ? ArrowUpFromLine
-                          : icons[kind];
-                      const links =
-                        kind === "reviews"
-                          ? project.insights?.reviews
-                          : kind === "security"
-                            ? project.insights?.findings
-                            : kind === "pipelines"
-                              ? project.insights?.pipelines?.failures
-                              : undefined;
-                      const className = `project-slot ${(kind === "security" || kind === "pipelines") && links?.length ? "project-risk" : ""}`;
-                      return !label ? (
-                        <span className="project-slot-empty" aria-hidden="true" key={kind} />
-                      ) : (
-                        <span className="project-action-tip" key={kind}>
-                          {links?.length === 1 ? (
-                            <a
-                              className={className}
-                              href={links[0].url}
-                              target="_blank"
-                              rel="noreferrer"
-                              aria-label={`${label}: ${project.name}`}
-                            >
-                              <Icon size={18} />
-                            </a>
-                          ) : (
-                            <button
-                              type="button"
-                              className={className}
-                              disabled={busy || loading}
-                              aria-label={`${label}: ${project.name}`}
-                              onClick={() => actFromTile(project, kind)}
-                            >
-                              <Icon size={18} />
-                            </button>
-                          )}
-                          <span className="project-tooltip" role="tooltip">
-                            {label}
-                          </span>
-                        </span>
-                      );
-                    })}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-          {workspace && !visible.length && (
-            <div className="projects-empty">
-              <FolderGit2 size={28} />
-              <h2>
-                {search || root
-                  ? "No matching projects"
-                  : !included.length && workspace.projects.length
-                    ? "All projects are hidden"
-                    : workspace.projects.length
-                      ? "Nothing needs your attention"
-                      : "No projects detected"}
-              </h2>
-              <p>
-                {search || root
-                  ? "Try another name or directory."
-                  : !included.length && workspace.projects.length
-                    ? "Enable Show hidden projects to find and restore a project."
-                    : workspace.projects.length
-                      ? "Search to open any project, or show all projects."
-                      : "Choose directories containing your Git repositories in Settings."}
-              </p>
-              {!workspace.projects.length && (
-                <button type="button" className="secondary" onClick={onSettings}>
-                  Configure directories
-                </button>
+              {linkedDocument ? (
+                <ProjectProfile
+                  key={linkedDocument.path}
+                  document={linkedDocument}
+                  onSave={onProfileSave}
+                  onDirty={changeProfileDirty}
+                  report={report}
+                />
+              ) : (
+                <p className="muted-text">
+                  Assign an existing profile page, or generate a project description through project
+                  discovery in Settings.
+                </p>
               )}
-            </div>
-          )}
-          <details className="project-icon-guide">
-            <summary>Action icon guide</summary>
-            <div>
-              {projectAttentionOrder.map((kind) => {
-                const Icon = icons[kind];
-                return (
-                  <span key={kind}>
-                    <Icon size={16} />
-                    {
-                      {
-                        local: "Commit & push",
-                        incoming: "Incoming changes",
-                        branch: "Return to default branch",
-                        reviews: "Requested reviews",
-                        security: "Dependabot alerts",
-                        pipelines: "Failing default-branch pipelines",
-                      }[kind]
-                    }
-                  </span>
-                );
-              })}
-            </div>
-            <p>
-              Positions stay fixed. A missing icon means no known action. Access failures remain
-              visible.
-            </p>
-          </details>
-        </>
-      ) : (
-        <div className="project-details">
-          <section className="project-info-panel">
-            <div className="section-title">
-              <h2>Checkout</h2>
-              {project?.git?.repositoryUrl && (
-                <a
-                  className="text-button"
-                  href={project.git.repositoryUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Repository <ExternalLink size={14} />
-                </a>
-              )}
-            </div>
-            <dl className="project-facts">
-              <div>
-                <dt>Branch</dt>
-                <dd>{project?.git?.branch ?? "Detached HEAD"}</dd>
-              </div>
-              <div>
-                <dt>Default branch</dt>
-                <dd>{project?.git?.defaultBranch ?? "Unknown"}</dd>
-              </div>
-              <div>
-                <dt>Upstream</dt>
-                <dd>{project?.git?.upstream ?? "Not configured"}</dd>
-              </div>
-              <div>
-                <dt>Remote checked</dt>
-                <dd>{date(project?.remoteCheckedAt)}</dd>
-              </div>
-            </dl>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={!!project?.hidden}
-                disabled={busy}
-                onChange={(event) => void changeProject({ hidden: event.target.checked })}
-              />
-              Hide project from dashboard
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={!!project?.returnToDefault}
-                disabled={busy || workspace?.refreshing}
-                onChange={(event) => void changeProject({ returnToDefault: event.target.checked })}
-              />{" "}
-              Remind me to return to the default branch
-            </label>
-            <GitControls detail={detail} busy={busy} onAction={perform} />
-          </section>
-          <section className="project-info-panel">
-            <h2>Local changes & commits</h2>
-            <ProjectChangeForm
-              key={`${detail.project.id}:${detail.project.git?.version}`}
-              detail={detail}
-              busy={busy}
-              onAction={perform}
-            />
-          </section>
-          <section className="project-info-panel">
-            <h2>Repository insights</h2>
-            <RepositoryInformation project={detail.project} />
-          </section>
-          <section className="project-info-panel project-profile-panel">
-            <div className="section-title">
-              <h2>
-                <BookOpen size={18} /> Profile description
-              </h2>
-            </div>
-            <label className="field">
-              Linked profile page
-              <select
-                value={project?.document ?? ""}
-                disabled={busy || profileDirty || workspace?.refreshing}
-                onChange={(event) => void changeProject({ document: event.target.value || null })}
-              >
-                <option value="">No profile page assigned</option>
-                {documents.map((doc) => (
-                  <option key={doc.path} value={doc.path}>
-                    {doc.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {linkedDocument ? (
-              <ProjectProfile
-                key={linkedDocument.path}
-                document={linkedDocument}
-                onSave={onProfileSave}
-                onDirty={setProfileDirty}
-                report={report}
-              />
-            ) : (
-              <p className="muted-text">
-                Assign an existing profile page, or generate a project description through project
-                discovery in Settings.
-              </p>
-            )}
-          </section>
-        </div>
+            </section>
+          </div>
+        </dialog>
       )}
       {action && (
         <dialog
@@ -1023,7 +1095,10 @@ function ProjectProfile({
               rows={14}
               maxLength={50000}
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                onDirty(event.target.value !== document.content);
+              }}
             />
           </label>
           <div className="project-inline-actions">

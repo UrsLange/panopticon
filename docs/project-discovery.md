@@ -12,7 +12,7 @@ The default **Attention** view shows projects with local changes, unpublished co
 
 Tiles have six fixed action positions: local work, incoming changes, default branch, reviews, Dependabot alerts, and failing pipelines. Clean checkouts do not show healthy-state labels. Names are truncated visually, with the full name and path available on hover and in details. The responsive grid keeps tile dimensions consistent and displays several columns on desktop.
 
-Click a project name for one detail page containing checkout metadata, files and diffs, incoming/outgoing commits, remote findings, and the linked profile description. Descriptions can be edited inline with stale-document protection; these profile edits are not committed automatically. Returning to the repository's default branch is an individual project preference, initially enabled. The default is read from the remote HEAD when available, with local `main`/`master` detection before the first remote check.
+Click a project name for a details modal containing checkout metadata, files and diffs, incoming/outgoing commits, remote findings, and the linked profile description. The grid stays mounted underneath, preserving filters and scroll position. Close, Escape, or clicking the backdrop dismisses details; unsaved profile edits require confirmation. Descriptions can be edited inline with stale-document protection; these profile edits are not committed automatically. Returning to the repository's default branch is an individual project preference, initially enabled. The default is read from the remote HEAD when available, with local `main`/`master` detection before the first remote check.
 
 ### Git actions
 
