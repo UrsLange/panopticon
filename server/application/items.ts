@@ -38,6 +38,7 @@ export function capturedItem(text: string, id: string, now: string): Item {
     profilePath: null,
     prompt: "",
     repositoryId: null,
+    clarifications: [],
   };
 }
 export function revisedItem(

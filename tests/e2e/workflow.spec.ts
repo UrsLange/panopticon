@@ -42,6 +42,58 @@ test("onboards a model and portable profile, then exposes editable settings and 
   await expect(page.getByRole("heading", { name: "A clearer day." })).toBeVisible();
 });
 
+test("clarifies a demo over two rounds, preserving saved answers across reloads", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await page.getByLabel("What’s on your mind?").fill("Plan the demo with Benjamin");
+  await page.getByRole("button", { name: "Capture", exact: true }).click();
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: /^Plan the demo with Benjamin/ }).click();
+  const project = page.getByLabel("1. Which project is this demo for?", { exact: true });
+  await project.fill("Portal");
+  await page.getByRole("button", { name: "Save answers", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save answers", exact: true })).toBeDisabled();
+  await page.reload();
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: /^Plan the demo with Benjamin/ }).click();
+  await expect(project).toHaveValue("Portal");
+  await page.getByRole("button", { name: "Refine with answers", exact: true }).click();
+  await expect(page.getByLabel("1. Which Benjamin do you mean?", { exact: true })).toBeVisible();
+  await expect(project).toHaveCount(0);
+  await page.getByText("Previous answers", { exact: true }).click();
+  await expect(page.getByText("Portal", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("1. Which Benjamin do you mean?", { exact: true })
+    .fill("Benjamin from Design");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".clarification-interview").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/clarification-interview-mobile.png" });
+  expect(
+    await page
+      .getByRole("dialog")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.getByRole("button", { name: "Refine with answers", exact: true }).click();
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
+    "Plan the Portal demo with Benjamin from Design.",
+  );
+  await expect(page.getByRole("region", { name: "Clarification questions" })).toHaveCount(0);
+  const items = await (await request.get("/api/items")).json();
+  const item = items.find(
+    (entry: { original: string }) => entry.original === "Plan the demo with Benjamin",
+  );
+  expect(item.processing).toBe("ready");
+  expect(item.clarifications.map((entry: { answer: string }) => entry.answer)).toEqual([
+    "Portal",
+    "Benjamin from Design",
+  ]);
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Plan the demo with Benjamin/ })).toBeVisible();
+});
+
 test("quick capture preserves dismissed drafts and sends only on explicit save", async ({
   page,
   request,

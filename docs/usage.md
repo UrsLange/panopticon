@@ -20,6 +20,10 @@ Navigation badges mean **needs your attention**, not total items. Inbox counts c
 
 Click a task's completion circle once to finish it; **Undo** restores its previous status. Click its title for details, editing, and actions such as starting work or continuing in T3 Code. Closing the panel preserves your list position and filters.
 
+If the current brief is sufficient, choose **Mark as refined**. This accepts a task or idea without calling the model or marking the work done. Save edits first and wait for any running refinement to finish. Accepted tasks appear in **Tasks**, and accepted ideas appear in **Notebook**. Notes still use the separate **Add to profile** flow.
+
+When refinement needs more information, **Let’s clarify the brief** presents individual questions. Type answers and choose **Save answers** to return later, or **Refine with answers** to continue. Partial answers work: subsequent rounds use the previous brief and all saved answers, asking about remaining gaps. Answers survive reloads and failed refinement attempts; earlier rounds remain under **Previous answers**. Original capture text is preserved. Older captures with prose-only clarification need **Refine again** once to generate structured questions.
+
 ## Plan your day
 
 **Today** shows refined, started commitments in **In progress**, including those without deadlines. **Due & overdue** includes every refined, unfinished commitment due today or earlier, using your configured timezone. Suggested next actions are the three oldest refined, undated commitments that have not started, with high priority first. The app does not infer deadlines.

@@ -18,6 +18,7 @@ export type ItemChanges = Partial<ItemFields> &
       | "references"
       | "profilePath"
       | "repositoryId"
+      | "clarifications"
     >
   >;
 

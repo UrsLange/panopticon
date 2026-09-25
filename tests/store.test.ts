@@ -16,6 +16,24 @@ afterEach(() => {
 });
 
 describe("capture and planning", () => {
+  it("migrates and persists interview questions, answers, and revision history", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "pa-interview-")), "assistant.sqlite");
+    const original = new Store(path);
+    const item = original.capture("A demo");
+    original.db.exec("ALTER TABLE items DROP COLUMN clarifications");
+    original.db.close();
+    const migrated = new Store(path);
+    expect(migrated.get(item.id)?.clarifications).toEqual([]);
+    const question = { id: "0:0", question: "Which project?", answer: "", resolved: false };
+    migrated.update(item.id, { clarifications: [question] }, 0);
+    migrated.update(item.id, { clarifications: [{ ...question, answer: "Portal" }] }, 1);
+    migrated.db.close();
+    const reopened = new Store(path);
+    stores.push(reopened);
+    expect(reopened.get(item.id)?.clarifications[0].answer).toBe("Portal");
+    expect(reopened.list()[0].clarifications[0].answer).toBe("Portal");
+    expect(reopened.history(item.id)[0].item.clarifications[0].answer).toBe("");
+  });
   it("migrates repository associations and preserves them across restarts and history", () => {
     const path = join(mkdtempSync(join(tmpdir(), "pa-repository-")), "assistant.sqlite");
     const original = new Store(path);

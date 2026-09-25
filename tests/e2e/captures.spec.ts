@@ -108,6 +108,17 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
       item = { ...item, refinement: "running", processing: "pending", processingError: null };
       return route.fulfill({ json: item });
     }
+    if (path.endsWith("/refined")) {
+      expect(route.request().postDataJSON()).toEqual({ revision: item.revision });
+      item = {
+        ...item,
+        refinement: "ready",
+        processing: "ready",
+        processingError: null,
+        revision: item.revision + 1,
+      };
+      return route.fulfill({ json: item });
+    }
     return route.fulfill({ status: 404, json: { error: `Unexpected test request: ${path}` } });
   });
   await page.clock.install();
@@ -179,6 +190,72 @@ test("refreshes capture details without changing the visible content while waiti
       page.getByRole("button", { name: "Save and start in T3 Code", exact: true }),
     ).toBeEnabled();
   }
+});
+
+test("keeps capture details stable while implementation readiness refreshes", async ({ page }) => {
+  const state = await capturePage(page);
+  const start = page.getByRole("button", { name: "Start in T3 Code", exact: true });
+  await expect(start).toBeEnabled();
+  const title = page.getByLabel("Title", { exact: true });
+  const before = await title.boundingBox();
+  let release = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route("**/api/items/capture-test/implementation", async (route) => {
+    requested = true;
+    await pending;
+    await route.fulfill({ json: { ...state.options, configured: false } });
+  });
+  await page.clock.fastForward(5000);
+  await expect.poll(() => requested).toBe(true);
+  try {
+    await expect(page.getByText("Checking T3 Code readiness…", { exact: true })).toHaveCount(0);
+    await expect(start).toBeEnabled();
+    expect(await title.boundingBox()).toEqual(before);
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("region", { name: "Capture status" })).toContainText(
+    "T3 Code is not connected.",
+  );
+});
+
+test("accepts the current brief and keeps future tasks in Tasks", async ({ page }) => {
+  const state = await capturePage(page, {
+    refinement: "review",
+    processing: "review",
+    rationale: "Which Benjamin?",
+    dueDate: "2099-01-01",
+  });
+  await page.getByRole("button", { name: "Mark as refined", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.item.status).toBe("open");
+  expect(state.refinements).toBe(0);
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+});
+
+test("moves a manually accepted idea into the notebook without refinement", async ({ page }) => {
+  const state = await capturePage(page, {
+    kind: "idea",
+    refinement: "review",
+    processing: "review",
+  });
+  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: /^Add Kiana to GitHub/ }).click();
+  await page.getByRole("button", { name: "Mark as refined", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Notebook", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+  expect(state.refinements).toBe(0);
+  expect(state.item.kind).toBe("idea");
 });
 
 test("explains failures and previous clarification, and prevents duplicate refinement", async ({

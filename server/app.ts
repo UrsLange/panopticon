@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import Fastify from "fastify";
 import { ZodError, z } from "zod";
 import { entraSchema } from "../shared/people.js";
-import { itemPatchSchema } from "../shared/schema.js";
+import { clarificationAnswersSchema, itemPatchSchema } from "../shared/schema.js";
 import { t3ConnectionSchema } from "../shared/t3.js";
 import type { Application } from "./application/application.js";
 import { connectionSchema } from "./application/connection.js";
@@ -171,6 +171,13 @@ export function createHttpApp(services: Application, port: number) {
       .parse(request.body ?? {});
     return captures.retry(request.params.id, input);
   });
+  app.post<{ Params: { id: string } }>("/api/items/:id/refined", async (request) => {
+    const { revision } = z.object({ revision: z.number().int().nonnegative() }).parse(request.body);
+    return captures.markRefined(request.params.id, revision);
+  });
+  app.patch<{ Params: { id: string } }>("/api/items/:id/clarifications", async (request) =>
+    captures.answer(request.params.id, clarificationAnswersSchema.parse(request.body)),
+  );
   app.post<{ Params: { id: string } }>("/api/items/:id/profile", async (request) => {
     const { revision } = z.object({ revision: z.number().int().nonnegative() }).parse(request.body);
     return notes.add(request.params.id, revision);

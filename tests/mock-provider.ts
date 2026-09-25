@@ -106,12 +106,40 @@ export function mockProvider() {
             relatedId: null,
             rationale: "Test interpretation",
             needsClarification: false,
+            clarificationQuestions: [],
             updateProfile: explicitNote,
             referenceIds: payload.context.candidates
               .filter((alias: { available: boolean }) => alias.available)
               .map((alias: { id: string }) => alias.id),
           }
         : { answer: "Connection works.", sources: [] };
+    if (
+      input.text.format.name === "capture_interpretation" &&
+      payload.capture === "Plan the demo with Benjamin"
+    ) {
+      const answers = payload.context.previousRefinement?.clarifications ?? [];
+      const project = answers.find(
+        (entry: { question: string; answer: string }) =>
+          entry.question === "Which project is this demo for?" && entry.answer,
+      )?.answer;
+      const person = answers.find(
+        (entry: { question: string; answer: string }) =>
+          entry.question === "Which Benjamin do you mean?" && entry.answer,
+      )?.answer;
+      const questions = [
+        !project && "Which project is this demo for?",
+        !person && "Which Benjamin do you mean?",
+      ].filter(Boolean);
+      output = {
+        ...(output as object),
+        prompt: `Plan the ${project || "unspecified project"} demo with ${person || "Benjamin (identity needed)"}.`,
+        needsClarification: questions.length > 0,
+        clarificationQuestions: questions,
+        rationale: questions.length
+          ? "The project and person need to be clear."
+          : "The demo is ready to plan.",
+      };
+    }
     if (input.text.format.name === "profile_update") {
       const path = "browser-test-preferences.md";
       const existing = payload.documents.find((doc: { path: string }) => doc.path === path);

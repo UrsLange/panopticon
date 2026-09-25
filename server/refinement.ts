@@ -33,6 +33,7 @@ export async function refineCapture(
     },
   ];
   const sources = new Set([
+    ...(context.previousRefinement?.sourcePaths ?? []),
     ...context.profile.documents.map((doc) => doc.path),
     ...context.candidates.map((candidate) => candidate.source),
     ...context.references.map((reference) => reference.source),
@@ -136,6 +137,12 @@ export async function refineCapture(
         if (issues.size) {
           result.needsClarification = true;
           result.updateProfile = false;
+          result.clarificationQuestions.push(
+            ...[...issues].map(
+              (issue) =>
+                `${issue} What missing context can you provide, or how should the brief proceed with this limitation?`,
+            ),
+          );
           result.rationale = [result.rationale, ...issues].filter(Boolean).join("\n\n");
           result.prompt += `\n\nContext limitations: ${[...issues].join(" ")} Clarify material gaps before dependent work.`;
         }

@@ -814,12 +814,35 @@ export function App() {
             await reload();
             return updated;
           }}
+          onMarkRefined={async () => {
+            await api(`/items/${selected.id}/refined`, "POST", { revision: selected.revision });
+            await reload();
+            setNotice({
+              text: "Marked as refined.",
+              destination: selected.kind === "idea" ? "notebook" : "tasks",
+            });
+            setSelected(null);
+          }}
           onRetry={async (resetReferences = false) => {
             await api(`/items/${selected.id}/process`, "POST", {
               resetReferences,
               revision: selected.revision,
             });
             await reload();
+          }}
+          onAnswer={async (answers, refine) => {
+            const saved = await api<Item>(`/items/${selected.id}/clarifications`, "PATCH", {
+              revision: selected.revision,
+              answers,
+            });
+            await reload();
+            if (refine) {
+              try {
+                await api(`/items/${selected.id}/process`, "POST", { revision: saved.revision });
+              } finally {
+                await reload();
+              }
+            } else setNotice({ text: "Answers saved." });
           }}
         />
       )}
@@ -931,6 +954,8 @@ function ItemEditor({
   onSave,
   onReload,
   onRetry,
+  onMarkRefined,
+  onAnswer,
   onAddToProfile,
   onOpenProfile,
   profileAvailable,
@@ -944,6 +969,8 @@ function ItemEditor({
   onSave: (fields: ItemFields) => Promise<Item>;
   onReload: () => Promise<void>;
   onRetry: (resetReferences?: boolean) => Promise<void>;
+  onMarkRefined: () => Promise<void>;
+  onAnswer: (answers: { id: string; answer: string }[], refine: boolean) => Promise<void>;
   onAddToProfile: () => Promise<void>;
   onOpenProfile: (path: string) => void;
   profileAvailable: boolean;
@@ -975,6 +1002,12 @@ function ItemEditor({
   const [history, setHistory] = useState<{ item: Item; changedAt: string }[] | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
   const previous = useRef(item);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const questions = item.clarifications.filter((entry) => !entry.resolved);
+  const answersDirty = questions.some(
+    (entry) => (answers[entry.id] ?? entry.answer) !== entry.answer,
+  );
+  const hasAnswers = questions.some((entry) => (answers[entry.id] ?? entry.answer).trim());
   const dirty = (Object.keys(fields) as (keyof ItemFields)[]).some(
     (key) => fields[key] !== item[key],
   );
@@ -990,6 +1023,17 @@ function ItemEditor({
   useEffect(() => {
     const before = previous.current;
     previous.current = item;
+    setAnswers((current) =>
+      Object.fromEntries(
+        item.clarifications.map((entry) => [
+          entry.id,
+          current[entry.id] === undefined ||
+          current[entry.id] === before.clarifications.find((old) => old.id === entry.id)?.answer
+            ? entry.answer
+            : current[entry.id],
+        ]),
+      ),
+    );
     setFields(
       (current) =>
         Object.fromEntries(
@@ -1037,7 +1081,19 @@ function ItemEditor({
     }
   };
   const save = () => run("Saving…", () => onSave(fields));
-  const refine = (resetReferences = false) => run("Refining…", () => onRetry(resetReferences));
+  const refine = (resetReferences = false) =>
+    answersDirty && !resetReferences
+      ? saveAnswers(true)
+      : run("Refining…", () => onRetry(resetReferences));
+  const saveAnswers = (refine: boolean) =>
+    run(refine ? "Refining…" : "Saving answers…", () => {
+      const submitted = questions.map((entry) => ({
+        id: entry.id,
+        answer: (answers[entry.id] ?? entry.answer).trim(),
+      }));
+      setAnswers(Object.fromEntries(submitted.map((entry) => [entry.id, entry.answer])));
+      return onAnswer(submitted, refine);
+    });
   const implement = () =>
     run("Sending to T3 Code…", async () => {
       const saved = dirty ? await onSave(fields) : item;
@@ -1099,6 +1155,16 @@ function ItemEditor({
       action = {
         label: failed ? "Retry refinement" : "Resume refinement",
         run: () => void refine(),
+      };
+    } else if (item.processing !== "ready" && questions.length && hasAnswers && aiConfigured) {
+      action = { label: "Save answers and refine", run: () => void saveAnswers(true) };
+    } else if (item.processing !== "ready" && questions.length) {
+      action = {
+        label: "Answer questions",
+        run: () =>
+          dialog.current
+            ?.querySelector<HTMLTextAreaElement>(".clarification-interview textarea")
+            ?.focus(),
       };
     } else if (review && !note) {
       action = { label: "Add missing details", run: () => inputRef.current?.focus() };
@@ -1242,7 +1308,9 @@ function ItemEditor({
                 <p>
                   {note
                     ? "Review this note before adding it to your profile."
-                    : "Add the missing information to User input, then save and refine."}
+                    : questions.length
+                      ? "Answer the questions below, then refine the brief again."
+                      : "Add the missing information to User input, then save and refine."}
                 </p>
                 {item.rationale && <p className="capture-explanation">{item.rationale}</p>}
               </>
@@ -1260,6 +1328,26 @@ function ItemEditor({
                 </button>
               </details>
             )}
+            {!closed &&
+              item.processing !== "ready" &&
+              ["idea", "commitment"].includes(item.kind) && (
+                <div>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy || running || dirty || answersDirty}
+                    onClick={() => void run("Marking as refined…", onMarkRefined)}
+                  >
+                    Mark as refined
+                  </button>
+                  <p>
+                    Accept the current brief and keep it in{" "}
+                    {item.kind === "idea" ? "your notebook" : "Tasks"}. This does not complete the
+                    task.
+                  </p>
+                  {dirty && <p>Save your changes before accepting this brief.</p>}
+                </div>
+              )}
             {!closed &&
               !running &&
               !failed &&
@@ -1441,6 +1529,65 @@ function ItemEditor({
             <div role="alert" className="banner error">
               {error}
             </div>
+          )}
+          {!closed && questions.length > 0 && item.processing !== "ready" && (
+            <section
+              className="clarification-interview capture-state"
+              aria-label="Clarification questions"
+            >
+              <h3>Let’s clarify the brief</h3>
+              <p>
+                Answer what you know. Partial answers are welcome; the next refinement will use your
+                answers and the previous brief.
+              </p>
+              {questions.map((entry, index) => (
+                <label className="field" key={entry.id}>
+                  {index + 1}. {entry.question}
+                  <textarea
+                    aria-label={`${index + 1}. ${entry.question}`}
+                    rows={2}
+                    maxLength={5000}
+                    disabled={busy || running}
+                    value={answers[entry.id] ?? entry.answer}
+                    onChange={(event) => setAnswers({ ...answers, [entry.id]: event.target.value })}
+                    placeholder="Your answer…"
+                  />
+                </label>
+              ))}
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy || running || !answersDirty || dirty}
+                  onClick={() => void saveAnswers(false)}
+                >
+                  Save answers
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy || running || !hasAnswers || dirty || !aiConfigured}
+                  onClick={() => void saveAnswers(true)}
+                >
+                  Refine with answers
+                </button>
+              </div>
+              {dirty && <p>Save your brief edits before submitting answers.</p>}
+              {answersDirty && <p>Unsaved answers · save before closing.</p>}
+            </section>
+          )}
+          {item.clarifications.some((entry) => entry.resolved) && (
+            <details className="capture-tools">
+              <summary>Previous answers</summary>
+              {item.clarifications
+                .filter((entry) => entry.resolved)
+                .map((entry) => (
+                  <div key={entry.id}>
+                    <strong>{entry.question}</strong>
+                    <p className="capture-explanation">{entry.answer}</p>
+                  </div>
+                ))}
+            </details>
           )}
           <label className="field">
             Title
@@ -1681,7 +1828,7 @@ function ItemEditor({
                 <button
                   type="button"
                   className="secondary"
-                  disabled={busy || running || dirty || !aiConfigured}
+                  disabled={busy || running || dirty || answersDirty || !aiConfigured}
                   onClick={() => void refine()}
                 >
                   Refine again
@@ -1690,7 +1837,7 @@ function ItemEditor({
                   <button
                     type="button"
                     className="secondary"
-                    disabled={busy || running || dirty || !aiConfigured}
+                    disabled={busy || running || dirty || answersDirty || !aiConfigured}
                     onClick={() => void refine(true)}
                   >
                     Resolve aliases again
@@ -1725,7 +1872,9 @@ function ItemEditor({
           )}
           <div className="capture-footer">
             <span className="capture-save-state">
-              {dirty ? "Unsaved changes · closing discards edits" : "All changes saved"}
+              {dirty || answersDirty
+                ? "Unsaved changes · closing discards edits"
+                : "All changes saved"}
             </span>
             <div className="modal-actions">
               {item.kind === "commitment" && !dirty && !closed && (

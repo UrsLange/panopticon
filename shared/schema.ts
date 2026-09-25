@@ -58,6 +58,7 @@ export function annotatedText(text: string, references: EntityReference[]) {
 }
 
 export type Item = ItemFields & {
+  clarifications: Clarification[];
   repositoryId: string | null;
   references: EntityReference[];
   id: string;
@@ -76,6 +77,20 @@ export type Capture = Item & {
   refinement: "running" | "failed" | "paused" | "review" | "ready";
 };
 
+export type Clarification = {
+  id: string;
+  question: string;
+  answer: string;
+  resolved: boolean;
+};
+
+export const clarificationAnswersSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  answers: z
+    .array(z.object({ id: z.string().min(1), answer: z.string().trim().max(5000) }))
+    .max(20),
+});
+
 export const interpretationSchema = z.object({
   prompt: z.string().max(30000),
   sources: z.array(z.string()),
@@ -88,6 +103,7 @@ export const interpretationSchema = z.object({
   relatedId: z.string().nullable(),
   rationale: z.string(),
   needsClarification: z.boolean(),
+  clarificationQuestions: z.array(z.string().trim().min(1).max(1000)).max(20),
   updateProfile: z.boolean(),
 });
 export type Interpretation = z.infer<typeof interpretationSchema>;

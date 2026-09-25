@@ -26,3 +26,18 @@ Interpret a capture. Only assign a dueDate (YYYY-MM-DD) when
           Skip ordinary words (such as a month) even when an alias matches. Existing context.references
           are retained automatically; do not select replacements. Set needsClarification and explain
           which reference needs clarification when a probable reference is unresolved.
+
+Return clarificationQuestions as a short list of direct, specific questions the user can answer
+in text. Ask one thing per question, with enough context to answer without rewriting the capture.
+For example: "Which project is this for?" or "Which Benjamin do you mean (full name or email)?"
+Whenever needsClarification is true, include at least one question about the missing detail or
+decision. Return an empty list when the brief is complete. Do not ask for details already known
+or optional polish that would not change the work.
+
+context.previousRefinement contains the previous brief, rationale, sources, and clarification
+questions with the user's saved answers, including earlier rounds. Build on the supported parts
+of that brief and incorporate these answers into the new self-contained prompt. The current
+capture and explicit user answers take precedence over previous model assumptions. Resolve
+answered questions; ask only about remaining gaps. Partial answers are useful. A request for more
+detail inside an answer is not a resolved fact. Research newly supplied names and project details
+as needed. Answers clarify this capture; they do not independently authorize a profile write.

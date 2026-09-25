@@ -72,6 +72,7 @@ function fixture() {
       relatedId: null,
       rationale: "A preference",
       needsClarification: false,
+      clarificationQuestions: [],
       updateProfile: false,
       referenceIds: [],
       prompt: "",
@@ -212,6 +213,7 @@ it.each([
       ...base,
       updateProfile: authorized,
       needsClarification: clarification,
+      clarificationQuestions: [],
     });
     const item = f.captures.capture("An original capture");
     await f.captures.close();
@@ -250,6 +252,7 @@ it("saves researched prompts and actual sources while retaining the original cap
     prompt: "Verify the invitation flow in a browser.",
     sources: ["rules.md", "project:activation/README.md", "ctx:abcdef12"],
     needsClarification: true,
+    clarificationQuestions: [],
     rationale: "Which release should this target?",
   });
   const item = f.captures.capture("Review onboarding");
@@ -413,6 +416,7 @@ it("exposes live refinement state and rejects duplicate refinement requests", as
   const item = f.captures.capture("Implement access");
   expect(item.refinement).toBe("running");
   expect(f.captures.list()[0].refinement).toBe("running");
+  expect(() => f.captures.markRefined(item.id, item.revision)).toThrow("Wait for refinement");
   for (const resetReferences of [false, true]) {
     await expect(
       f.captures.retry(item.id, { resetReferences, revision: item.revision }),
@@ -425,6 +429,87 @@ it("exposes live refinement state and rejects duplicate refinement requests", as
   await f.captures.close();
   expect(f.captures.list()[0].refinement).toBe("ready");
   expect(f.assistant.interpret).toHaveBeenCalledTimes(1);
+});
+
+it("retains interview answers across partial rounds and failed refinements", async () => {
+  const f = fixture();
+  const base = await f.assistant.interpret("", context);
+  vi.mocked(f.assistant.interpret).mockResolvedValue({
+    ...base,
+    kind: "idea",
+    prompt: "Plan the demo.",
+    needsClarification: true,
+    clarificationQuestions: ["Which project?", "Which Benjamin?"],
+  });
+  const item = f.captures.capture("Plan a demo with Benjamin");
+  await f.captures.close();
+  let current = f.captures.list()[0];
+  expect(current.clarifications.map((entry) => entry.question)).toEqual([
+    "Which project?",
+    "Which Benjamin?",
+  ]);
+  const first = current.clarifications[0];
+  expect(() =>
+    f.captures.answer(item.id, { revision: 0, answers: [{ id: first.id, answer: "Portal" }] }),
+  ).toThrow("changed");
+  expect(() =>
+    f.captures.answer(item.id, {
+      revision: current.revision,
+      answers: [{ id: "unknown", answer: "Portal" }],
+    }),
+  ).toThrow("questions have changed");
+  current = f.captures.answer(item.id, {
+    revision: current.revision,
+    answers: [{ id: first.id, answer: "Portal" }],
+  });
+  vi.mocked(f.assistant.interpret).mockRejectedValueOnce(new Error("Offline"));
+  await f.captures.retry(item.id, { revision: current.revision, resetReferences: false });
+  current = f.captures.list()[0];
+  expect(current.clarifications[0].answer).toBe("Portal");
+  expect(current.refinement).toBe("failed");
+  vi.mocked(f.assistant.interpret).mockResolvedValueOnce({
+    ...base,
+    kind: "idea",
+    prompt: "Plan the Portal demo.",
+    needsClarification: true,
+    clarificationQuestions: ["Which Benjamin?"],
+  });
+  await f.captures.retry(item.id, { revision: current.revision, resetReferences: false });
+  expect(f.assistant.interpret).toHaveBeenLastCalledWith(
+    item.body,
+    expect.objectContaining({
+      previousRefinement: expect.objectContaining({
+        prompt: "Plan the demo.",
+        clarifications: expect.arrayContaining([expect.objectContaining({ answer: "Portal" })]),
+      }),
+    }),
+  );
+  current = f.captures.list()[0];
+  expect(current.clarifications[0]).toMatchObject({
+    question: "Which project?",
+    answer: "Portal",
+    resolved: true,
+  });
+  const next = current.clarifications.find((entry) => !entry.resolved);
+  assert(next);
+  current = f.captures.answer(item.id, {
+    revision: current.revision,
+    answers: [{ id: next.id, answer: "Benjamin from Design" }],
+  });
+  vi.mocked(f.assistant.interpret).mockResolvedValueOnce({
+    ...base,
+    kind: "idea",
+    prompt: "Plan the Portal demo with Benjamin from Design.",
+  });
+  await f.captures.retry(item.id, { revision: current.revision, resetReferences: false });
+  current = f.captures.list()[0];
+  expect(current.refinement).toBe("ready");
+  expect(current.body).toBe(item.body);
+  expect(current.clarifications.map((entry) => entry.answer)).toEqual([
+    "Portal",
+    "Benjamin from Design",
+  ]);
+  expect(current.clarifications.every((entry) => entry.resolved)).toBe(true);
 });
 
 it("distinguishes paused and failed refinement and retains blockers after metadata edits", () => {
