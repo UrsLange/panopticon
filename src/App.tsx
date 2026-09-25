@@ -24,7 +24,7 @@ import type {
   ProfileDocument,
   Settings,
 } from "../shared/schema";
-import { annotatedText, statusLabels } from "../shared/schema";
+import { annotatedText, projectLabel, statusLabels } from "../shared/schema";
 import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
 import { useImplementation } from "./Implementation";
@@ -58,6 +58,7 @@ export function App() {
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState("all");
   const input = useRef<HTMLTextAreaElement>(null);
   const report = useCallback(
     (reason: unknown) =>
@@ -156,7 +157,10 @@ export function App() {
         !["done", "archived"].includes(item.status)) &&
       (view !== "inbox" || statusFilter === "all" || item.status === statusFilter) &&
       (view !== "notebook" || ["idea", "note"].includes(item.kind)) &&
-      `${item.title} ${item.body} ${item.prompt} ${item.project}`
+      (projectFilter === "all" ||
+        projectFilter ===
+          (item.noProject ? "none" : item.project ? `project:${item.project}` : "unassigned")) &&
+      `${item.title} ${item.body} ${item.prompt} ${projectLabel(item)}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
@@ -487,6 +491,28 @@ export function App() {
                     ))}
                   </select>
                 )}
+                <select
+                  aria-label="Filter project"
+                  value={projectFilter}
+                  onChange={(event) => setProjectFilter(event.target.value)}
+                >
+                  <option value="all">All projects</option>
+                  <option value="none">No project</option>
+                  <option value="unassigned">Unassigned</option>
+                  {[
+                    ...new Set(
+                      items
+                        .filter((item) => !item.noProject && item.project)
+                        .map((item) => item.project),
+                    ),
+                  ]
+                    .sort((a, b) => a.localeCompare(b))
+                    .map((project) => (
+                      <option key={project} value={`project:${project}`}>
+                        {project}
+                      </option>
+                    ))}
+                </select>
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -662,7 +688,7 @@ function ItemRow({
           </span>
         )}
         <span>
-          {item.project && <span className="project-tag">{item.project}</span>}
+          <span className="project-tag">{projectLabel(item)}</span>
           {reason ||
             (item.kind === "note"
               ? item.profilePath && item.status === "done"
@@ -781,6 +807,8 @@ function ItemEditor({
   const pendingHandoff = latest?.state === "pending";
   const submitted = latest?.state === "submitted";
   const canImplement =
+    !fields.noProject &&
+    !item.noProject &&
     fields.kind === "commitment" &&
     ["open", "in_progress", "in_review", "waiting"].includes(fields.status) &&
     item.refinement === "ready" &&
@@ -830,11 +858,11 @@ function ItemEditor({
             ? note
               ? "Ready for profile review"
               : "Information needed"
-            : !fields.prompt.trim() && !note
+            : !fields.prompt.trim() && !note && !fields.noProject
               ? "Prompt needed"
               : submitted
                 ? statusLabels[item.status]
-                : pendingHandoff
+                : pendingHandoff && !fields.noProject
                   ? "Handoff unconfirmed"
                   : canImplement
                     ? "Ready for implementation"
@@ -850,7 +878,7 @@ function ItemEditor({
         ? { label: "Save and start in T3 Code", run: () => void implement() }
         : { label: "Save changes", run: () => void save() };
   } else if (!closed) {
-    if (pendingHandoff) {
+    if (pendingHandoff && !fields.noProject) {
       action = options?.configured
         ? {
             label: "Retry handoff",
@@ -875,6 +903,11 @@ function ItemEditor({
       action = aiConfigured
         ? { label: "Add to profile", run: () => void run("Updating profile…", onAddToProfile) }
         : { label: "Open model settings", run: () => setSettingsSection("Model") };
+    } else if (fields.kind === "commitment" && fields.noProject) {
+      action = {
+        label: "Mark complete",
+        run: () => void run("Completing…", () => onSave({ ...fields, status: "done" })),
+      };
     } else if (!fields.prompt.trim()) {
       action = { label: "Write prompt", run: () => promptRef.current?.focus() };
     } else if (fields.kind === "commitment" && !submitted) {
@@ -1034,6 +1067,7 @@ function ItemEditor({
               !failed &&
               !paused &&
               !review &&
+              !fields.noProject &&
               !fields.prompt.trim() &&
               !note && <p>Write a complete prompt below, or use Refine again to generate one.</p>}
             {bodyChanged && (
@@ -1054,17 +1088,26 @@ function ItemEditor({
                 </button>
               </p>
             )}
-            {item.kind === "commitment" && (
+            {fields.noProject && (
+              <p>No project. Track this task here without a local repository.</p>
+            )}
+            {item.kind === "commitment" && (!fields.noProject || latest) && (
               <div className="implementation">
-                {implementation.loading && <p>Checking T3 Code readiness…</p>}
-                {implementation.error && implementation.error !== latest?.error && (
-                  <p role="alert">
-                    {implementation.error}{" "}
-                    <button type="button" className="text-button" onClick={implementation.refresh}>
-                      Check again
-                    </button>
-                  </p>
-                )}
+                {!fields.noProject && implementation.loading && <p>Checking T3 Code readiness…</p>}
+                {!fields.noProject &&
+                  implementation.error &&
+                  implementation.error !== latest?.error && (
+                    <p role="alert">
+                      {implementation.error}{" "}
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={implementation.refresh}
+                      >
+                        Check again
+                      </button>
+                    </p>
+                  )}
                 {latest && (
                   <>
                     <p>
@@ -1073,13 +1116,13 @@ function ItemEditor({
                       {latest.taskChanged && " (earlier task description)"}
                     </p>
                     {latest.error && <p role="alert">{latest.error}</p>}
-                    {pendingHandoff && (
+                    {pendingHandoff && !fields.noProject && (
                       <p>
                         Retry checks the same thread using the original saved task. It does not send
                         your current edits.
                       </p>
                     )}
-                    {submitted && (
+                    {submitted && !fields.noProject && (
                       <>
                         {latest.taskChanged && (
                           <p>
@@ -1145,7 +1188,7 @@ function ItemEditor({
                     )}
                   </>
                 )}
-                {options && !closed && (
+                {options && !closed && !fields.noProject && (
                   <>
                     {!options.configured && (
                       <p>
@@ -1266,7 +1309,7 @@ function ItemEditor({
             <summary>
               Task details{" "}
               <span>
-                {fields.project || "No project"} · {fields.status}
+                {projectLabel(fields)} · {fields.status}
               </span>
             </summary>
             <div className="field-grid">
@@ -1321,10 +1364,21 @@ function ItemEditor({
               Project
               <input
                 value={fields.project}
+                disabled={fields.noProject}
                 maxLength={200}
-                placeholder="Optional project or context"
+                placeholder="Unassigned project or context"
                 onChange={(event) => setFields({ ...fields, project: event.target.value })}
               />
+            </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={fields.noProject}
+                onChange={(event) =>
+                  setFields({ ...fields, noProject: event.target.checked, project: "" })
+                }
+              />
+              No project (outside local repositories)
             </label>
             {fields.kind === "commitment" && (
               <div className="field-grid">
@@ -1465,7 +1519,7 @@ function ItemEditor({
                     Resolve aliases again
                   </button>
                 )}
-                {submitted && (
+                {submitted && !fields.noProject && (
                   <button
                     type="button"
                     className="secondary"
@@ -1485,7 +1539,7 @@ function ItemEditor({
                       : "Connect a model to refine this capture."}
                 </p>
               )}
-              {submitted && (
+              {submitted && !fields.noProject && (
                 <p className="muted-text">
                   Another implementation starts a separate thread from the current saved version.
                 </p>
