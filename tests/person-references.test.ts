@@ -83,6 +83,26 @@ it("preserves exact aliases over directory matches, including missing targets", 
   ]);
 });
 
+it("binds case variants of an explicit alias without making other given names unambiguous", () => {
+  const marcus = person("Marcus", "Chosen", "chosen@example.com");
+  const other = person("Marcus", "Other", "other@example.com");
+  store.replacePeople("/profile", "tenant", [marcus, other], "2026-09-21");
+  const aliases = parseDocument(
+    "---\ntype: Aliases\n---\n| Alias | Kind | Target |\n| --- | --- | --- |\n| Marcus | person | chosen@example.com |",
+    "aliases.md",
+  );
+  for (const mention of ["Marcus", "MARCUS", "marcus"]) {
+    const candidates = context(`Ask ${mention}`, [aliases]).candidates;
+    expect(candidates).toMatchObject([
+      { mention, alias: "Marcus", match: "exact", target: marcus.email, available: true },
+    ]);
+    expect(resolveReferences([candidates[0].id], candidates, [])[0].target).toBe(marcus.email);
+    const withoutAlias = context(`Ask ${mention}`).candidates;
+    expect(withoutAlias).toHaveLength(2);
+    expect(withoutAlias.every((candidate) => !candidate.available)).toBe(true);
+  }
+});
+
 it("does not resolve duplicate full names and respects truncated directory results", () => {
   const people = Array.from({ length: 12 }, (_, index) => ({
     ...first,

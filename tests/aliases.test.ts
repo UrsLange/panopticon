@@ -52,6 +52,27 @@ it("matches normalized aliases and conservative typos without matching substring
   );
 });
 
+it("resolves every casing of one alias to the same target while retaining the original mention", () => {
+  const documents = [project, registry("| Marcus | project | projects/access.md |")];
+  expect(readAliases(documents[1].content)).toHaveLength(1);
+  for (const mention of ["Marcus", "MARCUS", "marcus"]) {
+    const text = `Ask ${mention}`;
+    const candidates = aliasCandidates(text, documents, store, "", null);
+    expect(candidates).toMatchObject([
+      {
+        alias: "Marcus",
+        mention,
+        match: "exact",
+        target: project.path,
+        available: true,
+      },
+    ]);
+    expect(resolveReferences([candidates[0].id], candidates, [])).toMatchObject([
+      { mention, start: 4, end: text.length, target: project.path },
+    ]);
+  }
+});
+
 it("keeps explicit given-name aliases bound to their contact when another person joins", () => {
   const root = "/profile";
   const tenantId = "11111111-1111-4111-8111-111111111111";

@@ -309,6 +309,73 @@ describe("local API", () => {
     expect(store.search("GitHub Access Management").map((entry) => entry.id)).toContain(item.id);
   });
 
+  it("uses one alias target for all casing variants in capture and conversation", async () => {
+    const assistant: Assistant = {
+      interpret: async (text, context) => {
+        expect(context.candidates).toMatchObject([
+          {
+            mention: text.slice(4),
+            alias: "Marcus",
+            match: "exact",
+            available: true,
+          },
+        ]);
+        return {
+          title: text,
+          kind: "idea",
+          project: "",
+          dueDate: null,
+          priority: "normal",
+          relatedId: null,
+          rationale: "Resolved",
+          needsClarification: false,
+          clarificationQuestions: [],
+          updateProfile: false,
+          referenceIds: [context.candidates[0].id],
+          prompt: "",
+          sources: [],
+        };
+      },
+      ask: async (text, context) => {
+        expect(context.candidates).toMatchObject([
+          { mention: text.slice(4), alias: "Marcus", match: "exact", available: true },
+        ]);
+        return { answer: context.candidates[0].target, sources: [] };
+      },
+      updateProfile: async () => {
+        throw new Error("Unexpected profile update");
+      },
+    };
+    const { app, store, profile } = setup(assistant);
+    const project = profile.create("Marcus project", "Project", "Project details");
+    profile.create(
+      "Aliases",
+      "Aliases",
+      `| Alias | Kind | Target |\n| --- | --- | --- |\n| Marcus | project | ${project.path} |`,
+    );
+    for (const mention of ["Marcus", "MARCUS", "marcus"]) {
+      const text = `Ask ${mention}`;
+      const item = store.capture(text);
+      const processed = await app.inject({
+        method: "POST",
+        url: `/api/items/${item.id}/process`,
+        headers,
+      });
+      expect(processed.statusCode).toBe(200);
+      expect(store.get(item.id)?.references).toMatchObject([
+        { mention, target: project.path, label: project.title },
+      ]);
+      const answer = await app.inject({
+        method: "POST",
+        url: "/api/ask",
+        headers,
+        payload: { text },
+      });
+      expect(answer.statusCode).toBe(200);
+      expect(answer.json().answer).toBe(project.path);
+    }
+  });
+
   it("keeps the saved capture when the model invents a reference", async () => {
     const { app, store } = setup({
       interpret: async () => ({
