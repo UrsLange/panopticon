@@ -22,11 +22,14 @@ export type SecurityFinding = RepositoryLink & {
 };
 export type ProjectInsights = {
   checkedAt: string;
+  reviewsCheckedAt?: string;
+  securityCheckedAt?: string;
   reviews: RepositoryLink[];
   findings: SecurityFinding[];
   reviewError: string | null;
   securityErrors: string[];
   pipelines?: {
+    checkedAt?: string;
     branch: string | null;
     failures: RepositoryLink[];
     pending: number;
@@ -49,6 +52,7 @@ export type Project = {
   insights: ProjectInsights | null;
   checkedAt: string | null;
   remoteCheckedAt: string | null;
+  remoteAttemptedAt?: string;
   error: string | null;
   remoteError: string | null;
 };

@@ -20,8 +20,15 @@ export interface ProjectWorkspaceIO {
   }>;
   validate(project: Project): Promise<void>;
   inspect(path: string): Promise<ProjectGit>;
-  refreshRemote(path: string): Promise<void>;
-  insights(url: string): Promise<ProjectInsights>;
+  refreshRemote(path: string, git: ProjectGit): Promise<void>;
+  insights(
+    url: string,
+    options?: {
+      force?: boolean;
+      previous?: ProjectInsights | null;
+      onUpdate?(insights: ProjectInsights): void;
+    },
+  ): Promise<ProjectInsights>;
   changes(path: string): Promise<ProjectChanges>;
   execute(path: string, action: ProjectAction, git: ProjectGit): Promise<void>;
 }
@@ -48,7 +55,7 @@ export function createProjectWorkspace(deps: {
     const { profile, roots } = deps.scope();
     return {
       projects: deps.records.projects(profile).filter((p) => roots.includes(p.root)),
-      refreshing: !!active,
+      refreshing: !!active || refreshing.size > 0,
       refreshingIds: [...refreshing],
       errors,
     };
@@ -65,62 +72,68 @@ export function createProjectWorkspace(deps: {
       if (typeof id === "string") documentPaths.set(id, document.path);
     }
     const queue = [...discovered.repositories];
-    refreshing.clear();
-    for (const entry of queue) refreshing.add(entry.id);
-    const insights = new Map<string, Promise<ProjectInsights>>();
     const seen = new Set(queue.map((p) => p.id));
     for (const old of previous) {
-      if (roots.includes(old.root) && !seen.has(old.id))
+      if (roots.includes(old.root) && !seen.has(old.id)) {
+        if (!busy.has(old.id)) refreshing.delete(old.id);
         deps.records.saveProject(
           withLatestVisibility({ ...old, error: "Checkout unavailable. Check its directory." }),
         );
+      }
     }
-    await Promise.all(
-      Array.from({ length: 4 }, async () => {
-        for (let entry = queue.shift(); entry; entry = queue.shift()) {
-          if (busy.has(entry.id)) {
-            refreshing.delete(entry.id);
-            continue;
+    for (const entry of queue) {
+      if (busy.has(entry.id)) continue;
+      refreshing.add(entry.id);
+      const job = (async () => {
+        const old = previous.find((p) => p.id === entry.id);
+        const project: Project = {
+          profileRoot: profile,
+          document: null,
+          documentSource: "discovery",
+          returnToDefault: true,
+          hidden: false,
+          git: null,
+          insights: null,
+          checkedAt: null,
+          remoteCheckedAt: null,
+          remoteError: null,
+          ...old,
+          ...entry,
+          error: null,
+        };
+        project.document =
+          project.documentSource === "manual"
+            ? documents.some((doc) => doc.path === project.document)
+              ? project.document
+              : null
+            : (documentPaths.get(project.id) ?? null);
+        busy.add(project.id);
+        try {
+          await deps.io.validate(project);
+          project.git = await deps.io.inspect(project.path);
+          project.checkedAt = deps.now();
+          if (
+            old?.git?.repositoryUrl !== project.git.repositoryUrl ||
+            old?.git?.remote !== project.git.remote
+          ) {
+            project.insights = null;
+            project.remoteCheckedAt = null;
+            project.remoteAttemptedAt = undefined;
+            project.remoteError = null;
           }
-          const old = previous.find((p) => p.id === entry.id);
-          const project: Project = {
-            profileRoot: profile,
-            document: null,
-            documentSource: "discovery",
-            returnToDefault: true,
-            hidden: false,
-            git: null,
-            insights: null,
-            checkedAt: null,
-            remoteCheckedAt: null,
-            remoteError: null,
-            ...old,
-            ...entry,
-            error: null,
-          };
-          project.document =
-            project.documentSource === "manual"
-              ? documents.some((doc) => doc.path === project.document)
-                ? project.document
-                : null
-              : (documentPaths.get(project.id) ?? null);
-          busy.add(project.id);
-          try {
-            await deps.io.validate(project);
-            project.git = await deps.io.inspect(project.path);
-            project.checkedAt = deps.now();
-            if (
-              old?.git?.repositoryUrl !== project.git.repositoryUrl ||
-              old?.git?.remote !== project.git.remote
-            ) {
-              project.insights = null;
-              project.remoteCheckedAt = null;
-              project.remoteError = null;
-            }
-            if (remote && project.git.remote) {
+          deps.records.saveProject(withLatestVisibility(project));
+          await Promise.all([
+            (async () => {
+              const attempted = project.remoteAttemptedAt ?? project.remoteCheckedAt;
+              if (
+                !project.git?.remote ||
+                (!remote && attempted && Date.parse(deps.now()) - Date.parse(attempted) < 5 * 60000)
+              )
+                return;
+              project.remoteAttemptedAt = deps.now();
               deps.records.saveProject(withLatestVisibility(project));
               try {
-                await deps.io.refreshRemote(project.path);
+                await deps.io.refreshRemote(project.path, project.git);
                 project.git = await deps.io.inspect(project.path);
                 project.remoteCheckedAt = deps.now();
                 project.remoteError = null;
@@ -128,25 +141,34 @@ export function createProjectWorkspace(deps: {
                 project.remoteError =
                   "Remote check failed. Check network access and Git credentials, then retry.";
               }
-              if (project.git.repositoryUrl) {
-                const url = project.git.repositoryUrl;
-                const request = insights.get(url) ?? deps.io.insights(url);
-                insights.set(url, request);
-                project.insights = await request;
-              }
-            }
-          } catch {
-            project.error = "Cannot inspect this checkout. Check repository access, then refresh.";
-          }
-          try {
-            deps.records.saveProject(withLatestVisibility(project));
-          } finally {
-            busy.delete(project.id);
-            refreshing.delete(project.id);
-          }
+              deps.records.saveProject(withLatestVisibility(project));
+            })(),
+            (async () => {
+              const url = project.git?.repositoryUrl;
+              if (!url) return;
+              project.insights = await deps.io.insights(url, {
+                force: remote,
+                previous: project.insights,
+                onUpdate: (insights) => {
+                  project.insights = insights;
+                  deps.records.saveProject(withLatestVisibility(project));
+                },
+              });
+            })(),
+          ]);
+        } catch {
+          project.error = "Cannot inspect this checkout. Check repository access, then refresh.";
         }
-      }),
-    );
+        try {
+          deps.records.saveProject(withLatestVisibility(project));
+        } finally {
+          busy.delete(project.id);
+          refreshing.delete(project.id);
+        }
+      })();
+      pending.add(job);
+      void job.finally(() => pending.delete(job)).catch(() => {});
+    }
     lastLocal = Date.parse(deps.now());
   }
   function request(remote: boolean) {
@@ -159,7 +181,7 @@ export function createProjectWorkspace(deps: {
         })
         .finally(() => {
           active = null;
-          refreshing.clear();
+          for (const id of refreshing) if (!busy.has(id)) refreshing.delete(id);
         });
     }
     return snapshot();
@@ -218,7 +240,7 @@ export function createProjectWorkspace(deps: {
       if (active) return snapshot();
       if (
         lastScope !== JSON.stringify(deps.scope()) ||
-        Date.parse(deps.now()) - lastLocal > 15000
+        Date.parse(deps.now()) - lastLocal >= 15000
       ) {
         request(false);
       }

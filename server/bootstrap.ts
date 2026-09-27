@@ -24,11 +24,13 @@ import { createAssistant } from "./assistant.js";
 import { config } from "./config.js";
 import { ctxAvailable, searchSessions } from "./ctx.js";
 import { chooseDirectory } from "./directory-picker.js";
+import { createGitHubApi } from "./github-api.js";
 import { createPeopleSync, detectEntraTenant } from "./people.js";
 import { Profile } from "./profile.js";
 import { profileAdapter } from "./profile-adapter.js";
 import { createProjectWorkspaceIO } from "./project-repositories.js";
 import { createProjectScanner } from "./projects.js";
+import { repositoryInsights } from "./repository-insights.js";
 import { createResearch } from "./research-tools.js";
 import { SettingsStore, settingsModels } from "./settings.js";
 import { Store } from "./store.js";
@@ -115,11 +117,14 @@ export function createApplication(options: AppOptions = {}) {
       resolveImplementationRepository(item, repositories(), profileNotes.documents()),
   });
   const profiles = createProfileService(() => profileNotes);
+  const github = createGitHubApi(store);
   const projects = createProjectWorkspace({
     records: store,
     scope: () => ({ profile: profileNotes.root, roots: settings.projectRoots }),
     documents: () => profileNotes.documents(),
-    io: options.projectIO ?? createProjectWorkspaceIO(),
+    io:
+      options.projectIO ??
+      createProjectWorkspaceIO((url, options) => repositoryInsights(url, github, options)),
     now: () => now().toISOString(),
   });
   const conversation = createConversation({ store, getAssistant, context, searchSessions });

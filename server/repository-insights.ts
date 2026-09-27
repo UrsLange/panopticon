@@ -1,100 +1,123 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { z } from "zod";
 import type { ProjectInsights } from "../shared/projects.js";
+import type { GitHubApi } from "./github-api.js";
 
-const execute = promisify(execFile);
-const link = z.object({ number: z.number(), title: z.string(), url: z.string().url() });
-const finding = link.extend({ severity: z.string() });
 const workflow = z.object({ id: z.number().int(), name: z.string(), state: z.string() });
 const workflowRun = z.object({
   id: z.number().int(),
+  workflow_id: z.number().int(),
   html_url: z.string().url(),
   head_branch: z.string().nullable(),
   status: z.string(),
   conclusion: z.string().nullable(),
 });
+const review = z.object({ number: z.number(), title: z.string(), html_url: z.string().url() });
+const finding = review.omit({ title: true }).extend({
+  security_advisory: z.object({ summary: z.string(), severity: z.string() }),
+});
+const minute = 60000;
+
+export type InsightOptions = {
+  force?: boolean;
+  previous?: ProjectInsights | null;
+  onUpdate?(insights: ProjectInsights): void;
+};
 
 export async function repositoryInsights(
   url: string,
-  run: (args: string[]) => Promise<string> = async (args) =>
-    (
-      await execute("gh", args, {
-        encoding: "utf8",
-        timeout: 30000,
-        maxBuffer: 4 * 1024 * 1024,
-        env: { ...process.env, GH_PROMPT_DISABLED: "1" },
-      })
-    ).stdout,
+  api: GitHubApi,
+  options: InsightOptions = {},
 ): Promise<ProjectInsights> {
-  const pipelines: NonNullable<ProjectInsights["pipelines"]> = {
-    branch: null,
-    failures: [],
-    pending: 0,
-    checked: 0,
-    error: null,
-  };
-  const result: ProjectInsights = {
-    checkedAt: new Date().toISOString(),
-    reviews: [],
-    findings: [],
-    reviewError: null,
-    securityErrors: [],
-    pipelines,
-  };
+  const result: ProjectInsights = options.previous
+    ? structuredClone(options.previous)
+    : {
+        checkedAt: "",
+        reviews: [],
+        findings: [],
+        reviewError: null,
+        securityErrors: [],
+      };
   const parsed = new URL(url);
   const repo = parsed.pathname.slice(1);
   if (parsed.hostname !== "github.com" || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-    result.reviewError =
-      "Review integration is available for github.com repositories. Open this repository at its host.";
+    result.reviewError = "Review integration is available for github.com repositories.";
     result.securityErrors = ["Security integration is available for github.com repositories."];
-    pipelines.error = "Pipeline integration is available for github.com repositories.";
+    result.pipelines = {
+      branch: null,
+      failures: [],
+      pending: 0,
+      checked: 0,
+      error: "Pipeline integration is available for github.com repositories.",
+    };
     return result;
   }
-  const valid = (value: { url: string }) => value.url.startsWith(`https://github.com/${repo}/`);
+  const valid = (url: string) => url.startsWith(`https://github.com/${repo}/`);
+  const publish = () => {
+    const dates = [
+      result.reviewsCheckedAt,
+      result.securityCheckedAt,
+      result.pipelines?.checkedAt,
+    ].filter((date): date is string => !!date);
+    result.checkedAt = dates.sort()[0] ?? "";
+    options.onUpdate?.(structuredClone(result));
+  };
   await Promise.all([
     (async () => {
       try {
-        pipelines.branch = z
-          .string()
-          .min(1)
-          .parse(
-            JSON.parse(await run(["api", `repos/${repo}`, "--jq", "{default_branch}"]))
-              .default_branch,
-          );
-        const output = await run([
-          "api",
-          "--paginate",
-          `repos/${repo}/actions/workflows?per_page=100`,
-          "--jq",
-          ".workflows[] | {id,name,state}",
+        const [metadataResult, pagesResult] = await Promise.allSettled([
+          api.get(`repos/${repo}`, 60 * minute, options.force),
+          api.pages(`repos/${repo}/actions/workflows?per_page=100`, 30 * minute, options.force),
         ]);
-        const workflows = output
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => workflow.parse(JSON.parse(line)));
-        for (const entry of workflows.filter((item) => item.state === "active")) {
+        if (metadataResult.status === "rejected") throw metadataResult.reason;
+        if (pagesResult.status === "rejected") throw pagesResult.reason;
+        const metadata = metadataResult.value;
+        const pages = pagesResult.value;
+        const branch = z
+          .object({ default_branch: z.string().min(1) })
+          .parse(metadata.body).default_branch;
+        const workflows = pages
+          .flatMap((page) => z.object({ workflows: z.array(workflow) }).parse(page.body).workflows)
+          .filter((entry) => entry.state === "active");
+        const ttl = result.pipelines?.pending ? 30_000 : 2 * minute;
+        const recent = await api.get(
+          `repos/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&per_page=100`,
+          ttl,
+          options.force,
+        );
+        const runs = z
+          .object({ workflow_runs: z.array(workflowRun) })
+          .parse(recent.body).workflow_runs;
+        const pipelines: NonNullable<ProjectInsights["pipelines"]> = {
+          branch,
+          failures: [],
+          pending: 0,
+          checked: 0,
+          error: null,
+          checkedAt: new Date(recent.checkedAt).toISOString(),
+        };
+        for (const entry of workflows) {
           try {
-            const runs = z
-              .array(workflowRun)
-              .parse(
-                JSON.parse(
-                  await run([
-                    "api",
-                    `repos/${repo}/actions/workflows/${entry.id}/runs?branch=${encodeURIComponent(pipelines.branch)}&per_page=1`,
-                    "--jq",
-                    ".workflow_runs | map({id,html_url,head_branch,status,conclusion})",
-                  ]),
-                ),
+            let latest = runs.find(
+              (run) => run.workflow_id === entry.id && run.head_branch === branch,
+            );
+            if (!latest) {
+              const page = await api.get(
+                `repos/${repo}/actions/workflows/${entry.id}/runs?branch=${encodeURIComponent(branch)}&per_page=1`,
+                ttl,
+                options.force,
               );
+              latest = z.object({ workflow_runs: z.array(workflowRun) }).parse(page.body)
+                .workflow_runs[0];
+              pipelines.checkedAt = new Date(
+                Math.min(recent.checkedAt, page.checkedAt, Date.parse(pipelines.checkedAt ?? "")),
+              ).toISOString();
+            }
             pipelines.checked++;
-            const latest = runs[0];
-            if (!latest || latest.head_branch !== pipelines.branch) continue;
+            if (!latest || latest.head_branch !== branch) continue;
             if (latest.status !== "completed") pipelines.pending++;
             else if (
               ["failure", "timed_out", "startup_failure"].includes(latest.conclusion ?? "") &&
-              valid({ url: latest.html_url })
+              valid(latest.html_url)
             )
               pipelines.failures.push({
                 number: latest.id,
@@ -103,61 +126,92 @@ export async function repositoryInsights(
               });
           } catch {
             pipelines.error =
-              "Some pipeline checks are unavailable. Check GitHub Actions access, then refresh.";
+              "Some pipeline checks are unavailable; previous findings are retained. Checks will retry automatically.";
+            const previous = result.pipelines;
+            if (previous?.branch === branch)
+              pipelines.failures.push(
+                ...previous.failures.filter((failure) => failure.title === entry.name),
+              );
           }
         }
-      } catch {
-        pipelines.error =
-          "Cannot check pipelines. Check GitHub Actions access and your GitHub CLI sign-in, then refresh.";
+        result.pipelines = pipelines;
+      } catch (error) {
+        result.pipelines = {
+          branch: null,
+          failures: [],
+          pending: 0,
+          checked: 0,
+          ...result.pipelines,
+          error: `Cannot check pipelines. ${(error as Error).message}`,
+        };
       }
+      publish();
     })(),
     (async () => {
       try {
-        const output = await run([
-          "pr",
-          "list",
-          "--repo",
-          repo,
-          "--state",
-          "open",
-          "--search",
-          "review-requested:@me",
-          "--limit",
-          "100",
-          "--json",
-          "number,title,url",
-        ]);
-        result.reviews = z.array(link).parse(JSON.parse(output)).filter(valid);
-        if (result.reviews.length === 100)
-          result.reviewError =
-            "Showing the first 100 requested reviews. Open GitHub for the complete list.";
-      } catch {
-        result.reviewError =
-          "Cannot read requested reviews. Install GitHub CLI and sign in with gh auth login, then refresh.";
-      }
-    })(),
-    (async () => {
-      try {
-        const output = await run([
-          "api",
-          "--paginate",
-          `repos/${repo}/dependabot/alerts?state=open&per_page=100`,
-          "--jq",
-          ".[] | {number,title:.security_advisory.summary,url:.html_url,severity:.security_advisory.severity}",
-        ]);
-        const entries = output
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => finding.parse(JSON.parse(line)));
-        result.findings = entries
-          .filter(valid)
-          .map((entry) => ({ ...entry, source: "Dependabot" }));
-      } catch {
-        result.securityErrors.push(
-          "Dependabot unavailable. Check that it is enabled and your GitHub account can read its alerts.",
+        const pages = await api.pages(
+          "search/issues?q=is%3Apr%20is%3Aopen%20review-requested%3A%40me&per_page=100",
+          2 * minute,
+          options.force,
         );
+        const responses = pages.map((page) =>
+          z
+            .object({
+              items: z.array(review),
+              total_count: z.number(),
+              incomplete_results: z.boolean(),
+            })
+            .parse(page.body),
+        );
+        const reviews = responses
+          .flatMap((page) => page.items)
+          .filter((entry) => valid(entry.html_url))
+          .map((entry) => ({ number: entry.number, title: entry.title, url: entry.html_url }));
+        result.reviewError = responses.some(
+          (page) => page.incomplete_results || page.total_count > 1000,
+        )
+          ? "GitHub returned an incomplete review search. Open GitHub for the complete list."
+          : null;
+        result.reviews = result.reviewError
+          ? [
+              ...new Map(
+                [...result.reviews, ...reviews].map((entry) => [entry.url, entry]),
+              ).values(),
+            ]
+          : reviews;
+        result.reviewsCheckedAt = new Date(
+          Math.min(...pages.map((page) => page.checkedAt)),
+        ).toISOString();
+      } catch (error) {
+        result.reviewError = `Cannot read requested reviews. ${(error as Error).message}`;
       }
+      publish();
+    })(),
+    (async () => {
+      try {
+        const pages = await api.pages(
+          `repos/${repo}/dependabot/alerts?state=open&per_page=100`,
+          30 * minute,
+          options.force,
+        );
+        result.findings = pages
+          .flatMap((page) => z.array(finding).parse(page.body))
+          .filter((entry) => valid(entry.html_url))
+          .map((entry) => ({
+            number: entry.number,
+            title: entry.security_advisory.summary,
+            url: entry.html_url,
+            severity: entry.security_advisory.severity,
+            source: "Dependabot" as const,
+          }));
+        result.securityErrors = [];
+        result.securityCheckedAt = new Date(
+          Math.min(...pages.map((page) => page.checkedAt)),
+        ).toISOString();
+      } catch (error) {
+        result.securityErrors = [`Dependabot unavailable. ${(error as Error).message}`];
+      }
+      publish();
     })(),
   ]);
   return result;

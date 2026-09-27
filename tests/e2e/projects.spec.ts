@@ -340,6 +340,20 @@ for (const all of [false, true]) {
   });
 }
 
+test("updates project details while another repository is still refreshing", async ({ page }) => {
+  const { state } = await setup(page);
+  await page.locator(".project-name").first().click();
+  const dialog = page.getByRole("dialog");
+  const pipelines = state.projects[0].insights?.pipelines;
+  if (!pipelines) throw new Error("Missing pipeline fixture");
+  pipelines.failures = [];
+  state.refreshing = true;
+  state.refreshingIds = [state.projects[1].id];
+  await dialog.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(dialog.getByText("No failing pipelines detected.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+});
+
 test("keeps all project information and profile edits in one modal", async ({ page }) => {
   await setup(page);
   await page.locator(".project-name").first().click();

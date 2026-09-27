@@ -81,7 +81,6 @@ export function Projects({
   const request = useRef(0);
   const refreshDetail = useRef(false);
   const detailId = useRef<string | null>(null);
-  const lastRemoteCheck = useRef(0);
   const report = useCallback(
     (reason: unknown) =>
       setError(reason instanceof Error ? reason.message : "Could not update projects."),
@@ -92,7 +91,6 @@ export function Projects({
   }, []);
   const refresh = useCallback(async () => {
     setError("");
-    lastRemoteCheck.current = Date.now();
     setWorkspace(await api<ProjectWorkspace>("/project-workspace/refresh", "POST", {}));
   }, []);
   useEffect(() => {
@@ -102,7 +100,7 @@ export function Projects({
         const next = await api<ProjectWorkspace>("/project-workspace");
         if (stopped) return;
         setWorkspace(next);
-        if (refreshDetail.current && !next.refreshing) {
+        if (refreshDetail.current && !next.refreshingIds.includes(detailId.current ?? "")) {
           refreshDetail.current = false;
           const current = request.current;
           const selected = detailId.current;
@@ -111,9 +109,6 @@ export function Projects({
             if (!stopped && current === request.current)
               setDetail((value) => (value?.project.id === selected ? fresh : value));
           }
-        }
-        if (!next.refreshing && Date.now() - lastRemoteCheck.current > 10 * 60 * 1000) {
-          await refresh();
         }
       } catch (reason) {
         if (!stopped) report(reason);
@@ -125,7 +120,7 @@ export function Projects({
       stopped = true;
       clearInterval(timer);
     };
-  }, [active, refresh, report]);
+  }, [active, report]);
   useEffect(() => {
     detailId.current = detail?.project.id ?? null;
   }, [detail?.project.id]);
@@ -276,6 +271,7 @@ export function Projects({
     }
   };
   const project = detail?.project;
+  const projectRefreshing = !!project && !!workspace?.refreshingIds.includes(project.id);
   const linkedDocument = documents.find((doc) => doc.path === project?.document);
   return (
     <section className="projects-page" aria-label="Projects workspace">
@@ -565,14 +561,14 @@ export function Projects({
             <button
               type="button"
               className="secondary"
-              disabled={busy || workspace?.refreshing}
+              disabled={busy || projectRefreshing}
               onClick={() => {
                 refreshDetail.current = true;
                 void refresh().catch(report);
               }}
             >
               <RefreshCw size={16} />
-              {workspace?.refreshing ? "Checking…" : "Refresh"}
+              {projectRefreshing ? "Checking…" : "Refresh"}
             </button>
           </div>
           {error && (
@@ -631,7 +627,7 @@ export function Projects({
                 <input
                   type="checkbox"
                   checked={!!project?.returnToDefault}
-                  disabled={busy || workspace?.refreshing}
+                  disabled={busy || projectRefreshing}
                   onChange={(event) =>
                     void changeProject({ returnToDefault: event.target.checked })
                   }
@@ -663,7 +659,7 @@ export function Projects({
                 Linked profile page
                 <select
                   value={project?.document ?? ""}
-                  disabled={busy || profileDirty || workspace?.refreshing}
+                  disabled={busy || profileDirty || projectRefreshing}
                   onChange={(event) => void changeProject({ document: event.target.value || null })}
                 >
                   <option value="">No profile page assigned</option>
@@ -1066,7 +1062,9 @@ function RepositoryInformation({
         </>
       )}
       <p className="muted-text">
-        Checked {date(insights.checkedAt)}. Opening an item does not mark it resolved.
+        Reviews checked {date(insights.reviewsCheckedAt)}. Security checked{" "}
+        {date(insights.securityCheckedAt)}. Pipelines checked {date(insights.pipelines?.checkedAt)}.
+        Opening an item does not mark it resolved.
       </p>
     </div>
   );

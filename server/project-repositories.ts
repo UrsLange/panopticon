@@ -4,25 +4,31 @@ import { existsSync } from "node:fs";
 import { lstat, readdir, realpath, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { ProjectAction, ProjectGit } from "../shared/projects.js";
+import { concurrency } from "./application/concurrency.js";
 import { ApplicationError } from "./application/errors.js";
 import type { ProjectWorkspaceIO } from "./application/project-workspace.js";
-import { repositoryInsights } from "./repository-insights.js";
+
+const localGit = concurrency(8);
+const remoteGit = concurrency(4);
 
 function git(path: string, args: string[], input?: string) {
-  return new Promise<string>((resolve, reject) => {
-    const child = execFile(
-      "git",
-      ["--no-pager", "--literal-pathspecs", "-c", "core.fsmonitor=false", "-C", path, ...args],
-      {
-        encoding: "utf8",
-        timeout: 60000,
-        maxBuffer: 32 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
-      },
-      (error, stdout) => (error ? reject(error) : resolve(stdout)),
-    );
-    child.stdin?.end(input);
-  });
+  return (args[0] === "fetch" || args[0] === "ls-remote" ? remoteGit : localGit)(
+    () =>
+      new Promise<string>((resolve, reject) => {
+        const child = execFile(
+          "git",
+          ["--no-pager", "--literal-pathspecs", "-c", "core.fsmonitor=false", "-C", path, ...args],
+          {
+            encoding: "utf8",
+            timeout: 60000,
+            maxBuffer: 32 * 1024 * 1024,
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+          },
+          (error, stdout) => (error ? reject(error) : resolve(stdout)),
+        );
+        child.stdin?.end(input);
+      }),
+  );
 }
 
 async function optional(path: string, args: string[]) {
@@ -326,7 +332,9 @@ async function execute(path: string, action: ProjectAction, state: ProjectGit) {
   }
 }
 
-export function createProjectWorkspaceIO(): ProjectWorkspaceIO {
+export function createProjectWorkspaceIO(
+  insights: ProjectWorkspaceIO["insights"],
+): ProjectWorkspaceIO {
   return {
     async discover(roots, profile) {
       const repositories: { id: string; name: string; path: string; root: string }[] = [];
@@ -373,8 +381,7 @@ export function createProjectWorkspaceIO(): ProjectWorkspaceIO {
         );
     },
     inspect,
-    async refreshRemote(path) {
-      const state = await inspect(path);
+    async refreshRemote(path, state) {
       if (state.remote) {
         await git(path, ["fetch", "--", state.remote]);
         const head = await git(path, ["ls-remote", "--symref", "--", state.remote, "HEAD"]);
@@ -387,7 +394,7 @@ export function createProjectWorkspaceIO(): ProjectWorkspaceIO {
           ]);
       }
     },
-    insights: repositoryInsights,
+    insights,
     async changes(path) {
       const state = await inspect(path);
       const status = await git(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);

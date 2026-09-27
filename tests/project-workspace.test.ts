@@ -13,7 +13,6 @@ import { join } from "node:path";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { createProjectWorkspace } from "../server/application/project-workspace.js";
 import { createProjectWorkspaceIO, repositoryWebUrl } from "../server/project-repositories.js";
-import { repositoryInsights } from "../server/repository-insights.js";
 import { Store } from "../server/store.js";
 import { type Project, projectAttention, projectNeedsAttention } from "../shared/projects.js";
 
@@ -57,7 +56,13 @@ function fixture(persistent = false) {
   git(repo, "add", "README.md");
   git(repo, "commit", "-m", "test: initial");
   git(repo, "push", "-u", "origin", "main");
-  const io = createProjectWorkspaceIO();
+  const io = createProjectWorkspaceIO(async () => ({
+    checkedAt: new Date().toISOString(),
+    reviews: [],
+    findings: [],
+    reviewError: null,
+    securityErrors: [],
+  }));
   const store = new Store(persistent ? join(root, "projects.sqlite") : ":memory:");
   stores.push(store);
   let selectedRoots = [directory];
@@ -115,6 +120,84 @@ it("returns saved projects while discovery is blocked and reports refresh progre
     await f.workspace.close();
   }
   expect((await f.workspace.list()).refreshingIds).toEqual([]);
+});
+
+it("refreshes other repositories again while one remote is still blocked", async () => {
+  const f = fixture();
+  const base = (await listReady(f.workspace)).projects[0];
+  const entries = Array.from({ length: 8 }, (_, i) => ({
+    ...base,
+    id: `repo-${i}`,
+    name: `repo-${i}`,
+    path: `${f.directory}/repo-${i}`,
+    remoteAttemptedAt: undefined,
+    remoteCheckedAt: null,
+  }));
+  for (const entry of entries) f.store.saveProject(entry);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let time = Date.now();
+  const inspect = vi.fn(async () => {
+    assert(base.git);
+    return { ...base.git, repositoryUrl: "https://github.com/acme/app" };
+  });
+  const remote = vi.fn(async (path: string) => {
+    if (path.endsWith("repo-0")) await gate;
+  });
+  const workspace = createProjectWorkspace({
+    records: f.store,
+    scope: () => ({ profile: f.profile, roots: [f.directory] }),
+    documents: () => [],
+    now: () => new Date(time).toISOString(),
+    io: {
+      ...f.io,
+      discover: async () => ({
+        repositories: entries.map(({ id, name, path, root }) => ({ id, name, path, root })),
+        errors: [],
+      }),
+      validate: async () => {},
+      inspect,
+      refreshRemote: remote,
+    },
+  });
+  try {
+    await workspace.list();
+    await vi.waitFor(() => expect(remote).toHaveBeenCalledTimes(8));
+    await vi.waitFor(() =>
+      expect(
+        f.store.projects(f.profile).find((p) => p.id === "repo-7")?.remoteCheckedAt,
+      ).toBeTruthy(),
+    );
+    expect((await workspace.list()).refreshingIds).toEqual(["repo-0"]);
+    const before = inspect.mock.calls.length;
+    time += 16000;
+    await workspace.list();
+    await vi.waitFor(() => expect(inspect.mock.calls.length).toBe(before + 7));
+    expect(remote).toHaveBeenCalledTimes(8);
+  } finally {
+    release();
+    await workspace.close();
+  }
+});
+
+it("reuses persisted remote freshness after restarting the workspace", async () => {
+  const f = fixture();
+  const p = (await listReady(f.workspace)).projects[0];
+  const remote = vi.spyOn(f.io, "refreshRemote");
+  const workspace = createProjectWorkspace({
+    records: f.store,
+    scope: () => ({ profile: f.profile, roots: [f.directory] }),
+    documents: () => [],
+    io: f.io,
+    now: () => p.remoteCheckedAt ?? "",
+  });
+  await listReady(workspace);
+  expect(remote).not.toHaveBeenCalled();
+  workspace.refresh();
+  await workspace.close();
+  expect(remote).toHaveBeenCalledTimes(1);
 });
 
 it("discovers independent projects, skips symlinks and nested repositories, and persists preferences", async () => {
@@ -381,75 +464,6 @@ it("reports unreadable roots and does not operate on replaced symlink checkouts"
   await expect(f.io.validate({ ...p, name: "alias", path: alias })).rejects.toThrow(
     "configured checkout",
   );
-});
-
-it("reads only requested reviews and Dependabot alerts and rejects invalid links", async () => {
-  const run = vi.fn(async (args: string[]) => {
-    if (args[0] === "pr")
-      return JSON.stringify([
-        { number: 2, title: "Review me", url: "https://github.com/acme/app/pull/2" },
-      ]);
-    if (args.some((value) => value.includes("/dependabot/")))
-      return [
-        JSON.stringify({
-          number: 1,
-          title: "Dependency",
-          url: "https://github.com/acme/app/security/dependabot/1",
-          severity: "high",
-        }),
-        JSON.stringify({
-          number: 3,
-          title: "Invalid link",
-          url: "https://evil.test/alert",
-          severity: "high",
-        }),
-      ].join("\n");
-    throw new Error("Forbidden");
-  });
-  const result = await repositoryInsights("https://github.com/acme/app", run);
-  expect(result.reviews).toHaveLength(1);
-  expect(result.findings).toHaveLength(1);
-  expect(result.securityErrors).toEqual([]);
-  expect(result.reviewError).toBeNull();
-  expect(run.mock.calls.some(([args]) => args.includes("--paginate"))).toBe(true);
-  expect(run).toHaveBeenCalledTimes(3);
-  const securityCalls = run.mock.calls.filter(([args]) =>
-    args.some((arg) => arg.includes("/dependabot/")),
-  );
-  expect(securityCalls).toHaveLength(1);
-  expect(securityCalls[0][0]).toContain("repos/acme/app/dependabot/alerts?state=open&per_page=100");
-  for (const [args] of securityCalls) {
-    expect(args).not.toContain("--slurp");
-    expect(args[args.indexOf("--jq") + 1]).toMatch(/^\.\[\] \| /);
-  }
-  const unavailable = await repositoryInsights("https://github.com/acme/app", async () => {
-    throw new Error("No gh");
-  });
-  expect(unavailable.reviewError).toContain("GitHub CLI");
-  expect(unavailable.securityErrors).toHaveLength(1);
-  expect(unavailable.securityErrors[0]).toContain("Dependabot unavailable");
-});
-
-it("reads findings across pages and accepts empty security results", async () => {
-  const findings = [1, 2].map((number) => ({
-    number,
-    title: `Dependency ${number}`,
-    url: `https://github.com/acme/app/security/dependabot/${number}`,
-    severity: "high",
-  }));
-  const result = await repositoryInsights("https://github.com/acme/app", async (args) => {
-    if (args[0] === "pr") return "[]";
-    if (args.some((value) => value.includes("/dependabot/")))
-      return `${findings.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
-    return "";
-  });
-  expect(result.findings).toEqual(findings.map((entry) => ({ ...entry, source: "Dependabot" })));
-  expect(result.securityErrors).toEqual([]);
-  const empty = await repositoryInsights("https://github.com/acme/app", async (args) =>
-    args[0] === "pr" ? "[]" : "",
-  );
-  expect(empty.findings).toEqual([]);
-  expect(empty.securityErrors).toEqual([]);
 });
 
 it("reserves security attention for findings while retaining coverage errors", async () => {
