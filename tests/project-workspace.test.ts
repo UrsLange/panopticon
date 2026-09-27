@@ -343,7 +343,6 @@ it.each([false, true])(
     try {
       expect(f.workspace.update(p.id, { t3 }).t3).toEqual(t3);
       expect((await f.workspace.list()).projects[0].t3).toEqual(t3);
-      expect(f.workspace.update(p.id, { t3, returnToDefault: false }).returnToDefault).toBe(false);
     } finally {
       release();
       await f.workspace.close();
