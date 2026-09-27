@@ -137,6 +137,7 @@ async function setup(page: Page, openProjects = true) {
         p.git.ahead = 1;
       }
       if (input.action === "push") p.git.ahead = 0;
+      if (input.action === "discard") p.git.dirty = false;
       if (input.action === "pull") p.git.behind = 0;
       p.git.version += "-next";
     }
@@ -309,6 +310,35 @@ test("pulls directly from a tile and commits and pushes from one action form", a
     { action: "push", version: "version-0-next" },
   ]);
 });
+
+for (const all of [false, true]) {
+  test(`confirms before discarding ${all ? "all" : "selected"} changes without a commit message`, async ({
+    page,
+  }) => {
+    const { actions } = await setup(page);
+    await page.getByRole("button", { name: /Review and commit local changes: Panopticon/ }).click();
+    const dialog = page.getByRole("dialog");
+    if (!all) await dialog.getByRole("checkbox").check();
+    const button = dialog.getByRole("button", {
+      name: all ? "Discard all changes" : "Discard selected files",
+      exact: true,
+    });
+    page.once("dialog", (confirmation) => confirmation.dismiss());
+    await button.click();
+    expect(actions).toEqual([]);
+    await expect(dialog).toBeVisible();
+    page.once("dialog", async (confirmation) => {
+      expect(confirmation.message()).toContain("src/Projects.tsx");
+      expect(confirmation.message()).toContain("cannot be undone");
+      await confirmation.accept();
+    });
+    await button.click();
+    await expect(dialog).not.toBeVisible();
+    expect(actions).toMatchObject([
+      { action: "discard", files: ["src/Projects.tsx"], version: "version-0" },
+    ]);
+  });
+}
 
 test("keeps all project information and profile edits in one modal", async ({ page }) => {
   await setup(page);

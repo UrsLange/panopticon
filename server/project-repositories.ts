@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, readdir, realpath, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { ProjectAction, ProjectGit } from "../shared/projects.js";
 import { ApplicationError } from "./application/errors.js";
@@ -163,9 +163,8 @@ async function execute(path: string, action: ProjectAction, state: ProjectGit) {
     reject("Resolve the current Git operation in your editor before continuing.");
   if (!state.branch) reject("Check out a branch before changing this repository.");
   try {
-    if (action.action === "commit") {
-      if (!action.message || !action.files?.length)
-        throw new ApplicationError("invalid", "Choose files and enter a commit message.");
+    if (action.action === "commit" || action.action === "discard") {
+      if (!action.files?.length) throw new ApplicationError("invalid", "Choose files to change.");
       const files = changedFiles(
         await git(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
       );
@@ -180,10 +179,73 @@ async function execute(path: string, action: ProjectAction, state: ProjectGit) {
       )
         throw new ApplicationError("invalid", "Choose current changed files from this checkout.");
       const paths = action.files.flatMap((path) => {
-        const previous = files.find((file) => file.path === path)?.previousPath;
+        const entry = files.find((file) => file.path === path);
+        const previous =
+          action.action === "commit" || entry?.status.includes("R")
+            ? entry?.previousPath
+            : undefined;
         return previous ? [path, previous] : [path];
       });
       const input = `${paths.join("\0")}\0`;
+      if (action.action === "discard") {
+        const indexed = await git(path, ["ls-files", "--stage", "-z"]);
+        const submodules = indexed
+          .split("\0")
+          .filter((entry) => entry.startsWith("160000 "))
+          .map((entry) => entry.slice(entry.indexOf("\t") + 1));
+        for (const file of paths) {
+          if (submodules.includes(file))
+            reject("Discard submodule changes inside the submodule checkout.");
+          const parts = file.split("/");
+          for (let i = 1; i < parts.length; i++) {
+            const parent = await lstat(join(path, ...parts.slice(0, i))).catch(
+              (error: NodeJS.ErrnoException) => {
+                if (error.code === "ENOENT") return null;
+                throw error;
+              },
+            );
+            if (parent?.isSymbolicLink())
+              reject("A changed file has a symbolic-link parent. Refresh the checkout.");
+          }
+          const stat = await lstat(join(path, file)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          });
+          if (stat?.isDirectory()) reject("Discard directories inside their own checkout.");
+        }
+        const tracked = paths.filter(
+          (file) => !files.some((entry) => entry.path === file && entry.status === "??"),
+        );
+        if (tracked.length) {
+          if (state.head)
+            await git(
+              path,
+              [
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+              ],
+              `${tracked.join("\0")}\0`,
+            );
+          else
+            await git(
+              path,
+              ["rm", "--cached", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"],
+              `${tracked.join("\0")}\0`,
+            );
+        }
+        for (const file of paths.filter((file) => !state.head || !tracked.includes(file))) {
+          await unlink(join(path, file)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT") throw error;
+          });
+        }
+        return;
+      }
+      if (!action.message)
+        throw new ApplicationError("invalid", "Choose files and enter a commit message.");
       await git(
         path,
         ["add", "--pathspec-from-file=-", "--pathspec-file-nul"],

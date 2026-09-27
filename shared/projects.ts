@@ -67,7 +67,7 @@ export type ProjectChanges = {
 export type ProjectDetail = { project: Project; changes: ProjectChanges };
 
 export const projectActionSchema = z.object({
-  action: z.enum(["pull", "push", "commit", "switch", "merge"]),
+  action: z.enum(["pull", "push", "commit", "discard", "switch", "merge"]),
   version: z.string().min(1),
   message: z.string().trim().min(1).max(2000).optional(),
   files: z.array(z.string().min(1).max(4096)).min(1).max(5000).optional(),

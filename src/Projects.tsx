@@ -195,7 +195,7 @@ export function Projects({
       setAction(null);
       modal.current?.close();
       setNotice(
-        `${project.name}: ${push ? "committed and pushed" : { commit: "committed", pull: "updated", push: "pushed", merge: "merged", switch: "switched to the default branch" }[input.action]}.`,
+        `${project.name}: ${push ? "committed and pushed" : { commit: "committed", discard: "discarded changes", pull: "updated", push: "pushed", merge: "merged", switch: "switched to the default branch" }[input.action]}.`,
       );
       await reload();
     } catch (reason) {
@@ -851,12 +851,21 @@ function ProjectChangeForm({ detail, busy, onAction }: ActionProps) {
     const push = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "push";
     void onAction(project, { action: "commit", files, message }, push);
   };
+  const discard = (selected: string[]) => {
+    if (
+      !window.confirm(
+        `Discard changes to ${selected.length} file${selected.length === 1 ? "" : "s"} in ${project.name}?\n\n${selected.join("\n")}\n\nStaged and unstaged changes will be lost. New files will be deleted. This cannot be undone.`,
+      )
+    )
+      return;
+    void onAction(project, { action: "discard", files: selected });
+  };
   return (
     <>
       {changes.files.length ? (
         <form onSubmit={commit}>
           <p className="muted-text">
-            Choose the files to commit. Unselected staged work stays untouched.
+            Choose the files to commit or discard. Unselected staged work stays untouched.
           </p>
           <div className="project-file-list">
             {changes.files.map((file) => (
@@ -901,6 +910,22 @@ function ProjectChangeForm({ detail, busy, onAction }: ActionProps) {
             />
           </label>
           <div className="project-inline-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || !git?.branch || git.conflicts || git.operation || !files.length}
+              onClick={() => discard(files)}
+            >
+              Discard selected files
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || !git?.branch || git.conflicts || git.operation}
+              onClick={() => discard(changes.files.map((file) => file.path))}
+            >
+              Discard all changes
+            </button>
             <button type="submit" className="secondary" disabled={disabled}>
               Commit selected files
             </button>

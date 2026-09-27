@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, assert, expect, it, vi } from "vitest";
@@ -533,4 +541,95 @@ it("commits a selected rename atomically and treats pathspec-like filenames lite
   });
   expect(git(f.repo, "ls-tree", "--name-only", "HEAD")).toBe(":(glob)*.txt\nrenamed.md");
   expect(git(f.repo, "status", "--porcelain")).toBe("");
+});
+
+it("discards selected tracked and new files while preserving unrelated staged changes", async () => {
+  const f = fixture();
+  writeFileSync(join(f.repo, "README.md"), "staged edit");
+  git(f.repo, "add", "README.md");
+  writeFileSync(join(f.repo, "README.md"), "unstaged edit");
+  writeFileSync(join(f.repo, "added.txt"), "added");
+  writeFileSync(join(f.repo, "keep.txt"), "keep");
+  git(f.repo, "add", "added.txt", "keep.txt");
+  writeFileSync(join(f.repo, ":(glob)*.txt"), "untracked");
+  const p = (await listReady(f.workspace)).projects[0];
+  const result = await f.workspace.action(p.id, {
+    action: "discard",
+    version: version(p),
+    files: ["README.md", "added.txt", ":(glob)*.txt"],
+  });
+  expect(readFileSync(join(f.repo, "README.md"), "utf8")).toBe("initial\n");
+  expect(existsSync(join(f.repo, "added.txt"))).toBe(false);
+  expect(existsSync(join(f.repo, ":(glob)*.txt"))).toBe(false);
+  expect(git(f.repo, "diff", "--cached", "--name-only")).toBe("keep.txt");
+  expect(result.changes.files.map((file) => file.path)).toEqual(["keep.txt"]);
+});
+
+it("discards all reviewed changes including renames and deletions", async () => {
+  const f = fixture();
+  writeFileSync(join(f.repo, "deleted.txt"), "restore me");
+  git(f.repo, "add", "deleted.txt");
+  git(f.repo, "commit", "-m", "test: deletion fixture");
+  git(f.repo, "rm", "deleted.txt");
+  git(f.repo, "mv", "README.md", "renamed.md");
+  writeFileSync(join(f.repo, "new.txt"), "new");
+  const p = (await listReady(f.workspace)).projects[0];
+  const before = await f.workspace.detail(p.id);
+  const result = await f.workspace.action(p.id, {
+    action: "discard",
+    version: version(before.project),
+    files: before.changes.files.map((file) => file.path),
+  });
+  expect(result.changes.files).toEqual([]);
+  expect(readFileSync(join(f.repo, "README.md"), "utf8")).toBe("initial\n");
+  expect(readFileSync(join(f.repo, "deleted.txt"), "utf8")).toBe("restore me");
+  expect(existsSync(join(f.repo, "renamed.md"))).toBe(false);
+});
+
+it("rejects stale and invalid discard requests without deleting files", async () => {
+  const f = fixture();
+  writeFileSync(join(f.repo, "README.md"), "first");
+  const p = (await listReady(f.workspace)).projects[0];
+  writeFileSync(join(f.repo, "README.md"), "later edit");
+  await expect(
+    f.workspace.action(p.id, { action: "discard", version: version(p), files: ["README.md"] }),
+  ).rejects.toThrow("checkout changed");
+  const current = await f.workspace.detail(p.id);
+  for (const files of [undefined, [], ["../outside"], ["unchanged.txt"]]) {
+    await expect(
+      f.workspace.action(p.id, { action: "discard", version: version(current.project), files }),
+    ).rejects.toThrow("Choose");
+  }
+  expect(readFileSync(join(f.repo, "README.md"), "utf8")).toBe("later edit");
+});
+
+it("discards staged and untracked files before the first commit", async () => {
+  const f = fixture();
+  const repo = join(f.directory, "unborn");
+  git(f.root, "init", "--initial-branch=main", repo);
+  writeFileSync(join(repo, "staged.txt"), "staged");
+  git(repo, "add", "staged.txt");
+  writeFileSync(join(repo, "staged.txt"), "edited after staging");
+  writeFileSync(join(repo, "untracked.txt"), "untracked");
+  const p = (await listReady(f.workspace)).projects.find((p) => p.name === "unborn");
+  assert(p);
+  const result = await f.workspace.action(p.id, {
+    action: "discard",
+    version: version(p),
+    files: ["staged.txt", "untracked.txt"],
+  });
+  expect(result.changes.files).toEqual([]);
+  expect(existsSync(join(repo, "staged.txt"))).toBe(false);
+  expect(existsSync(join(repo, "untracked.txt"))).toBe(false);
+});
+
+it("discards a symlink itself without deleting its target", async () => {
+  const f = fixture();
+  const outside = join(f.root, "outside.txt");
+  writeFileSync(outside, "keep me");
+  symlinkSync(outside, join(f.repo, "link.txt"));
+  const p = (await listReady(f.workspace)).projects[0];
+  await f.workspace.action(p.id, { action: "discard", version: version(p), files: ["link.txt"] });
+  expect(existsSync(join(f.repo, "link.txt"))).toBe(false);
+  expect(readFileSync(outside, "utf8")).toBe("keep me");
 });
