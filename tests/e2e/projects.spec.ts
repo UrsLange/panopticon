@@ -286,6 +286,16 @@ test("configures project T3 overrides and global defaults during refreshes", asy
   await page.screenshot({ path: "test-results/project-t3-settings-mobile.png" });
 });
 
+test("links project tiles to new Warp windows with encoded checkout paths", async ({ page }) => {
+  const { state } = await setup(page);
+  state.projects[0].path = "/work/my project & notes/#1";
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("link", { name: /Open in Warp: Panopticon/ })).toHaveAttribute(
+    "href",
+    `warp://action/new_window?path=${encodeURIComponent(state.projects[0].path)}`,
+  );
+});
+
 test("shows dense equal tiles, fixed icon positions, and searches all 100 projects", async ({
   page,
 }) => {

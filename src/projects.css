@@ -127,6 +127,23 @@
 .project-name:hover {
   color: var(--accent);
 }
+.project-tile-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.project-tile-heading .project-name {
+  min-width: 0;
+}
+.project-warp {
+  display: flex;
+  flex-shrink: 0;
+  padding: 4px;
+  color: var(--muted);
+}
+.project-warp:hover {
+  color: var(--accent);
+}
 .project-t3-defaults {
   margin-top: 24px;
 }

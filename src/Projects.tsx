@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Terminal,
   Workflow,
   X,
 } from "lucide-react";
@@ -395,15 +396,25 @@ export function Projects({
           const actions = projectAttention(project);
           return (
             <article className="project-tile" key={project.id} aria-label={project.name}>
-              <button
-                type="button"
-                className="project-name"
-                title={`${project.name}\n${project.path}`}
-                disabled={busy || loading}
-                onClick={() => void open(project)}
-              >
-                {project.name}
-              </button>
+              <div className="project-tile-heading">
+                <button
+                  type="button"
+                  className="project-name"
+                  title={`${project.name}\n${project.path}`}
+                  disabled={busy || loading}
+                  onClick={() => void open(project)}
+                >
+                  {project.name}
+                </button>
+                <a
+                  className="project-warp"
+                  href={`warp://action/new_window?path=${encodeURIComponent(project.path)}`}
+                  aria-label={`Open in Warp: ${project.name}`}
+                  title="Open in Warp (new window)"
+                >
+                  <Terminal size={16} />
+                </a>
+              </div>
               <div className="project-branch" title={project.git?.branch ?? "Detached HEAD"}>
                 {workspace?.refreshingIds.includes(project.id) && (
                   <LoaderCircle
