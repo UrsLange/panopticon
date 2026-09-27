@@ -78,7 +78,7 @@ function project(index: number): Project {
   };
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, openProjects = true) {
   const settings = await (await page.request.get("/api/settings")).json();
   await page.route("**/api/settings", (route) =>
     route.fulfill({
@@ -88,6 +88,7 @@ async function setup(page: Page) {
   const state: ProjectWorkspace = {
     projects: Array.from({ length: 100 }, (_, i) => project(i)),
     refreshing: false,
+    refreshingIds: [],
     errors: [],
   };
   let doc: ProfileDocument = {
@@ -148,6 +149,7 @@ async function setup(page: Page) {
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
+  if (!openProjects) return { state, actions };
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("button", { name: "Projects", exact: true })
@@ -155,6 +157,26 @@ async function setup(page: Page) {
   await expect(page.locator(".project-tile")).toHaveCount(8);
   return { state, actions };
 }
+
+test("loads saved projects before opening the tab and shows per-project refresh progress", async ({
+  page,
+}) => {
+  const { state } = await setup(page, false);
+  await expect(page.locator(".project-tile")).toHaveCount(8);
+  state.refreshing = true;
+  state.refreshingIds = [state.projects[0].id];
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("button", { name: "Projects", exact: true })
+    .click();
+  await expect(
+    page.getByLabel(`Refreshing ${state.projects[0].name}`, { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".project-tile")).toHaveCount(8);
+  state.refreshing = false;
+  state.refreshingIds = [];
+  await expect(page.locator(".project-tile .spin")).toHaveCount(0);
+});
 
 test("shows dense equal tiles, fixed icon positions, and searches all 100 projects", async ({
   page,
@@ -205,7 +227,7 @@ test("hides projects from both views and search, and restores them through Show 
   const { state } = await setup(page);
   state.refreshing = true;
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Checking…", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeDisabled();
   await page.locator(".project-name").first().click();
   await page.getByLabel("Hide project from dashboard").click();
   await expect(page.getByLabel("Hide project from dashboard")).toBeChecked();

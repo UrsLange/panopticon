@@ -96,7 +96,6 @@ export function Projects({
     setWorkspace(await api<ProjectWorkspace>("/project-workspace/refresh", "POST", {}));
   }, []);
   useEffect(() => {
-    if (!active) return;
     let stopped = false;
     const poll = async () => {
       try {
@@ -113,7 +112,7 @@ export function Projects({
               setDetail((value) => (value?.project.id === selected ? fresh : value));
           }
         }
-        if (Date.now() - lastRemoteCheck.current > 10 * 60 * 1000) {
+        if (!next.refreshing && Date.now() - lastRemoteCheck.current > 10 * 60 * 1000) {
           await refresh();
         }
       } catch (reason) {
@@ -121,7 +120,7 @@ export function Projects({
       }
     };
     void poll();
-    const timer = setInterval(() => void poll(), 5000);
+    const timer = setInterval(() => void poll(), active ? 2000 : 5000);
     return () => {
       stopped = true;
       clearInterval(timer);
@@ -298,12 +297,7 @@ export function Projects({
             void refresh().catch(report);
           }}
         >
-          {workspace?.refreshing ? (
-            <LoaderCircle className="spin" size={16} />
-          ) : (
-            <RefreshCw size={16} />
-          )}{" "}
-          {workspace?.refreshing ? "Checking…" : "Refresh"}
+          <RefreshCw size={16} /> Refresh
         </button>
       </div>
       {!action && !detail && error && (
@@ -398,6 +392,13 @@ export function Projects({
                 {project.name}
               </button>
               <div className="project-branch" title={project.git?.branch ?? "Detached HEAD"}>
+                {workspace?.refreshingIds.includes(project.id) && (
+                  <LoaderCircle
+                    className="spin"
+                    size={13}
+                    aria-label={`Refreshing ${project.name}`}
+                  />
+                )}
                 {project.hidden && <EyeOff size={13} aria-label="Hidden project" />}
                 <GitBranch size={13} />
                 <span>
@@ -466,7 +467,9 @@ export function Projects({
                 ? "All projects are hidden"
                 : workspace.projects.length
                   ? "Nothing needs your attention"
-                  : "No projects detected"}
+                  : workspace.refreshing
+                    ? "Discovering projects…"
+                    : "No projects detected"}
           </h2>
           <p>
             {search || root
@@ -475,9 +478,11 @@ export function Projects({
                 ? "Enable Show hidden projects to find and restore a project."
                 : workspace.projects.length
                   ? "Search to open any project, or show all projects."
-                  : "Choose directories containing your Git repositories in Settings."}
+                  : workspace.refreshing
+                    ? "Checking your configured project directories."
+                    : "Choose directories containing your Git repositories in Settings."}
           </p>
-          {!workspace.projects.length && (
+          {!workspace.projects.length && !workspace.refreshing && (
             <button type="button" className="secondary" onClick={onSettings}>
               Configure directories
             </button>

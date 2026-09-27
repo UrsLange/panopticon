@@ -56,6 +56,7 @@ export type Project = {
 export type ProjectWorkspace = {
   projects: Project[];
   refreshing: boolean;
+  refreshingIds: string[];
   errors: string[];
 };
 export type ProjectChanges = {

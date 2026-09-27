@@ -15,6 +15,11 @@ function version(project: Project) {
   assert(project.git);
   return project.git.version;
 }
+async function listReady(workspace: ReturnType<typeof createProjectWorkspace>) {
+  await workspace.list();
+  await workspace.close();
+  return workspace.list();
+}
 const identity = {
   GIT_AUTHOR_NAME: "Test",
   GIT_AUTHOR_EMAIL: "test@example.test",
@@ -79,12 +84,37 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+it("returns saved projects while discovery is blocked and reports refresh progress", async () => {
+  const f = fixture();
+  const saved = (await listReady(f.workspace)).projects[0];
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const discover = f.io.discover;
+  vi.spyOn(f.io, "discover").mockImplementation(async (...args) => {
+    await gate;
+    return discover(...args);
+  });
+  f.tick();
+  try {
+    const state = await f.workspace.list();
+    expect(state.projects).toEqual([saved]);
+    expect(state.refreshing).toBe(true);
+    expect(state.refreshingIds).toEqual([saved.id]);
+  } finally {
+    release();
+    await f.workspace.close();
+  }
+  expect((await f.workspace.list()).refreshingIds).toEqual([]);
+});
+
 it("discovers independent projects, skips symlinks and nested repositories, and persists preferences", async () => {
   const f = fixture();
   symlinkSync(f.repo, join(f.directory, "alias"));
   mkdirSync(join(f.directory, "container"));
   git(f.root, "init", join(f.directory, "container", "nested"));
-  const state = await f.workspace.list();
+  const state = await listReady(f.workspace);
   expect(state.projects).toHaveLength(1);
   const project = state.projects[0];
   expect(project).toMatchObject({
@@ -96,18 +126,18 @@ it("discovers independent projects, skips symlinks and nested repositories, and 
   expect(f.store.projects(f.profile)[0].returnToDefault).toBe(false);
   expect(f.store.projects("/another-profile")).toEqual([]);
   f.removeRoot();
-  expect((await f.workspace.list()).projects).toEqual([]);
+  expect((await listReady(f.workspace)).projects).toEqual([]);
   await expect(f.workspace.detail(project.id)).rejects.toThrow("not found");
 });
 
 it("persists hidden projects across refreshes and database restarts and allows restoring them", async () => {
   const f = fixture(true);
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   expect(p.hidden).toBe(false);
   f.workspace.update(p.id, { hidden: true });
   f.workspace.refresh();
   await f.workspace.close();
-  expect((await f.workspace.list()).projects[0].hidden).toBe(true);
+  expect((await listReady(f.workspace)).projects[0].hidden).toBe(true);
   expect(readFileSync(join(f.repo, "README.md"), "utf8")).toBe("initial\n");
   stores.splice(stores.indexOf(f.store), 1);
   f.store.db.close();
@@ -129,7 +159,7 @@ it("persists hidden projects across refreshes and database restarts and allows r
 
 it.each([true, false])("preserves hidden=%s when a remote check finishes", async (hidden) => {
   const f = fixture();
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   f.workspace.update(p.id, { hidden: !hidden });
   let release = () => {};
   const gate = new Promise<void>((resolve) => {
@@ -153,7 +183,7 @@ it.each([true, false])("preserves hidden=%s when a remote check finishes", async
 
 it("preserves hiding while discovery finds an unavailable checkout", async () => {
   const f = fixture();
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   let release = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -179,7 +209,7 @@ it.each([true, false])(
   "preserves hiding during a detail check with success=%s",
   async (success) => {
     const f = fixture();
-    const p = (await f.workspace.list()).projects[0];
+    const p = (await listReady(f.workspace)).projects[0];
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -204,7 +234,7 @@ it.each([true, false])(
 
 it("migrates existing project records to visible by default", async () => {
   const f = fixture(true);
-  await f.workspace.list();
+  await listReady(f.workspace);
   f.store.db.exec("UPDATE projects SET snapshot = json_remove(snapshot, '$.hidden')");
   await f.workspace.close();
   stores.splice(stores.indexOf(f.store), 1);
@@ -222,10 +252,10 @@ it("tracks incoming commits and fast-forward pulls without touching local work",
   git(other, "add", "remote.txt");
   git(other, "commit", "-m", "test: remote");
   git(other, "push");
-  await f.workspace.list();
+  await listReady(f.workspace);
   f.workspace.refresh();
   await f.workspace.close();
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   expect(p.git?.behind).toBe(1);
   expect(p.remoteCheckedAt).toBeTruthy();
   expect(projectAttention(p).incoming).toBe("Pull updates");
@@ -237,7 +267,7 @@ it("tracks incoming commits and fast-forward pulls without touching local work",
 
 it("rejects stale actions and commits selected files without including unrelated staged work", async () => {
   const f = fixture();
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   writeFileSync(join(f.repo, "chosen.txt"), "chosen");
   writeFileSync(join(f.repo, "other.txt"), "other");
   git(f.repo, "add", "other.txt");
@@ -263,7 +293,7 @@ it("rejects stale actions and commits selected files without including unrelated
 
 it("respects commit hooks and does not amend a previous commit after failure", async () => {
   const f = fixture();
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   const head = git(f.repo, "rev-parse", "HEAD");
   writeFileSync(join(f.repo, "README.md"), "edited");
   writeFileSync(join(f.repo, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 1\n", {
@@ -286,7 +316,7 @@ it("publishes commits and switches to the default branch only after work is safe
   const f = fixture();
   git(f.repo, "switch", "-c", "feature");
   git(f.repo, "push", "-u", "origin", "feature");
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   writeFileSync(join(f.repo, "work.txt"), "work");
   git(f.repo, "add", "work.txt");
   git(f.repo, "commit", "-m", "feat: work");
@@ -312,7 +342,7 @@ it("refuses to pull dirty or diverged checkouts and exposes an explicit merge", 
   git(other, "add", "remote.txt");
   git(other, "commit", "-m", "feat: remote");
   git(other, "push");
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   writeFileSync(join(f.repo, "local.txt"), "local");
   let detail = await f.workspace.detail(p.id);
   await expect(
@@ -335,7 +365,7 @@ it("refuses to pull dirty or diverged checkouts and exposes an explicit merge", 
 
 it("reports unreadable roots and does not operate on replaced symlink checkouts", async () => {
   const f = fixture();
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   const result = await f.io.discover([join(f.root, "absent")], f.profile);
   expect(result.errors).toHaveLength(1);
   const alias = join(f.directory, "alias");
@@ -416,10 +446,10 @@ it("reads findings across pages and accepts empty security results", async () =>
 
 it("reserves security attention for findings while retaining coverage errors", async () => {
   const f = fixture();
-  await f.workspace.list();
+  await listReady(f.workspace);
   f.workspace.refresh();
   await f.workspace.close();
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   p.insights = {
     checkedAt: new Date().toISOString(),
     reviews: [],
@@ -451,7 +481,7 @@ it("removes remote credentials and supports SSH repository URLs", () => {
 
 it("preserves manually assigned or unlinked profile pages across discovery refreshes", async () => {
   const f = fixture();
-  const project = (await f.workspace.list()).projects[0];
+  const project = (await listReady(f.workspace)).projects[0];
   let time = Date.now();
   const documents = ["automatic.md", "manual.md"].map((path) => ({
     path,
@@ -468,19 +498,19 @@ it("preserves manually assigned or unlinked profile pages across discovery refre
     io: f.io,
     now: () => new Date(time).toISOString(),
   });
-  expect((await workspace.list()).projects[0].document).toBe("automatic.md");
+  expect((await listReady(workspace)).projects[0].document).toBe("automatic.md");
   workspace.update(project.id, { document: "manual.md" });
   time += 16000;
-  expect((await workspace.list()).projects[0].document).toBe("manual.md");
+  expect((await listReady(workspace)).projects[0].document).toBe("manual.md");
   workspace.update(project.id, { document: null });
   time += 16000;
-  expect((await workspace.list()).projects[0].document).toBeNull();
+  expect((await listReady(workspace)).projects[0].document).toBeNull();
 });
 
 it("publishes a new branch explicitly and then enables returning to main", async () => {
   const f = fixture();
   git(f.repo, "switch", "-c", "new-feature");
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   expect(projectAttention(p).local).toBe("Publish this branch");
   const published = await f.workspace.action(p.id, { action: "push", version: version(p) });
   expect(published.project.git?.upstream).toBe("origin/new-feature");
@@ -494,7 +524,7 @@ it("commits a selected rename atomically and treats pathspec-like filenames lite
   const f = fixture();
   git(f.repo, "mv", "README.md", "renamed.md");
   writeFileSync(join(f.repo, ":(glob)*.txt"), "literal filename");
-  const p = (await f.workspace.list()).projects[0];
+  const p = (await listReady(f.workspace)).projects[0];
   await f.workspace.action(p.id, {
     action: "commit",
     version: version(p),

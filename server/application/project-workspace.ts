@@ -38,6 +38,7 @@ export function createProjectWorkspace(deps: {
   let lastScope = "";
   let errors: string[] = [];
   const busy = new Set<string>();
+  const refreshing = new Set<string>();
   const pending = new Set<Promise<unknown>>();
   function withLatestVisibility(project: Project): Project {
     const current = deps.records.projects(project.profileRoot).find((p) => p.id === project.id);
@@ -48,6 +49,7 @@ export function createProjectWorkspace(deps: {
     return {
       projects: deps.records.projects(profile).filter((p) => roots.includes(p.root)),
       refreshing: !!active,
+      refreshingIds: [...refreshing],
       errors,
     };
   };
@@ -63,6 +65,8 @@ export function createProjectWorkspace(deps: {
       if (typeof id === "string") documentPaths.set(id, document.path);
     }
     const queue = [...discovered.repositories];
+    refreshing.clear();
+    for (const entry of queue) refreshing.add(entry.id);
     const insights = new Map<string, Promise<ProjectInsights>>();
     const seen = new Set(queue.map((p) => p.id));
     for (const old of previous) {
@@ -74,7 +78,10 @@ export function createProjectWorkspace(deps: {
     await Promise.all(
       Array.from({ length: 4 }, async () => {
         for (let entry = queue.shift(); entry; entry = queue.shift()) {
-          if (busy.has(entry.id)) continue;
+          if (busy.has(entry.id)) {
+            refreshing.delete(entry.id);
+            continue;
+          }
           const old = previous.find((p) => p.id === entry.id);
           const project: Project = {
             profileRoot: profile,
@@ -111,6 +118,7 @@ export function createProjectWorkspace(deps: {
               project.remoteError = null;
             }
             if (remote && project.git.remote) {
+              deps.records.saveProject(withLatestVisibility(project));
               try {
                 await deps.io.refreshRemote(project.path);
                 project.git = await deps.io.inspect(project.path);
@@ -134,6 +142,7 @@ export function createProjectWorkspace(deps: {
             deps.records.saveProject(withLatestVisibility(project));
           } finally {
             busy.delete(project.id);
+            refreshing.delete(project.id);
           }
         }
       }),
@@ -143,12 +152,14 @@ export function createProjectWorkspace(deps: {
   function request(remote: boolean) {
     if (!active) {
       lastScope = JSON.stringify(deps.scope());
+      for (const project of snapshot().projects) refreshing.add(project.id);
       active = refresh(remote)
         .catch(() => {
           errors = ["Project refresh failed. Check directory and profile access."];
         })
         .finally(() => {
           active = null;
+          refreshing.clear();
         });
     }
     return snapshot();
@@ -210,7 +221,6 @@ export function createProjectWorkspace(deps: {
         Date.parse(deps.now()) - lastLocal > 15000
       ) {
         request(false);
-        await active;
       }
       return snapshot();
     },
