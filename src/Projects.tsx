@@ -164,7 +164,9 @@ export function Projects({
         changeProfileDirty(false);
       }
     } catch (reason) {
-      report(reason);
+      setError(
+        `${project.name}: ${reason instanceof Error ? reason.message : "Could not open project."}`,
+      );
     } finally {
       if (current === request.current) setLoading(false);
     }
@@ -195,7 +197,7 @@ export function Projects({
       await reload();
     } catch (reason) {
       setError(
-        `${committed ? "The commit succeeded, but publishing did not. " : ""}${reason instanceof Error ? reason.message : "Git action failed."}`,
+        `${project.name}: ${committed ? "The commit succeeded, but publishing did not. " : ""}${reason instanceof Error ? reason.message : "Git action failed."}`,
       );
       try {
         const next = await api<ProjectDetail>(`/project-workspace/${project.id}`);
@@ -297,8 +299,16 @@ export function Projects({
         </button>
       </div>
       {!action && !detail && error && (
-        <div role="alert" className="banner error">
-          {error}
+        <div role="alert" className="banner error project-error-toast">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Dismiss project error"
+            onClick={() => setError("")}
+          >
+            <X size={18} />
+          </button>
         </div>
       )}
       {!detail && notice && (
@@ -572,7 +582,7 @@ export function Projects({
             </button>
           </div>
           {error && (
-            <div role="alert" className="banner error">
+            <div role="alert" className="banner error project-dialog-error">
               {error}
             </div>
           )}
@@ -710,7 +720,7 @@ export function Projects({
             </button>
           </div>
           {error && (
-            <div role="alert" className="banner error">
+            <div role="alert" className="banner error project-dialog-error">
               {error}
             </div>
           )}

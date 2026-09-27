@@ -5,6 +5,26 @@
   gap: 20px;
   margin-bottom: 28px;
 }
+.project-error-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 100;
+  width: min(480px, calc(100vw - 48px));
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+.project-error-toast span {
+  flex: 1;
+  min-width: 0;
+}
+.project-dialog-error {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
 .projects-heading > div {
   min-width: 0;
 }

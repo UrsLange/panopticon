@@ -179,6 +179,50 @@ test("loads saved projects before opening the tab and shows per-project refresh 
   await expect(page.locator(".project-tile .spin")).toHaveCount(0);
 });
 
+test("keeps project action errors visible after scrolling down the grid", async ({ page }) => {
+  const { state } = await setup(page);
+  const project = state.projects[90];
+  if (!project.git) throw new Error("Missing Git fixture");
+  project.git.behind = 1;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("button", { name: "All projects 100", exact: true }).click();
+  await page.route("**/api/project-workspace/project-90/actions", (route) =>
+    route.fulfill({
+      status: 409,
+      json: { error: "The checkout changed. Refresh and review it before trying again." },
+    }),
+  );
+  const tile = page.getByRole("article", { name: "Project 090", exact: true });
+  await tile.scrollIntoViewIfNeeded();
+  const position = await page.evaluate(() => window.scrollY);
+  expect(position).toBeGreaterThan(500);
+  await tile.getByRole("button", { name: "Pull updates: Project 090", exact: true }).click();
+  const error = page.getByRole("alert");
+  await expect(error).toContainText("Project 090: The checkout changed");
+  await expect(error).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY)).toBe(position);
+  await page.getByRole("button", { name: "Dismiss project error" }).click();
+  await expect(error).toHaveCount(0);
+});
+
+test("keeps errors visible inside a scrolled project dialog", async ({ page }) => {
+  await setup(page);
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.locator(".project-name").first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator(".project-file input").check();
+  await dialog.getByLabel("Commit message").fill("fix: example");
+  await page.route("**/api/project-workspace/project-0/actions", (route) =>
+    route.fulfill({ status: 409, json: { error: "The checkout changed." } }),
+  );
+  await dialog.getByRole("button", { name: "Commit selected files", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("The checkout changed.");
+  await dialog.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(dialog.getByRole("alert")).toBeInViewport();
+});
+
 test("shows dense equal tiles, fixed icon positions, and searches all 100 projects", async ({
   page,
 }) => {
