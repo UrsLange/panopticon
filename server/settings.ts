@@ -4,7 +4,7 @@ import { join } from "node:path";
 import OpenAI from "openai";
 import { defaultEntra, type EntraConfig, type PublicEntraConfig } from "../shared/people.js";
 import type { Settings } from "../shared/schema.js";
-import type { T3Connection } from "../shared/t3.js";
+import type { T3Connection, T3ImplementationSettings } from "../shared/t3.js";
 import type { Connection } from "./application/connection.js";
 import { ApplicationError } from "./application/errors.js";
 import { createModelConnection } from "./application/model-connection.js";
@@ -13,6 +13,7 @@ import { config } from "./config.js";
 
 type Saved = {
   t3?: T3Connection;
+  t3Defaults?: T3ImplementationSettings;
   connection?: Connection;
   profilePath?: string;
   timezone?: string;
@@ -51,6 +52,18 @@ export class SettingsStore {
   }
   saveT3(t3: T3Connection | undefined) {
     this.save({ t3 });
+  }
+  t3Defaults(): T3ImplementationSettings {
+    return (
+      this.saved.t3Defaults ?? {
+        model: this.saved.t3?.defaultModel ?? { instanceId: "codex", model: "" },
+        workspaceMode: "worktree",
+        runtimeMode: "approval-required",
+      }
+    );
+  }
+  saveT3Defaults(t3Defaults: T3ImplementationSettings) {
+    this.save({ t3Defaults });
   }
   entraCredentials() {
     return this.saved.entra;

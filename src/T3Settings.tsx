@@ -56,8 +56,8 @@ export function T3Settings() {
     <section className="settings-card t3-settings">
       <h2>T3 Code</h2>
       <p>
-        Start implementation from a commitment using T3 Code on this machine. Each task opens a new
-        thread in its own Git worktree, with approvals handled in T3 Code.
+        Start implementation from a commitment using T3 Code on this machine. Configure the model,
+        checkout, and permissions in project details on the Projects tab.
       </p>
       {status?.configured && (
         <p>
@@ -167,8 +167,8 @@ export function T3Settings() {
               </label>
             </div>
             <p className="muted-text">
-              Existing projects use their saved model. These defaults apply when a project has no
-              model selection. Connection checks do not start an agent.
+              Projects without a model override use this global default. Connection checks do not
+              start an agent.
             </p>
             <div className="settings-save-bar">
               <span>{dirty ? "Unsaved changes" : ""}</span>

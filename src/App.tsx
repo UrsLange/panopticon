@@ -1446,7 +1446,7 @@ function ItemEditor({
                         )}
                         <p>
                           Continue work and answer approvals in T3 Code. A finished agent turn needs
-                          review; the task is done when the implementation is merged.
+                          review before you mark the task complete.
                         </p>
                         {latest.progress && (
                           <p aria-live="polite">
@@ -1482,8 +1482,9 @@ function ItemEditor({
                         {!closed && (
                           <>
                             <p>
-                              Panopticon checks the implementation branch every 30 seconds and marks
-                              this task done after it is merged into the local main branch.
+                              {latest.workspaceMode === "checkout"
+                                ? "This implementation uses the current checkout. Review the changes and mark the task complete when ready."
+                                : "Panopticon checks the implementation branch every 30 seconds and suggests completion after it is merged into the local main branch."}
                             </p>
                             <button
                               type="button"
@@ -1550,8 +1551,9 @@ function ItemEditor({
                     )}
                     {!pendingHandoff && canImplement && !latest && (
                       <p>
-                        Starts an agent in a new worktree from the current commit. Uncommitted
-                        changes are not included.
+                        Starts an agent using this project's T3 settings, with global defaults for
+                        settings it does not override. Configure these in project details on the
+                        Projects tab.
                       </p>
                     )}
                     {fields.project !== item.project && (

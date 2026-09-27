@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import type { Project, ProjectDetail, ProjectWorkspace } from "../../shared/projects";
 import type { ProfileDocument } from "../../shared/schema";
+import type { T3ImplementationSettings } from "../../shared/t3";
 
 function project(index: number): Project {
   return {
@@ -106,6 +107,15 @@ async function setup(page: Page, openProjects = true) {
     } else await route.fulfill({ json: [doc] });
   });
   const actions: Record<string, unknown>[] = [];
+  let defaults: T3ImplementationSettings = {
+    model: { instanceId: "codex", model: "global-model" },
+    workspaceMode: "worktree",
+    runtimeMode: "approval-required",
+  };
+  await page.route("**/api/settings/t3/defaults", async (route) => {
+    if (route.request().method() === "PUT") defaults = route.request().postDataJSON();
+    await route.fulfill({ json: defaults });
+  });
   const detail = (p: Project): ProjectDetail => ({
     project: p,
     changes: {
@@ -221,6 +231,59 @@ test("keeps errors visible inside a scrolled project dialog", async ({ page }) =
     node.scrollTop = node.scrollHeight;
   });
   await expect(dialog.getByRole("alert")).toBeInViewport();
+});
+
+test("configures project T3 overrides and global defaults during refreshes", async ({ page }) => {
+  const { state } = await setup(page);
+  state.refreshing = true;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.locator(".project-name").first().click();
+  await expect(page.getByLabel("Project model selection")).toBeEnabled();
+  await page.getByLabel("Project model selection").selectOption("override");
+  await page.getByLabel("Project provider instance", { exact: true }).fill("custom-provider");
+  await page.getByLabel("Project model", { exact: true }).fill("project-model");
+  await page.getByLabel("Project implementation location").selectOption("checkout");
+  await page.getByLabel("Project permission level").selectOption("full-access");
+  await page.getByRole("button", { name: "Save project T3 settings" }).click();
+  await expect(page.getByText("Project T3 settings saved.")).toBeVisible();
+  expect(state.projects[0].t3).toEqual({
+    model: { instanceId: "custom-provider", model: "project-model" },
+    workspaceMode: "checkout",
+    runtimeMode: "full-access",
+  });
+  await page.getByText("Global T3 defaults", { exact: true }).click();
+  await page.getByLabel("Global model", { exact: true }).fill("new-global-model");
+  await page.getByLabel("Global permission level").selectOption("auto-accept-edits");
+  await page.getByLabel("Global implementation location").selectOption("checkout");
+  await page.getByRole("button", { name: "Save global T3 defaults" }).click();
+  await expect(page.getByText("Global T3 defaults saved.")).toBeVisible();
+  await page.getByLabel("Project model selection").selectOption("inherit");
+  await page.getByLabel("Project implementation location").selectOption("");
+  await page.getByLabel("Project permission level").selectOption("");
+  await page.getByRole("button", { name: "Save project T3 settings" }).click();
+  await expect(page.getByText("Project T3 settings saved.")).toBeVisible();
+  expect(state.projects[0].t3).toEqual({});
+  await page.getByRole("button", { name: "Close project details" }).click();
+  await page.locator(".project-name").first().click();
+  await expect(page.getByLabel("Project model selection")).toContainText("new-global-model");
+  await expect(page.getByLabel("Project permission level").locator("option:checked")).toHaveText(
+    "Use global default (Auto-accept edits)",
+  );
+  await page.getByLabel("Project permission level").selectOption("full-access");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel project changes" }).click();
+  await expect(page.getByLabel("Project permission level")).toHaveValue("");
+  await page.screenshot({ path: "test-results/project-t3-settings.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel("Project model selection").selectOption("override");
+  await page.getByText("Global T3 defaults", { exact: true }).click();
+  expect(
+    await page.getByRole("dialog").evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await page.getByLabel("Project model selection").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/project-t3-settings-mobile.png" });
 });
 
 test("shows dense equal tiles, fixed icon positions, and searches all 100 projects", async ({

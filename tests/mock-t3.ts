@@ -74,7 +74,8 @@ export function mockT3() {
           message.tag !== "orchestration.dispatchCommand" ||
           !Array.isArray(message.headers) ||
           command.type !== "thread.turn.start" ||
-          !command.bootstrap.prepareWorktree.requireWorktree
+          !command.bootstrap.createThread ||
+          (command.bootstrap.prepareWorktree && !command.bootstrap.prepareWorktree.requireWorktree)
         ) {
           websocket.send(JSON.stringify({ _tag: "ClientProtocolError" }));
           return;

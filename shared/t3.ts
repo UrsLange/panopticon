@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+export const t3ImplementationSchema = z.object({
+  model: z.object({
+    instanceId: z.string().trim().min(1).max(200),
+    model: z.string().trim().min(1).max(200),
+  }),
+  workspaceMode: z.enum(["worktree", "checkout"]),
+  runtimeMode: z.enum(["full-access", "approval-required", "auto-accept-edits"]),
+});
+export const t3OverridesSchema = t3ImplementationSchema.partial();
+export type T3ImplementationSettings = z.infer<typeof t3ImplementationSchema>;
+export type T3Overrides = z.infer<typeof t3OverridesSchema>;
+
 export const t3ConnectionSchema = z.object({
   endpoint: z.url().refine((value) => {
     const url = new URL(value);
@@ -60,6 +72,8 @@ export type Implementation = {
   prompt: string;
   model: T3Model;
   createdAt: string;
+  workspaceMode?: T3ImplementationSettings["workspaceMode"];
+  runtimeMode?: T3ImplementationSettings["runtimeMode"];
   state: "pending" | "submitted";
   error: string | null;
   mergedCommit?: string;
@@ -84,6 +98,7 @@ export type ImplementationSummary = Pick<
   | "state"
   | "error"
   | "progress"
+  | "workspaceMode"
 > & { url: string; taskChanged: boolean };
 export type ImplementationOptions = {
   configured: boolean;

@@ -127,6 +127,18 @@
 .project-name:hover {
   color: var(--accent);
 }
+.project-t3-defaults {
+  margin-top: 24px;
+}
+.project-info-panel fieldset {
+  min-width: 0;
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+}
+.project-t3-defaults summary {
+  cursor: pointer;
+}
 .project-branch {
   display: flex;
   align-items: center;

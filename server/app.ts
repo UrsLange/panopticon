@@ -4,7 +4,7 @@ import { ZodError, z } from "zod";
 import { entraSchema } from "../shared/people.js";
 import { projectActionSchema } from "../shared/projects.js";
 import { clarificationAnswersSchema, itemPatchSchema } from "../shared/schema.js";
-import { t3ConnectionSchema } from "../shared/t3.js";
+import { t3ConnectionSchema, t3ImplementationSchema, t3OverridesSchema } from "../shared/t3.js";
 import type { Application } from "./application/application.js";
 import { connectionSchema } from "./application/connection.js";
 import { ApplicationError, ProfileCommitError } from "./application/errors.js";
@@ -62,6 +62,10 @@ export function createHttpApp(services: Application, port: number) {
     return preferences.chooseDirectory();
   });
   app.get("/api/settings/t3", async () => services.t3.status());
+  app.get("/api/settings/t3/defaults", async () => services.t3.defaults());
+  app.put("/api/settings/t3/defaults", async (request) =>
+    services.t3.saveDefaults(t3ImplementationSchema.parse(request.body)),
+  );
   app.get("/api/completion-reviews", async () => services.t3.completionReviews());
   app.post<{ Params: { id: string } }>("/api/items/:id/completion-review", async (request) => {
     const input = z
@@ -120,6 +124,7 @@ export function createHttpApp(services: Application, port: number) {
       .object({
         returnToDefault: z.boolean().optional(),
         hidden: z.boolean().optional(),
+        t3: t3OverridesSchema.optional(),
         document: z.string().nullable().optional(),
       })
       .parse(request.body);

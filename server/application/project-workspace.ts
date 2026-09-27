@@ -7,6 +7,7 @@ import type {
   ProjectWorkspace,
 } from "../../shared/projects.js";
 import type { ProfileDocument } from "../../shared/schema.js";
+import type { T3Overrides } from "../../shared/t3.js";
 import { ApplicationError } from "./errors.js";
 import { metadata } from "./project-documents.js";
 
@@ -53,7 +54,7 @@ export function createProjectWorkspace(deps: {
   const pending = new Set<Promise<unknown>>();
   function withLatestVisibility(project: Project): Project {
     const current = deps.records.projects(project.profileRoot).find((p) => p.id === project.id);
-    return { ...project, hidden: current?.hidden ?? project.hidden };
+    return { ...project, hidden: current?.hidden ?? project.hidden, t3: current?.t3 ?? project.t3 };
   }
   const snapshot = (): ProjectWorkspace => {
     const { profile, roots } = deps.scope();
@@ -278,7 +279,12 @@ export function createProjectWorkspace(deps: {
     },
     update(
       id: string,
-      fields: { returnToDefault?: boolean; document?: string | null; hidden?: boolean },
+      fields: {
+        returnToDefault?: boolean;
+        document?: string | null;
+        hidden?: boolean;
+        t3?: T3Overrides;
+      },
     ) {
       const project = find(id);
       if (fields.document && !deps.documents().some((doc) => doc.path === fields.document))

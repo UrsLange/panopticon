@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { T3Overrides } from "./t3.js";
 
 export type ProjectGit = {
   branch: string | null;
@@ -48,6 +49,7 @@ export type Project = {
   documentSource: "discovery" | "manual";
   returnToDefault: boolean;
   hidden: boolean;
+  t3?: T3Overrides;
   git: ProjectGit | null;
   insights: ProjectInsights | null;
   checkedAt: string | null;

@@ -139,7 +139,7 @@ export async function implementationWorkspace(path: string) {
   } catch {
     throw new ApplicationError(
       "invalid",
-      "The selected repository must exist locally and have a commit before creating a worktree.",
+      "The selected repository must exist locally and have a commit before starting implementation.",
     );
   }
 }
@@ -483,7 +483,7 @@ export function createT3Client(request = fetch): T3Client {
           attachments: [],
         },
         modelSelection: entry.model,
-        runtimeMode: "approval-required",
+        runtimeMode: entry.runtimeMode ?? "approval-required",
         interactionMode: "default",
         createdAt: entry.createdAt,
         bootstrap: {
@@ -491,19 +491,23 @@ export function createT3Client(request = fetch): T3Client {
             projectId: entry.projectId,
             title: entry.title,
             modelSelection: entry.model,
-            runtimeMode: "approval-required",
+            runtimeMode: entry.runtimeMode ?? "approval-required",
             interactionMode: "default",
             branch: null,
             worktreePath: null,
             createdAt: entry.createdAt,
           },
-          prepareWorktree: {
-            projectCwd: entry.workspaceRoot,
-            baseBranch: entry.baseBranch,
-            branch: `panopticon/${entry.id}`,
-            requireWorktree: true,
-          },
-          runSetupScript: true,
+          ...(entry.workspaceMode !== "checkout"
+            ? {
+                prepareWorktree: {
+                  projectCwd: entry.workspaceRoot,
+                  baseBranch: entry.baseBranch,
+                  branch: `panopticon/${entry.id}`,
+                  requireWorktree: true,
+                },
+                runSetupScript: true,
+              }
+            : {}),
         },
       });
     },

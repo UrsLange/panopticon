@@ -16,6 +16,7 @@ import {
   type Implementation,
   type LocalMerge,
   type T3Connection,
+  type T3ImplementationSettings,
   t3ConnectionSchema,
 } from "../shared/t3.js";
 import { mockT3 } from "./mock-t3.js";
@@ -57,6 +58,11 @@ function fixture() {
     0,
   );
   let saved: T3Connection | undefined = connection;
+  let defaults: T3ImplementationSettings = {
+    model: connection.defaultModel,
+    workspaceMode: "worktree",
+    runtimeMode: "approval-required",
+  };
   let sequence = 0;
   const documents: ProfileDocument[] = [
     {
@@ -86,6 +92,10 @@ function fixture() {
     progress: vi.fn<T3Client["progress"]>(async () => "running"),
   };
   const settings = {
+    t3Defaults: () => defaults,
+    saveT3Defaults: (value: T3ImplementationSettings) => {
+      defaults = value;
+    },
     t3Connection: () => saved,
     saveT3: (value: T3Connection | undefined) => {
       saved = value;
@@ -589,7 +599,7 @@ it("uses a persisted repository identity and does not reroute it when unavailabl
   expect(service.options(item.id).suggestedRepositoryId).toBeNull();
 });
 
-it("reuses a project and its full model selection, including options", async () => {
+it("reuses a T3 project but uses the global model when Panopticon has no override", async () => {
   const { service, client, item, store } = fixture();
   const model = {
     instanceId: "custom-provider",
@@ -602,7 +612,74 @@ it("reuses a project and its full model selection, including options", async () 
   await service.implement(item.id, { revision: item.revision });
   expect(store.latestImplementation(item.id, "/profile")).toMatchObject({
     projectId: "existing",
-    model,
+    model: connection.defaultModel,
+  });
+});
+
+it("resolves project overrides independently, freezes retry settings, and skips checkout merge checks", async () => {
+  const { service, ports, store, item, client } = fixture();
+  service.saveDefaults({
+    model: { instanceId: "global-provider", model: "global-model" },
+    workspaceMode: "worktree",
+    runtimeMode: "full-access",
+  });
+  const project = {
+    id: "repo",
+    profileRoot: "/profile",
+    root: "/repos",
+    path: "/repos/portal",
+    name: "portal",
+    document: null,
+    documentSource: "manual" as const,
+    returnToDefault: true,
+    hidden: false,
+    git: null,
+    insights: null,
+    checkedAt: null,
+    remoteCheckedAt: null,
+    error: null,
+    remoteError: null,
+    t3: { workspaceMode: "checkout" as const },
+  };
+  store.saveProject(project);
+  vi.mocked(client.launch).mockRejectedValueOnce(new Error("lost response"));
+  await expect(service.implement(item.id, { revision: item.revision })).rejects.toThrow(
+    "could not confirm",
+  );
+  const pending = store.latestImplementation(item.id, "/profile");
+  expect(pending).toMatchObject({
+    model: { instanceId: "global-provider", model: "global-model" },
+    workspaceMode: "checkout",
+    runtimeMode: "full-access",
+  });
+  service.saveDefaults({
+    model: connection.defaultModel,
+    workspaceMode: "worktree",
+    runtimeMode: "approval-required",
+  });
+  store.saveProject({
+    ...project,
+    t3: {
+      model: { instanceId: "project-provider", model: "project-model" },
+      runtimeMode: "auto-accept-edits",
+    },
+  });
+  await service.implement(item.id, { revision: item.revision });
+  expect(vi.mocked(client.launch).mock.calls.at(-1)?.[1]).toMatchObject({
+    model: { instanceId: "global-provider", model: "global-model" },
+    workspaceMode: "checkout",
+    runtimeMode: "full-access",
+  });
+  await service.refresh(item.id);
+  expect(ports.localMerge).not.toHaveBeenCalled();
+  expect(service.options(item.id).latest?.progress?.error).toBeNull();
+  const current = store.get(item.id);
+  assert(current);
+  await service.implement(item.id, { revision: current.revision, previousAttemptId: pending?.id });
+  expect(store.latestImplementation(item.id, "/profile")).toMatchObject({
+    model: { instanceId: "project-provider", model: "project-model" },
+    workspaceMode: "worktree",
+    runtimeMode: "auto-accept-edits",
   });
 });
 
@@ -776,6 +853,25 @@ it("bootstraps over WebSocket and recovers a lost reply from the authoritative t
   await client.launch(connected, { ...entry, id: "another-thread" });
   const repeated = await fetch(`${endpoint}/test/commands`).then((response) => response.json());
   expect(repeated).toHaveLength(3);
+  for (const runtimeMode of ["full-access", "approval-required", "auto-accept-edits"] as const) {
+    await client.launch(connected, {
+      ...entry,
+      id: `checkout-${runtimeMode}`,
+      workspaceMode: "checkout",
+      runtimeMode,
+    });
+  }
+  const checkoutCommands = await fetch(`${endpoint}/test/commands`).then((response) =>
+    response.json(),
+  );
+  for (const command of checkoutCommands.slice(3)) {
+    expect(command.runtimeMode).toBe(command.bootstrap.createThread.runtimeMode);
+    expect(command.threadId).toBe(`checkout-${command.runtimeMode}`);
+    expect(command.bootstrap).not.toHaveProperty("prepareWorktree");
+    expect(command.bootstrap).not.toHaveProperty("runSetupScript");
+    expect(command.bootstrap.createThread.worktreePath).toBeNull();
+  }
+  expect(checkoutCommands).toHaveLength(6);
 });
 
 it("redacts external errors and reports unsupported API responses", async () => {
@@ -794,6 +890,18 @@ it("persists private settings and handoffs, and exposes only sanitized connectio
   settings.saveT3(connection);
   expect(statSync(join(root, "settings.json")).mode & 0o777).toBe(0o600);
   expect(new SettingsStore(defaults).t3Connection()).toEqual(connection);
+  expect(settings.t3Defaults()).toEqual({
+    model: connection.defaultModel,
+    workspaceMode: "worktree",
+    runtimeMode: "approval-required",
+  });
+  const implementationDefaults: T3ImplementationSettings = {
+    model: { instanceId: "custom", model: "custom-model" },
+    workspaceMode: "checkout",
+    runtimeMode: "auto-accept-edits",
+  };
+  settings.saveT3Defaults(implementationDefaults);
+  expect(new SettingsStore(defaults).t3Defaults()).toEqual(implementationDefaults);
   const store = new Store(join(root, "assistant.sqlite"));
   const item = store.capture("task");
   const { service: source, store: sourceStore, item: sourceItem } = fixture();
@@ -855,6 +963,33 @@ it("persists private settings and handoffs, and exposes only sanitized connectio
   });
   expect(disconnected.json().configured).toBe(false);
   expect(new SettingsStore(defaults).t3Connection()).toBeUndefined();
+  expect(new SettingsStore(defaults).t3Defaults()).toEqual(implementationDefaults);
+  for (const body of [
+    { ...implementationDefaults, runtimeMode: "unknown" },
+    { ...implementationDefaults, workspaceMode: "unknown" },
+    { ...implementationDefaults, model: { instanceId: "codex", model: "  " } },
+  ]) {
+    const result = await app.inject({
+      method: "PUT",
+      url: "/api/settings/t3/defaults",
+      headers: { host: "localhost" },
+      payload: body,
+    });
+    expect(result.statusCode).toBe(400);
+  }
+  const saved = await app.inject({
+    method: "PUT",
+    url: "/api/settings/t3/defaults",
+    headers: { host: "localhost" },
+    payload: { ...implementationDefaults, runtimeMode: "full-access" },
+  });
+  expect(saved.statusCode).toBe(200);
+  expect(saved.json().runtimeMode).toBe("full-access");
+  const loaded = await app.inject({
+    url: "/api/settings/t3/defaults",
+    headers: { host: "localhost" },
+  });
+  expect(loaded.json()).toEqual(saved.json());
 });
 
 it("resolves a local Git workspace and rejects repositories without a commit", async () => {

@@ -301,6 +301,57 @@ it("discovers independent projects, skips symlinks and nested repositories, and 
   await expect(f.workspace.detail(project.id)).rejects.toThrow("not found");
 });
 
+it("persists T3 overrides across refreshes and restarts and can restore inheritance", async () => {
+  const f = fixture(true);
+  const p = (await listReady(f.workspace)).projects[0];
+  const t3 = {
+    model: { instanceId: "custom", model: "project-model" },
+    workspaceMode: "checkout" as const,
+    runtimeMode: "full-access" as const,
+  };
+  f.workspace.update(p.id, { t3 });
+  f.workspace.refresh();
+  await f.workspace.close();
+  expect((await f.workspace.detail(p.id)).project.t3).toEqual(t3);
+  const reopened = new Store(join(f.root, "projects.sqlite"));
+  stores.push(reopened);
+  expect(reopened.projects(f.profile)[0].t3).toEqual(t3);
+  f.workspace.update(p.id, { t3: {} });
+  expect(reopened.projects(f.profile)[0].t3).toEqual({});
+});
+
+it.each([false, true])(
+  "preserves T3 settings saved during a remote check, inherit=%s",
+  async (inherit) => {
+    const f = fixture();
+    const p = (await listReady(f.workspace)).projects[0];
+    f.workspace.update(p.id, { t3: { runtimeMode: "approval-required" } });
+    const t3 = inherit
+      ? {}
+      : {
+          model: { instanceId: "custom", model: "project-model" },
+          workspaceMode: "checkout" as const,
+          runtimeMode: "full-access" as const,
+        };
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const checking = vi.spyOn(f.io, "refreshRemote").mockImplementation(() => gate);
+    f.workspace.refresh();
+    await vi.waitFor(() => expect(checking).toHaveBeenCalled());
+    try {
+      expect(f.workspace.update(p.id, { t3 }).t3).toEqual(t3);
+      expect((await f.workspace.list()).projects[0].t3).toEqual(t3);
+      expect(f.workspace.update(p.id, { t3, returnToDefault: false }).returnToDefault).toBe(false);
+    } finally {
+      release();
+      await f.workspace.close();
+    }
+    expect(f.store.projects(f.profile)[0].t3).toEqual(t3);
+  },
+);
+
 it("persists hidden projects across refreshes and database restarts and allows restoring them", async () => {
   const f = fixture(true);
   const p = (await listReady(f.workspace)).projects[0];

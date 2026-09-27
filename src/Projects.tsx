@@ -28,6 +28,7 @@ import {
 } from "../shared/projects";
 import type { ProfileDocument, Settings } from "../shared/schema";
 import { api } from "./api";
+import { ProjectT3Settings } from "./ProjectT3Settings";
 import { useUnsavedSettings } from "./useUnsavedSettings";
 import "./projects.css";
 
@@ -70,6 +71,10 @@ export function Projects({
   const [notice, setNotice] = useState("");
   const [profileDirty, setProfileDirty] = useState(false);
   const profileDirtyRef = useRef(false);
+  const t3DirtyRef = useRef(false);
+  const changeT3Dirty = useCallback((dirty: boolean) => {
+    t3DirtyRef.current = dirty;
+  }, []);
   const detailOpener = useRef<HTMLElement | null>(null);
   const changeProfileDirty = useCallback((dirty: boolean) => {
     profileDirtyRef.current = dirty;
@@ -135,10 +140,12 @@ export function Projects({
   const closeDetails = () => {
     if (busy) return;
     if (profileDirtyRef.current && !window.confirm("Discard your unsaved profile edits?")) return;
+    if (t3DirtyRef.current && !window.confirm("Discard your unsaved T3 settings?")) return;
     detailsModal.current?.close();
     detailOpener.current?.focus({ preventScroll: true });
     setDetail(null);
     changeProfileDirty(false);
+    changeT3Dirty(false);
     setError("");
     refreshDetail.current = false;
     request.current++;
@@ -646,6 +653,17 @@ export function Projects({
               </label>
               <GitControls detail={detail} busy={busy} onAction={perform} />
             </section>
+            <ProjectT3Settings
+              key={detail.project.id}
+              project={detail.project}
+              disabled={busy}
+              onDirty={changeT3Dirty}
+              onBusy={setBusy}
+              onSaved={(project) => {
+                setDetail((current) => current && { ...current, project });
+                void reload().catch(report);
+              }}
+            />
             <section className="project-info-panel">
               <h2>Local changes & commits</h2>
               <ProjectChangeForm

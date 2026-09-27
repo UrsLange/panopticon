@@ -1,3 +1,4 @@
+import type { Project } from "../../shared/projects.js";
 import type { Item } from "../../shared/schema.js";
 import type {
   CompletionReview,
@@ -7,6 +8,7 @@ import type {
   LocalMerge,
   T3Connection,
   T3ConnectionInput,
+  T3ImplementationSettings,
   T3Model,
   T3Status,
 } from "../../shared/t3.js";
@@ -30,6 +32,7 @@ export interface T3Client {
   ): Promise<ImplementationProgress["turnState"]>;
 }
 export interface ImplementationRecords extends CaptureRecords {
+  projects(profile: string): Project[];
   list(): Item[];
   latestImplementation(itemId: string, profileRoot: string): Implementation | null;
   saveImplementation(implementation: Implementation): void;
@@ -50,6 +53,8 @@ export function createT3({
   settings: {
     t3Connection(): T3Connection | undefined;
     saveT3(connection: T3Connection | undefined): void;
+    t3Defaults(): T3ImplementationSettings;
+    saveT3Defaults(defaults: T3ImplementationSettings): void;
   };
   client: T3Client;
   getProfile(): ProfileNotes;
@@ -66,7 +71,7 @@ export function createT3({
       configured: !!connection,
       endpoint: connection?.endpoint ?? "",
       serverVersion: connection?.serverVersion ?? "",
-      defaultModel: connection?.defaultModel ?? { instanceId: "codex", model: "" },
+      defaultModel: settings.t3Defaults().model,
     };
   };
   const summary = (entry: Implementation | null) =>
@@ -79,6 +84,7 @@ export function createT3({
       state: entry.state,
       error: entry.error,
       progress: entry.progress,
+      workspaceMode: entry.workspaceMode,
       taskChanged: records.get(entry.itemId)?.prompt !== entry.prompt,
       url: `${entry.endpoint}/${encodeURIComponent(entry.environmentId)}/${encodeURIComponent(entry.id)}`,
     };
@@ -150,6 +156,8 @@ export function createT3({
           "Multiple T3 projects use this repository. Remove the ambiguity in T3 Code before implementing.",
         );
       const project = matches[0];
+      const overrides = records.projects(profile.root).find((p) => p.id === repository.id)?.t3;
+      const defaults = settings.t3Defaults();
       entry = {
         id: id(),
         itemId,
@@ -163,7 +171,9 @@ export function createT3({
         projectId: project?.id ?? id(),
         title: item.title,
         prompt: item.prompt,
-        model: project?.defaultModelSelection ?? connection.defaultModel,
+        model: overrides?.model ?? defaults.model,
+        workspaceMode: overrides?.workspaceMode ?? defaults.workspaceMode,
+        runtimeMode: overrides?.runtimeMode ?? defaults.runtimeMode,
         createdAt: now(),
         state: "pending",
         error: null,
@@ -239,7 +249,7 @@ export function createT3({
       errors.push("Reconnect the original T3 Code instance to check agent progress.");
     }
     try {
-      progress.localMerge = await localMerge(entry);
+      if (entry.workspaceMode !== "checkout") progress.localMerge = await localMerge(entry);
     } catch (error) {
       errors.push(
         error instanceof ApplicationError
@@ -314,6 +324,11 @@ export function createT3({
     });
   return {
     status,
+    defaults: () => settings.t3Defaults(),
+    saveDefaults: (defaults: T3ImplementationSettings) => {
+      settings.saveT3Defaults(defaults);
+      return settings.t3Defaults();
+    },
     options,
     completionReviews,
     reviewCompletion: (
@@ -370,7 +385,9 @@ export function createT3({
     },
     connect: (input: T3ConnectionInput) =>
       exclusive(async () => {
-        settings.saveT3(await client.connect(input, settings.t3Connection()));
+        const connection = await client.connect(input, settings.t3Connection());
+        settings.saveT3(connection);
+        settings.saveT3Defaults({ ...settings.t3Defaults(), model: connection.defaultModel });
         return status();
       }),
     test: () =>
