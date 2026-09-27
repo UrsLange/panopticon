@@ -627,7 +627,7 @@ export function Projects({
                 <input
                   type="checkbox"
                   checked={!!project?.returnToDefault}
-                  disabled={busy || projectRefreshing}
+                  disabled={busy}
                   onChange={(event) =>
                     void changeProject({ returnToDefault: event.target.checked })
                   }
@@ -659,7 +659,7 @@ export function Projects({
                 Linked profile page
                 <select
                   value={project?.document ?? ""}
-                  disabled={busy || profileDirty || projectRefreshing}
+                  disabled={busy || profileDirty}
                   onChange={(event) => void changeProject({ document: event.target.value || null })}
                 >
                   <option value="">No profile page assigned</option>

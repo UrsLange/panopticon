@@ -41,11 +41,15 @@ export function createProjectWorkspace(deps: {
   now(): string;
 }) {
   let active: Promise<void> | null = null;
+  let foreground = false;
   let lastLocal = 0;
   let lastScope = "";
   let errors: string[] = [];
   const busy = new Set<string>();
   const refreshing = new Set<string>();
+  const checking = new Set<string>();
+  const generations = new Map<string, number>();
+  const fetching = new Map<string, Promise<void>>();
   const pending = new Set<Promise<unknown>>();
   function withLatestVisibility(project: Project): Project {
     const current = deps.records.projects(project.profileRoot).find((p) => p.id === project.id);
@@ -55,7 +59,7 @@ export function createProjectWorkspace(deps: {
     const { profile, roots } = deps.scope();
     return {
       projects: deps.records.projects(profile).filter((p) => roots.includes(p.root)),
-      refreshing: !!active || refreshing.size > 0,
+      refreshing: foreground || refreshing.size > 0,
       refreshingIds: [...refreshing],
       errors,
     };
@@ -75,17 +79,19 @@ export function createProjectWorkspace(deps: {
     const seen = new Set(queue.map((p) => p.id));
     for (const old of previous) {
       if (roots.includes(old.root) && !seen.has(old.id)) {
-        if (!busy.has(old.id)) refreshing.delete(old.id);
+        if (!checking.has(old.id)) refreshing.delete(old.id);
         deps.records.saveProject(
           withLatestVisibility({ ...old, error: "Checkout unavailable. Check its directory." }),
         );
       }
     }
     for (const entry of queue) {
-      if (busy.has(entry.id)) continue;
-      refreshing.add(entry.id);
+      if (busy.has(entry.id) || checking.has(entry.id)) continue;
+      const generation = generations.get(entry.id) ?? 0;
+      const canSave = () => !busy.has(entry.id) && (generations.get(entry.id) ?? 0) === generation;
+      if (remote || !previous.some((project) => project.id === entry.id)) refreshing.add(entry.id);
       const job = (async () => {
-        const old = previous.find((p) => p.id === entry.id);
+        const old = deps.records.projects(profile).find((p) => p.id === entry.id);
         const project: Project = {
           profileRoot: profile,
           document: null,
@@ -107,7 +113,7 @@ export function createProjectWorkspace(deps: {
               ? project.document
               : null
             : (documentPaths.get(project.id) ?? null);
-        busy.add(project.id);
+        checking.add(project.id);
         try {
           await deps.io.validate(project);
           project.git = await deps.io.inspect(project.path);
@@ -121,19 +127,26 @@ export function createProjectWorkspace(deps: {
             project.remoteAttemptedAt = undefined;
             project.remoteError = null;
           }
-          deps.records.saveProject(withLatestVisibility(project));
+          if (canSave()) deps.records.saveProject(withLatestVisibility(project));
           await Promise.all([
             (async () => {
               const attempted = project.remoteAttemptedAt ?? project.remoteCheckedAt;
               if (
+                !canSave() ||
                 !project.git?.remote ||
                 (!remote && attempted && Date.parse(deps.now()) - Date.parse(attempted) < 5 * 60000)
               )
                 return;
               project.remoteAttemptedAt = deps.now();
-              deps.records.saveProject(withLatestVisibility(project));
+              if (canSave()) deps.records.saveProject(withLatestVisibility(project));
               try {
-                await deps.io.refreshRemote(project.path, project.git);
+                const fetch = deps.io.refreshRemote(project.path, project.git);
+                fetching.set(project.id, fetch);
+                try {
+                  await fetch;
+                } finally {
+                  fetching.delete(project.id);
+                }
                 project.git = await deps.io.inspect(project.path);
                 project.remoteCheckedAt = deps.now();
                 project.remoteError = null;
@@ -141,7 +154,7 @@ export function createProjectWorkspace(deps: {
                 project.remoteError =
                   "Remote check failed. Check network access and Git credentials, then retry.";
               }
-              deps.records.saveProject(withLatestVisibility(project));
+              if (canSave()) deps.records.saveProject(withLatestVisibility(project));
             })(),
             (async () => {
               const url = project.git?.repositoryUrl;
@@ -151,7 +164,7 @@ export function createProjectWorkspace(deps: {
                 previous: project.insights,
                 onUpdate: (insights) => {
                   project.insights = insights;
-                  deps.records.saveProject(withLatestVisibility(project));
+                  if (canSave()) deps.records.saveProject(withLatestVisibility(project));
                 },
               });
             })(),
@@ -160,9 +173,9 @@ export function createProjectWorkspace(deps: {
           project.error = "Cannot inspect this checkout. Check repository access, then refresh.";
         }
         try {
-          deps.records.saveProject(withLatestVisibility(project));
+          if (canSave()) deps.records.saveProject(withLatestVisibility(project));
         } finally {
-          busy.delete(project.id);
+          checking.delete(project.id);
           refreshing.delete(project.id);
         }
       })();
@@ -173,15 +186,17 @@ export function createProjectWorkspace(deps: {
   }
   function request(remote: boolean) {
     if (!active) {
+      foreground = remote || !snapshot().projects.length;
       lastScope = JSON.stringify(deps.scope());
-      for (const project of snapshot().projects) refreshing.add(project.id);
+      if (remote) for (const project of snapshot().projects) refreshing.add(project.id);
       active = refresh(remote)
         .catch(() => {
           errors = ["Project refresh failed. Check directory and profile access."];
         })
         .finally(() => {
           active = null;
-          for (const id of refreshing) if (!busy.has(id)) refreshing.delete(id);
+          foreground = false;
+          for (const id of refreshing) if (!checking.has(id)) refreshing.delete(id);
         });
     }
     return snapshot();
@@ -194,12 +209,14 @@ export function createProjectWorkspace(deps: {
   }
   async function detail(id: string) {
     const project = find(id);
+    const generation = generations.get(id) ?? 0;
     try {
       await deps.io.validate(project);
       const git = await deps.io.inspect(project.path);
       const changes = await deps.io.changes(project.path);
-      const next = withLatestVisibility({ ...project, git, error: null, checkedAt: deps.now() });
-      if (!busy.has(id)) deps.records.saveProject(next);
+      const next = withLatestVisibility({ ...find(id), git, error: null, checkedAt: deps.now() });
+      if (!busy.has(id) && (generations.get(id) ?? 0) === generation)
+        deps.records.saveProject(next);
       return { project: next, changes };
     } catch {
       const next = withLatestVisibility({
@@ -207,7 +224,8 @@ export function createProjectWorkspace(deps: {
         git: null,
         error: "Checkout unavailable. Check its directory and refresh.",
       });
-      if (!busy.has(id)) deps.records.saveProject(next);
+      if (!busy.has(id) && (generations.get(id) ?? 0) === generation)
+        deps.records.saveProject(next);
       return { project: next, changes: { files: [], diff: "", commits: [] } };
     }
   }
@@ -216,7 +234,9 @@ export function createProjectWorkspace(deps: {
       throw new ApplicationError("conflict", "An action is already running for this project.");
     const project = find(id);
     busy.add(id);
+    generations.set(id, (generations.get(id) ?? 0) + 1);
     try {
+      await fetching.get(id)?.catch(() => {});
       await deps.io.validate(project);
       const git = await deps.io.inspect(project.path);
       if (git.version !== input.version)
@@ -226,11 +246,13 @@ export function createProjectWorkspace(deps: {
         );
       await deps.io.execute(project.path, input, git);
     } finally {
-      busy.delete(id);
       try {
-        await detail(id);
+        const next = await detail(id);
+        deps.records.saveProject(withLatestVisibility(next.project));
       } catch {
         /* The checkout can become unavailable while Git is running. */
+      } finally {
+        busy.delete(id);
       }
     }
     return detail(id);
@@ -261,14 +283,10 @@ export function createProjectWorkspace(deps: {
       const project = find(id);
       if (fields.document && !deps.documents().some((doc) => doc.path === fields.document))
         throw new ApplicationError("invalid", "Choose an existing profile document.");
-      if (
-        (active || busy.has(id)) &&
-        (fields.returnToDefault !== undefined || fields.document !== undefined)
-      )
-        throw new ApplicationError(
-          "conflict",
-          "Wait for the current project refresh or action to finish.",
-        );
+      if (busy.has(id) && (fields.returnToDefault !== undefined || fields.document !== undefined))
+        throw new ApplicationError("conflict", "Wait for the current project action to finish.");
+      if (fields.returnToDefault !== undefined || fields.document !== undefined)
+        generations.set(id, (generations.get(id) ?? 0) + 1);
       const next = {
         ...project,
         ...fields,

@@ -97,7 +97,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("returns saved projects while discovery is blocked and reports refresh progress", async () => {
+it("returns saved projects without loading indicators during automatic discovery", async () => {
   const f = fixture();
   const saved = (await listReady(f.workspace)).projects[0];
   let release = () => {};
@@ -113,13 +113,93 @@ it("returns saved projects while discovery is blocked and reports refresh progre
   try {
     const state = await f.workspace.list();
     expect(state.projects).toEqual([saved]);
-    expect(state.refreshing).toBe(true);
-    expect(state.refreshingIds).toEqual([saved.id]);
+    expect(state.refreshing).toBe(false);
+    expect(state.refreshingIds).toEqual([]);
   } finally {
     release();
     await f.workspace.close();
   }
   expect((await f.workspace.list()).refreshingIds).toEqual([]);
+});
+
+it.each(["inspect", "insights"])(
+  "allows commits during background %s and rejects stale refresh writes",
+  async (phase) => {
+    const f = fixture();
+    writeFileSync(join(f.repo, "README.md"), "commit me");
+    const p = (await listReady(f.workspace)).projects[0];
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inspect = f.io.inspect;
+    let started = false;
+    vi.spyOn(f.io, "inspect").mockImplementation(async (path) => {
+      const git = await inspect(path);
+      if (phase === "inspect" && !started) {
+        started = true;
+        await gate;
+      }
+      return { ...git, repositoryUrl: "https://github.com/acme/app" };
+    });
+    vi.spyOn(f.io, "refreshRemote").mockResolvedValue();
+    vi.spyOn(f.io, "insights").mockImplementation(async (_url, options) => {
+      if (phase === "insights") {
+        started = true;
+        await gate;
+      }
+      const insights = {
+        checkedAt: "2026-01-01",
+        reviews: [],
+        findings: [],
+        reviewError: null,
+        securityErrors: [],
+      };
+      options?.onUpdate?.(insights);
+      return insights;
+    });
+    f.tick();
+    await f.workspace.list();
+    try {
+      await vi.waitFor(() => expect(started).toBe(true));
+      expect((await f.workspace.list()).refreshingIds).toEqual([]);
+      const result = await f.workspace.action(p.id, {
+        action: "commit",
+        version: version(p),
+        files: ["README.md"],
+        message: "fix: user action",
+      });
+      expect(result.project.git?.dirty).toBe(false);
+      const head = result.project.git?.head;
+      release();
+      await f.workspace.close();
+      expect(f.store.projects(f.profile)[0].git).toMatchObject({ head, dirty: false });
+    } finally {
+      release();
+      await f.workspace.close();
+    }
+  },
+);
+
+it("queues a pull behind an in-flight fetch instead of rejecting it as another action", async () => {
+  const f = fixture();
+  const p = (await listReady(f.workspace)).projects[0];
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fetching = vi.spyOn(f.io, "refreshRemote").mockImplementation(() => gate);
+  const execute = vi.spyOn(f.io, "execute");
+  f.workspace.refresh();
+  await vi.waitFor(() => expect(fetching).toHaveBeenCalled());
+  const action = f.workspace.action(p.id, { action: "pull", version: version(p) });
+  await expect(f.workspace.action(p.id, { action: "pull", version: version(p) })).rejects.toThrow(
+    "An action is already running",
+  );
+  expect(execute).not.toHaveBeenCalled();
+  release();
+  expect((await action).project.git?.behind).toBe(0);
+  await f.workspace.close();
 });
 
 it("refreshes other repositories again while one remote is still blocked", async () => {
@@ -170,7 +250,7 @@ it("refreshes other repositories again while one remote is still blocked", async
         f.store.projects(f.profile).find((p) => p.id === "repo-7")?.remoteCheckedAt,
       ).toBeTruthy(),
     );
-    expect((await workspace.list()).refreshingIds).toEqual(["repo-0"]);
+    expect((await workspace.list()).refreshingIds).toEqual([]);
     const before = inspect.mock.calls.length;
     time += 16000;
     await workspace.list();
@@ -262,14 +342,12 @@ it.each([true, false])("preserves hidden=%s when a remote check finishes", async
   try {
     expect(f.workspace.update(p.id, { hidden }).hidden).toBe(hidden);
     expect((await f.workspace.list()).projects[0].hidden).toBe(hidden);
-    expect(() => f.workspace.update(p.id, { hidden: !hidden, returnToDefault: false })).toThrow(
-      "Wait for",
-    );
+    expect(f.workspace.update(p.id, { returnToDefault: false }).returnToDefault).toBe(false);
   } finally {
     release();
     await f.workspace.close();
   }
-  expect(f.store.projects(f.profile)[0].hidden).toBe(hidden);
+  expect(f.store.projects(f.profile)[0]).toMatchObject({ hidden, returnToDefault: false });
 });
 
 it("preserves hiding while discovery finds an unavailable checkout", async () => {
