@@ -15,6 +15,24 @@ afterEach(() => {
   for (const db of stores.splice(0)) db.db.close();
 });
 
+it("persists GitHub validators, response data, and retry deadlines across database restarts", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "pa-github-cache-")), "assistant.sqlite");
+  const original = new Store(path);
+  const entry = {
+    body: { default_branch: "main" },
+    etag: '"version"',
+    checkedAt: 100,
+    expires: 1000,
+    retryAt: 2000,
+  };
+  original.saveGithubCache("repos/acme/app", entry);
+  original.db.close();
+  const reopened = new Store(path);
+  stores.push(reopened);
+  expect(reopened.githubCache("repos/acme/app")).toEqual(entry);
+  expect(reopened.githubCache("repos/acme/unknown")).toBeUndefined();
+});
+
 describe("capture and planning", () => {
   it("migrates and persists interview questions, answers, and revision history", () => {
     const path = join(mkdtempSync(join(tmpdir(), "pa-interview-")), "assistant.sqlite");

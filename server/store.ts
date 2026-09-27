@@ -14,6 +14,7 @@ import {
   revisedItem,
 } from "./application/items.js";
 import { peopleRelationships } from "./application/people-relationships.js";
+import type { GitHubCacheEntry } from "./github-api.js";
 
 const personPattern = (value: string) =>
   new RegExp(
@@ -44,6 +45,7 @@ export class Store {
         profileRoot TEXT NOT NULL, id TEXT NOT NULL, snapshot TEXT NOT NULL,
         PRIMARY KEY (profileRoot, id)
       );
+      CREATE TABLE IF NOT EXISTS github_cache (key TEXT PRIMARY KEY, snapshot TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS items (
         id TEXT PRIMARY KEY, original TEXT NOT NULL, title TEXT NOT NULL,
         body TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
@@ -125,6 +127,18 @@ export class Store {
         this.update(item.id, { status: "open", processing: "review" }, item.revision);
       }
     }
+  }
+
+  githubCache(key: string): GitHubCacheEntry | undefined {
+    const row = this.db.prepare("SELECT snapshot FROM github_cache WHERE key = ?").get(key);
+    return row ? (JSON.parse(String(row.snapshot)) as GitHubCacheEntry) : undefined;
+  }
+
+  saveGithubCache(key: string, entry: GitHubCacheEntry) {
+    this.db
+      .prepare(`INSERT INTO github_cache (key, snapshot) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET snapshot = excluded.snapshot`)
+      .run(key, JSON.stringify(entry));
   }
 
   projects(profileRoot: string): Project[] {
