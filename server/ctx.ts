@@ -31,45 +31,64 @@ export async function searchSessionEvidence(
   since: string | undefined,
   signal: AbortSignal,
 ) {
-  const { stdout } = await execute(
-    "ctx",
-    [
-      "search",
-      "--term",
-      query,
-      "--limit",
-      "10",
-      "--refresh",
-      "off",
-      "--format",
-      "json",
-      ...(workspace ? ["--workspace", workspace] : []),
-      ...(since
-        ? ["--since", /^\d{4}-\d{2}-\d{2}$/.test(since) ? `${since}T00:00:00Z` : since]
-        : []),
-    ],
-    { timeout: 30000, maxBuffer: 1024 * 1024, signal },
-  );
-  const result = z
-    .object({
-      results: z.array(
-        z.object({
-          ctx_event_id: z.string(),
-          ctx_session_id: z.string(),
-          provider: z.string(),
-          timestamp: z.string(),
-          snippet: z.string(),
-        }),
-      ),
-      result_window: z.object({ more_available: z.boolean() }),
-    })
-    .parse(JSON.parse(stdout));
-  return {
-    results: result.results,
-    moreAvailable: result.result_window.more_available,
-    coverage:
-      "Existing CTX index only. Narrow or rephrase queries for more results; history does not establish current state.",
-  };
+  let stage = "command";
+  try {
+    const { stdout } = await execute(
+      "ctx",
+      [
+        "search",
+        "--term",
+        query,
+        "--limit",
+        "10",
+        "--refresh",
+        "off",
+        "--format",
+        "json",
+        ...(workspace ? ["--workspace", workspace] : []),
+        ...(since
+          ? ["--since", /^\d{4}-\d{2}-\d{2}$/.test(since) ? `${since}T00:00:00Z` : since]
+          : []),
+      ],
+      { timeout: 30000, maxBuffer: 1024 * 1024, signal },
+    );
+    stage = "response";
+    const result = z
+      .object({
+        results: z.array(
+          z.object({
+            ctx_event_id: z.string(),
+            ctx_session_id: z.string(),
+            provider: z.string(),
+            timestamp: z.string(),
+            snippet: z.string(),
+          }),
+        ),
+        result_window: z.object({ more_available: z.boolean() }),
+      })
+      .parse(JSON.parse(stdout));
+    return {
+      results: result.results,
+      moreAvailable: result.result_window.more_available,
+      coverage:
+        "Existing CTX index only. Narrow or rephrase queries for more results; history does not establish current state.",
+    };
+  } catch (error) {
+    const failure = error as Error & { code?: string | number; signal?: string; stderr?: string };
+    console.warn("CTX history search failed", {
+      stage,
+      workspace,
+      since,
+      code: failure.code,
+      signal: failure.signal,
+      stderr: failure.stderr?.slice(0, 2000),
+      validation:
+        error instanceof z.ZodError
+          ? error.issues.map(({ code, path }) => ({ code, path }))
+          : undefined,
+    });
+    throw new Error(`CTX history search ${stage} failed.`, { cause: error });
+  }
 }
 
 export async function readSessionEvent(eventId: string, signal: AbortSignal) {
