@@ -130,7 +130,7 @@ test("creates aliases through the profile editor and shows persisted capture ann
     .getByLabel("Content", { exact: true })
     .fill(`| Alias | Kind | Target |\n| --- | --- | --- |\n| gham | project | ${project.path} |`);
   await page.getByRole("button", { name: "Save document" }).click();
-  await expect(page.getByText("Saved to your repository.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Saved and committed to your repository.")).toBeVisible();
   await page.getByLabel("What’s on your mind?").fill("Ask about ghma");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
   await page.getByRole("button", { name: "Notebook", exact: true }).click();
@@ -295,7 +295,7 @@ test("edits independent profile documents and adds project context", async ({ pa
   const original = await editor.inputValue();
   await editor.fill(original.replace("Product lead", "I lead the customer experience team."));
   await page.getByRole("button", { name: "Save document" }).click();
-  await expect(page.getByText("Saved to your repository.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Saved and committed to your repository.")).toBeVisible();
   await page.getByRole("button", { name: "Add context" }).click();
   await page.getByLabel("Document title").fill("Customer onboarding");
   await page
@@ -741,6 +741,46 @@ test("keeps settings drafts across navigation and cancels without saving", async
   expect((await (await request.get("/api/settings")).json()).timezone).toBe(saved.timezone);
   await page.getByRole("button", { name: "Your context", exact: true }).click();
   await expect(page.getByRole("button", { name: "Prepare agent prompt" })).toBeVisible();
+});
+
+test("learns profile context from activity and shows the committed result", async ({
+  page,
+  request,
+}) => {
+  const response = await request.post("/api/captures", {
+    data: { text: "My team now owns partner enablement." },
+  });
+  expect(response.ok()).toBe(true);
+  const item = await response.json();
+  await expect
+    .poll(async () => {
+      const items = await (await request.get("/api/items")).json();
+      return items.find((entry: { id: string }) => entry.id === item.id).refinement;
+    })
+    .not.toBe("running");
+  await page.goto("/");
+  await page.getByRole("button", { name: "Your context", exact: true }).click();
+  const learning = page.getByRole("region", { name: "Daily profile learning" });
+  await learning.getByRole("button", { name: "Learn from recent activity" }).click();
+  await expect(
+    learning.getByText("Recorded the team's partner enablement responsibility."),
+  ).toBeVisible({ timeout: 15000 });
+  const documents = await (await request.get("/api/profile")).json();
+  expect(
+    documents.find((doc: { path: string }) => doc.path === "partner-enablement.md").content,
+  ).toContain("My team now owns partner enablement.");
+  const settings = await (await request.get("/api/settings")).json();
+  expect(
+    execFileSync("git", ["-C", settings.profilePath, "log", "-1", "--format=%s"], {
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("docs(profile): consolidate daily activity");
+  await page.screenshot({ path: "test-results/profile-learning.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: "test-results/profile-learning-mobile.png", fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
 });
 
 test("chooses project directories, handles cancellation and failure, and saves only explicitly", async ({

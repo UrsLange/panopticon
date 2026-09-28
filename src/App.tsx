@@ -32,6 +32,7 @@ import { api } from "./api";
 import { PanopticonMark, Wordmark } from "./Brand";
 import { CompletionReviews } from "./CompletionReviews";
 import { useImplementation } from "./Implementation";
+import { ProfileLearning } from "./ProfileLearning";
 import { Projects } from "./Projects";
 import { Configuration, Enrichment } from "./Settings";
 
@@ -2042,11 +2043,11 @@ function Conversation({
       <section className="chat-panel">
         <div className="section-title">
           <h2>Your thinking partner</h2>
-          <span className="pill">Read-only conversation</span>
+          <span className="pill">Conversation informs your profile</span>
         </div>
         <p className="muted-text">
-          Answers use your profile and relevant local items. Save useful answers as captures; edit
-          items to make changes.
+          Answers use your profile and relevant local items. Daily learning can remember useful
+          context from what you say. Save answers as captures to keep them as items.
         </p>
         {!settings?.aiConfigured && (
           <div className="setup-hint">
@@ -2228,7 +2229,7 @@ function ProfileEditor({
       setSelected(doc);
       setContent(doc.content);
       setCreating(false);
-      setSaved("Saved to your repository. Changes are not committed automatically.");
+      setSaved("Saved and committed to your repository.");
       await onSave();
     } catch (reason) {
       report(reason);
@@ -2252,6 +2253,7 @@ function ProfileEditor({
         </div>
         <FileText size={35} strokeWidth={1} />
       </div>
+      <ProfileLearning key={settings?.profilePath} />
       <div className="profile-layout">
         <aside className="document-list">
           {documents.map((doc) => (
@@ -2358,8 +2360,8 @@ function ProfileEditor({
         </section>
       </div>
       <p className="muted-text">
-        Connection, model, and repository preferences are available in Settings. Git commits and
-        pushes remain under your control.
+        Connection, model, and repository preferences are available in Settings. Updates create
+        local Git commits. You control when to push them.
       </p>
       <Enrichment />
     </>

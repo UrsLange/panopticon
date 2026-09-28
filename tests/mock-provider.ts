@@ -140,6 +140,29 @@ export function mockProvider() {
           : "The demo is ready to plan.",
       };
     }
+    if (input.text.format.name === "profile_consolidation") {
+      const statement = "My team now owns partner enablement.";
+      const path = "partner-enablement.md";
+      const existing = payload.documents.some((doc: { path: string }) => doc.path === path);
+      const learned =
+        !existing &&
+        payload.activity.some((event: { content: string }) => event.content.includes(statement));
+      output = {
+        summary: learned
+          ? "Recorded the team's partner enablement responsibility."
+          : "No new profile knowledge to retain.",
+        paths: learned ? [path] : [],
+        changes: learned
+          ? [
+              {
+                path,
+                content: `---\ntype: Team\ntitle: Partner enablement\ndescription: Team responsibility\n---\n\n${statement}\n`,
+              },
+            ]
+          : [],
+        provisionalMemory: "",
+      };
+    }
     if (input.text.format.name === "profile_update") {
       const path = "browser-test-preferences.md";
       const existing = payload.documents.find((doc: { path: string }) => doc.path === path);

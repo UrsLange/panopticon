@@ -52,15 +52,21 @@ Tracking errors appear on the task and leave completion unchanged. A changed tas
 
 ## Add knowledge to your profile
 
-An explicit memory request, such as “remember that I prefer atomic conventional commits,” authorizes automatic incorporation into your profile. Unclear or implicit notes wait for review.
+An explicit memory request, such as “remember that I prefer atomic conventional commits,” authorizes immediate incorporation into your profile. Other notes remain available for manual incorporation; daily learning can also retain useful knowledge from your activity.
 
 For a pending note, open it and choose **Add to profile**. Save any text edits first. Answer clarification questions or use **Retry profile update** after resolving a failure.
 
-After a verified, committed update, the note is marked **Added to profile** and leaves Inbox. Its content is available in **Your context**. Archiving a pending note dismisses it without incorporating it.
+After a verified, committed note update, the note is marked **Added to profile** and leaves Inbox. Its content is available in **Your context**. Archiving a pending note dismisses the note workflow; daily learning separately considers recorded activity.
 
 Profile updates use local `docs(profile): ...` commits and never push. Uncommitted edits in a target file block updates; unrelated changes remain untouched. If a commit fails, files may already be saved. Resolve the Git problem and review and commit those changes before retrying.
 
 ## Edit personal context
+
+**Daily profile learning** in **Your context** shows the latest result and any failure. The daily pass considers new captures, submitted edits, clarification answers, conversation messages, and implementation outcomes. It can retain clear facts and well-supported implications after one observation, with uncertainty preserved. Less certain useful observations stay in a small provisional memory outside the profile. Task details and insignificant activity should not become permanent knowledge.
+
+Choose **Learn from recent activity** to run a pass immediately. The model updates existing knowledge rather than building a diary, and local Git diffs show its changes. Daily learning does not mark captures as incorporated or complete tasks. Learning starts with activity recorded by this version; older unscoped conversations and captures are not automatically imported.
+
+The full profile and recorded activity are sent to your configured model. Review the first few Git diffs to tune `prompts/profile-consolidation.md`; restart the backend after editing the prompt. Inferences remain model judgments, not verified facts.
 
 **Your context** edits the profile's Markdown documents. Custom concept types, nested directories, and unknown metadata are supported. External changes are discovered every five seconds; reselect a document to load its latest contents. Stale saves are rejected.
 
@@ -82,7 +88,7 @@ Resolved mentions retain their capture-time target and label. Alias edits and or
 
 ## Conversation and session history
 
-**Conversation** answers questions using personal context and current commitments. It is read-only: choose **Save as capture** to keep an answer, or edit an item to apply a change. It does not send messages or modify company systems.
+**Conversation** answers questions using personal context and current commitments. Choose **Save as capture** to keep an answer as an item, or edit an item to apply a change. Daily learning can retain useful context from your statements; assistant replies are contextual evidence, not independent confirmation. Conversation does not send messages or modify company systems.
 
 If `ctx` is installed and on the server's PATH, capture refinement can search indexed sessions automatically. In Conversation, manual search results are shared with the model only after you select the sharing checkbox. Panopticon does not initialize or refresh the index; use `ctx status` to inspect coverage. Historical plans are evidence, not proof of completed work.
 

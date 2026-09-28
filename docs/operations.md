@@ -51,6 +51,14 @@ Enabled Entra sync runs at startup and every minute when overdue: 24 hours after
 
 Directory replacement is transactional. Credentials and status stay in the data directory; tokens remain in memory. Legacy generated `people.md` tables are validated, imported when no SQL snapshot exists, and backed up as `people-<id>.md` in the data directory before removal from the profile. Invalid or unmanaged files are preserved.
 
+## Profile learning
+
+The running server checks at startup and every minute. With a connected model and profile Git repository, consolidation runs once per calendar day in the configured timezone. On restart it catches up from its last successful activity checkpoint. It does not independently launch the backend.
+
+Backlogs are processed chronologically in batches of up to 100 events, normally up to 60,000 activity characters; a single larger event is kept whole. Remaining batches run on subsequent checks, without waiting another day. The full profile is supplied each time. Failures retain the checkpoint and provisional memory and retry after 15 minutes. **Your context → Learn from recent activity** runs immediately.
+
+Learning records are scoped to the profile active when an event is recorded. The activity journal, checkpoint, provisional memory, and latest result live in SQLite. Ordinary assistant context uses the profile, not provisional memory. Profile edits use local `docs(profile): consolidate daily activity` commits; an unchanged result creates no commit. Dirty profile documents block consolidation, including no-op retries after failed commits. Review and commit saved work before retrying.
+
 ## Backups and upgrades
 
 Back up both the profile repository and the complete application data directory. Stop the backend before copying application data, including SQLite WAL/SHM files if present. The directory contains credentials; protect the backup accordingly.

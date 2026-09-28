@@ -12,11 +12,11 @@ Your reusable knowledge lives in a separate Git repository of Markdown files. Ca
 
 - **Capture anywhere.** Use the browser, a global Mac shortcut, or the selected-text service.
 - **Plan your day.** See due commitments and suggested next actions.
-- **Keep useful context.** Add notes to your profile and edit its Markdown documents.
+- **Keep useful context.** Daily learning updates your profile from activity and clarification answers. Add notes and edit its Markdown documents directly as well.
 - **Ask with context.** Discuss your ideas using profile knowledge, commitments, and optional project or session evidence.
 - **Connect your work.** Discover local repositories and optionally sync a Microsoft Entra people directory.
 
-Conversation is read-only. Profile updates create local commits; nothing is automatically pushed.
+Conversation does not execute actions. Daily learning can retain useful context from what you say. Profile updates create local commits; nothing is automatically pushed.
 
 ## Get started
 

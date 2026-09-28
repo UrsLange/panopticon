@@ -9,7 +9,7 @@ flowchart TD
     Browser[React browser interface] --> HTTP[Fastify HTTP API]
     Desktop[Electron capture companion] --> HTTP
     HTTP --> Core[Application services]
-    Schedulers[Project and people schedulers] --> Core
+    Schedulers[Project, people, and profile learning schedulers] --> Core
     Core --> SQLite[(SQLite)]
     Core --> Profile[Markdown profile and Git]
     Core --> Model[Configured model provider]
@@ -43,6 +43,8 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 
 **Profile note.** Check authorization, serialize incorporation, and ask the model for Markdown changes. Validate a temporary copy, recheck the note and profile revisions, then write, verify, and commit under the profile lock. Failed or conflicting updates remain pending.
 
+**Profile learning.** Journal original user captures, changed fields, clarification question/answer pairs, labeled conversation messages, and implementation state transitions, scoped to the active profile. A daily model pass receives chronological activity since its successful checkpoint, complete profile documents, and separate provisional memory. The prompt decides what to retain, infer, refine, or discard. Apply through the profile validation and Git lock, then persist the new checkpoint and provisional memory. Failures leave activity pending; a crash after a commit may replay a batch, which the prompt must deduplicate. Conversation events carry recent same-profile messages as historical context for short replies across runs.
+
 **Project discovery.** Enumerate repositories and compare local fingerprints. The configured model explores one repository with the shared read-only file tools and returns a structured summary. Application code inserts it into an in-memory draft. Validate protected content and source stability before applying and committing it. See [project discovery](project-discovery.md).
 
 **People sync.** Read all Graph pages, normalize and validate records, then replace the profile and tenant's directory in one SQLite transaction. A failed refresh retains the previous snapshot.
@@ -58,6 +60,7 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 | Independent profile Git repository | `~/.local/share/personal-assistant-profile` |
 | Captures, revisions, conversations, people, implementation handoffs | `~/.local/share/personal-assistant/assistant.sqlite` |
 | Project inventory, profile-page assignments, checkout status, remote findings | `projects` table in the same SQLite database, scoped by profile |
+| Learning activity, checkpoint, provisional memory, latest result | `profile_activity` and `profile_learning` tables in SQLite, scoped by profile |
 | Credentials and configuration | `~/.local/share/personal-assistant/settings.json` |
 | Discovery and sync status | `project-scan.json` and `people-sync.json` in the data directory |
 
@@ -75,6 +78,7 @@ Local storage does not mean local model processing. Requests can send:
 - Additional profile files, discovered-project files, and CTX evidence retrieved during capture refinement.
 - The existing generated project summary and repository evidence retrieved during project discovery; personal notes and profile metadata are not included in discovery requests.
 - The **full Markdown profile**, note text, and capture date when incorporating a note.
+- The **full Markdown profile**, pending activity, and provisional memory during daily consolidation. Activity starts being journaled with this version; older unscoped records are not backfilled.
 - Recent conversation messages and selected people candidates. Manual CTX search results require explicit sharing in Conversation.
 
 Model requests, including project discovery, use the configured endpoint and credentials with `store: false`; provider retention policies still apply. Keys stay on the server.

@@ -64,6 +64,7 @@ Prompt files are in [prompts/](prompts/):
 | `research-finalization.md` | Finalizing after a research limit |
 | `conversation.md` | Conversation answers |
 | `profile-update.md` | Incorporating authorized notes |
+| `profile-consolidation.md` | Daily learning from activity and provisional observations |
 | `project-exploration.md` | Repository exploration and summaries |
 | `profile-enrichment.md` | Copyable enrichment prompt in Settings |
 | `connection-validation.md` | Synthetic connection check |
