@@ -75,6 +75,12 @@ export function ProjectT3Settings({
       <p className="muted-text">
         Settings apply to new implementations. Retries keep their original settings.
       </p>
+      {defaults && (
+        <p>
+          Effective auto-start:{" "}
+          {(project.t3?.autoStart ?? defaults.autoStart ?? false) ? "On" : "Off"}.
+        </p>
+      )}
       {error && (
         <p className="banner error" role="alert">
           {error}
@@ -157,6 +163,31 @@ function T3Fields({
   const model = value.model;
   return (
     <>
+      <label className="field">
+        {prefix} auto-start after refinement
+        <select
+          value={
+            value.autoStart === undefined ? (defaults ? "" : "false") : String(value.autoStart)
+          }
+          onChange={(event) => {
+            const next = { ...value };
+            if (event.target.value === "") delete next.autoStart;
+            else next.autoStart = event.target.value === "true";
+            onChange(next);
+          }}
+        >
+          {defaults && (
+            <option value="">Use global default ({defaults.autoStart ? "On" : "Off"})</option>
+          )}
+          <option value="true">On</option>
+          <option value="false">Off</option>
+        </select>
+      </label>
+      <p className="muted-text">
+        Automatically start T3 implementation when refinement saves a ready task with a prompt and
+        one available repository. This authorizes starting implementation only, not publishing or
+        other shared-system changes.
+      </p>
       {defaults && (
         <label className="field">
           Project model selection

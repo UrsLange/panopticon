@@ -64,6 +64,12 @@ The integration requires T3 Code's environment HTTP API and WebSocket thread/wor
 
 Configure [project discovery](project-discovery.md) before [implementing commitments](usage.md#implement-a-commitment).
 
+All implementation preferences support global defaults and project overrides: **auto-start after refinement**, **provider instance and model** (one selection), **implementation location** (new worktree or current checkout), and **permission level**. Open Projects → project details → **T3 implementation** for project settings and expand **Global T3 defaults** to edit the defaults. Each setting independently inherits its current global value until overridden. Choosing **Use global default** removes that override, so later global changes apply to new implementations. Retries retain the original handoff's model, workspace, and permission settings. The T3 endpoint and pairing credentials are one global connection configured in Settings → T3 Code.
+
+**Global auto-start after refinement** in Settings → T3 Code is off by default, including for existing installations. Save **On** to authorize automatic implementation after successful refinement. In Projects → project details → **T3 implementation**, choose **Use global default**, **On**, or **Off** for that project. An explicit project **Off** overrides a global **On**. Project details show the effective saved value; the global default is also editable there. Changing a setting does not launch existing tasks by itself.
+
+Auto-start grants consent to start T3 implementation without a separate launch-confirmation step. It does not authorize publishing, pushing, opening pull requests, or other shared-system changes. T3's model, workspace, and permission settings continue to apply.
+
 ## Mac capture companion
 
 ```sh

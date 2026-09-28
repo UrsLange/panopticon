@@ -239,6 +239,8 @@ test("configures project T3 overrides and global defaults during refreshes", asy
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await page.locator(".project-name").first().click();
   await expect(page.getByLabel("Project model selection")).toBeEnabled();
+  await expect(page.getByText("Effective auto-start: Off.")).toBeVisible();
+  await page.getByLabel("Project auto-start after refinement").selectOption("false");
   await page.getByLabel("Project model selection").selectOption("override");
   await page.getByLabel("Project provider instance", { exact: true }).fill("custom-provider");
   await page.getByLabel("Project model", { exact: true }).fill("project-model");
@@ -247,6 +249,7 @@ test("configures project T3 overrides and global defaults during refreshes", asy
   await page.getByRole("button", { name: "Save project T3 settings" }).click();
   await expect(page.getByText("Project T3 settings saved.")).toBeVisible();
   expect(state.projects[0].t3).toEqual({
+    autoStart: false,
     model: { instanceId: "custom-provider", model: "project-model" },
     workspaceMode: "checkout",
     runtimeMode: "full-access",
@@ -255,14 +258,18 @@ test("configures project T3 overrides and global defaults during refreshes", asy
   await page.getByLabel("Global model", { exact: true }).fill("new-global-model");
   await page.getByLabel("Global permission level").selectOption("auto-accept-edits");
   await page.getByLabel("Global implementation location").selectOption("checkout");
+  await page.getByLabel("Global auto-start after refinement").selectOption("true");
   await page.getByRole("button", { name: "Save global T3 defaults" }).click();
   await expect(page.getByText("Global T3 defaults saved.")).toBeVisible();
+  await expect(page.getByText("Effective auto-start: Off.")).toBeVisible();
+  await page.getByLabel("Project auto-start after refinement").selectOption("");
   await page.getByLabel("Project model selection").selectOption("inherit");
   await page.getByLabel("Project implementation location").selectOption("");
   await page.getByLabel("Project permission level").selectOption("");
   await page.getByRole("button", { name: "Save project T3 settings" }).click();
   await expect(page.getByText("Project T3 settings saved.")).toBeVisible();
   expect(state.projects[0].t3).toEqual({});
+  await expect(page.getByText("Effective auto-start: On.")).toBeVisible();
   await page.getByRole("button", { name: "Close project details" }).click();
   await page.locator(".project-name").first().click();
   await expect(page.getByLabel("Project model selection")).toContainText("new-global-model");

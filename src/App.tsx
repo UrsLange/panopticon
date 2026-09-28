@@ -1401,6 +1401,12 @@ function ItemEditor({
 
             {item.kind === "commitment" && (fields.execution === "implementation" || latest) && (
               <div className="implementation">
+                {options && <p>Auto-start after refinement: {options.autoStart ? "On" : "Off"}.</p>}
+                {item.autoStartError && (
+                  <p role="alert">
+                    Refinement succeeded, but T3 auto-start failed: {item.autoStartError}
+                  </p>
+                )}
                 {fields.execution === "implementation" && implementation.loading && (
                   <p>Checking T3 Code readiness…</p>
                 )}

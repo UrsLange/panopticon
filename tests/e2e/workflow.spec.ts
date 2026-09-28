@@ -578,6 +578,25 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
     .getByRole("navigation", { name: "Settings sections" })
     .getByRole("button", { name: "T3 Code", exact: true })
     .click();
+  await expect(page.getByLabel("Global auto-start after refinement")).toHaveValue("false");
+  await page.getByLabel("Global auto-start after refinement").selectOption("true");
+  await page.getByRole("button", { name: "Save global auto-start", exact: true }).click();
+  await expect(page.getByText("Global auto-start setting saved.")).toBeVisible();
+  expect((await (await request.get("/api/settings/t3")).json()).autoStart).toBe(true);
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: "T3 Code", exact: true })
+    .click();
+  await expect(page.getByLabel("Global auto-start after refinement")).toHaveValue("true");
+  await page.getByLabel("Global auto-start after refinement").selectOption("false");
+  await page.getByRole("button", { name: "Save global auto-start", exact: true }).click();
+  await expect(page.getByText("Global auto-start setting saved.")).toBeVisible();
+  expect(
+    (await request.put("/api/settings/t3/auto-start", { data: { autoStart: "true" } })).status(),
+  ).toBe(400);
+  expect((await (await request.get("/api/settings/t3")).json()).autoStart).toBe(false);
   await page.getByLabel("T3 Code endpoint", { exact: true }).fill("http://127.0.0.1:4321");
   await page.getByLabel("T3 Code pairing token", { exact: true }).fill("wrong-token");
   await page.getByLabel("T3 Code default model", { exact: true }).fill("fixture-model");

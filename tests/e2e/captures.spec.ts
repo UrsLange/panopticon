@@ -148,6 +148,21 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
   };
 }
 
+test("shows auto-start failure separately from successful refinement and keeps manual launch available", async ({
+  page,
+}) => {
+  const state = await capturePage(page, { autoStartError: "Connect T3 Code in Settings first." });
+  state.options.autoStart = true;
+  await page.clock.fastForward(5000);
+  await expect(page.getByText("Auto-start after refinement: On.")).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    "Refinement succeeded, but T3 auto-start failed",
+  );
+  await expect(page.getByRole("button", { name: "Start in T3 Code", exact: true })).toBeEnabled();
+  expect(state.item.refinement).toBe("ready");
+  expect(state.launches).toHaveLength(0);
+});
+
 test("refreshes capture details without changing the visible content while waiting", async ({
   page,
 }) => {
