@@ -5,11 +5,13 @@ import type { ConversationHistory } from "./ports.js";
 export function createConversation({
   store,
   getAssistant,
+  getProfileRoot,
   context,
   searchSessions,
 }: {
   store: ConversationHistory;
   getAssistant: () => Assistant | null;
+  getProfileRoot: () => string;
   context: ReturnType<typeof createContext>;
   searchSessions: (query: string) => Promise<string>;
 }) {
@@ -23,6 +25,12 @@ export function createConversation({
           "Connect and validate a model in Settings to chat.",
         );
       const history = store.messages().slice(-12);
+      const profileRoot = getProfileRoot();
+      store.recordProfileActivity(profileRoot, "conversation", {
+        role: "user",
+        content: text,
+        precedingMessages: store.profileConversation(profileRoot),
+      });
       const result = await assistant.ask(
         text,
         context(
@@ -34,6 +42,10 @@ export function createConversation({
       );
       store.addMessage("user", text);
       store.addMessage("assistant", result.answer, result.sources);
+      store.recordProfileActivity(profileRoot, "conversation", {
+        role: "assistant",
+        content: result.answer,
+      });
       return result;
     },
     async search(query: string) {

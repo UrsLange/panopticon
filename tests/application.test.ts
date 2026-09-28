@@ -29,6 +29,7 @@ function deferred<T>() {
 function fixture() {
   const items = new Map<string, Item>();
   const store: CaptureStorage = {
+    recordProfileActivity: vi.fn(),
     get: (id) => items.get(id),
     update(id, changes, revision) {
       const previous = items.get(id);
@@ -63,6 +64,7 @@ function fixture() {
   };
   let discovery = false;
   const assistant: Assistant = {
+    consolidateProfile: vi.fn(),
     interpret: vi.fn<Assistant["interpret"]>(async () => ({
       title: "A note",
       kind: "note",
@@ -96,6 +98,7 @@ function fixture() {
   const contextQuery = vi.fn(() => context);
   const captures = createCaptures({
     store,
+    getProfileRoot: () => profile.root,
     getAssistant: () => assistant,
     context: contextQuery,
     notes,
@@ -130,6 +133,47 @@ function fixture() {
     },
   };
 }
+
+it("records original user evidence and clarification answers without treating model refinements as observations", async () => {
+  const f = fixture();
+  const capture = f.captures.capture("Prepare the partner briefing.");
+  await f.captures.close();
+  expect(f.store.recordProfileActivity).toHaveBeenCalledTimes(1);
+  expect(f.store.recordProfileActivity).toHaveBeenCalledWith("/profile", "capture", {
+    itemId: capture.id,
+    text: "Prepare the partner briefing.",
+  });
+  const item = f.store.get(capture.id);
+  assert(item);
+  const question = f.store.update(
+    item.id,
+    {
+      clarifications: [
+        { id: "owner", question: "Who owns partner enablement?", answer: "", resolved: false },
+      ],
+    },
+    item.revision,
+  );
+  f.captures.answer(item.id, {
+    revision: question.revision,
+    answers: [{ id: "owner", answer: "My team." }],
+  });
+  expect(f.store.recordProfileActivity).toHaveBeenLastCalledWith("/profile", "clarification", {
+    itemId: item.id,
+    originalCapture: item.original,
+    answers: [{ question: "Who owns partner enablement?", answer: "My team." }],
+  });
+  const answered = f.store.get(item.id);
+  assert(answered);
+  f.captures.edit(item.id, { body: "Prepare next quarter's partner briefing." }, answered.revision);
+  await f.captures.close();
+  expect(f.store.recordProfileActivity).toHaveBeenCalledTimes(3);
+  expect(f.store.recordProfileActivity).toHaveBeenLastCalledWith("/profile", "edit", {
+    itemId: item.id,
+    originalCapture: item.original,
+    changes: { body: "Prepare next quarter's partner briefing." },
+  });
+});
 
 it("serializes profile notes, shares duplicate requests, and only completes after applying", async () => {
   const f = fixture();
@@ -600,7 +644,13 @@ it("conversation reads context and writes history only after a successful answer
     messages.push({ id: messages.length, role, content, sources });
   });
   const conversation = createConversation({
-    store: { messages: () => messages, addMessage: append },
+    store: {
+      messages: () => messages,
+      addMessage: append,
+      recordProfileActivity: f.store.recordProfileActivity,
+      profileConversation: () => [],
+    },
+    getProfileRoot: () => "/profile",
     getAssistant: () => f.assistant,
     context: contextQuery,
     searchSessions: async () => "Selected evidence",

@@ -181,6 +181,10 @@ export function createHttpApp(services: Application, port: number) {
     return preferences.profile(input);
   });
   app.get("/api/profile/enrichment", async () => profiles.enrichment());
+  app.get("/api/profile/learning", async () => services.profileLearning.status());
+  app.post("/api/profile/learning", async (_request, reply) =>
+    reply.code(202).send(services.profileLearning.request()),
+  );
   app.get("/api/items", async () => captures.list());
   app.get("/api/today", async () => captures.today());
   app.post("/api/captures", async (request, reply) => {

@@ -14,6 +14,11 @@ import {
   revisedItem,
 } from "./application/items.js";
 import { peopleRelationships } from "./application/people-relationships.js";
+import type {
+  ProfileActivity,
+  ProfileActivityKind,
+  ProfileLearningState,
+} from "./application/profile-learning-model.js";
 import type { GitHubCacheEntry } from "./github-api.js";
 
 const personPattern = (value: string) =>
@@ -68,6 +73,14 @@ export class Store {
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL,
         sources TEXT NOT NULL, createdAt TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS profile_activity (
+        id INTEGER PRIMARY KEY, profileRoot TEXT NOT NULL,
+        kind TEXT NOT NULL, content TEXT NOT NULL, createdAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS profile_activity_profile ON profile_activity(profileRoot, id);
+      CREATE TABLE IF NOT EXISTS profile_learning (
+        profileRoot TEXT PRIMARY KEY, snapshot TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS people_directories (
         profilePath TEXT NOT NULL, tenantId TEXT NOT NULL, syncedAt TEXT NOT NULL,
@@ -129,6 +142,49 @@ export class Store {
     }
   }
 
+  recordProfileActivity(profileRoot: string, kind: ProfileActivityKind, evidence: unknown) {
+    this.db
+      .prepare(
+        "INSERT INTO profile_activity(profileRoot, kind, content, createdAt) VALUES (?, ?, ?, ?)",
+      )
+      .run(profileRoot, kind, JSON.stringify(evidence), new Date().toISOString());
+  }
+
+  profileActivity(profileRoot: string, after: number): ProfileActivity[] {
+    return this.db
+      .prepare(
+        "SELECT id, kind, content, createdAt FROM profile_activity WHERE profileRoot = ? AND id > ? ORDER BY id LIMIT 100",
+      )
+      .all(profileRoot, after) as ProfileActivity[];
+  }
+
+  profileLearningState(profileRoot: string): ProfileLearningState | undefined {
+    const row = this.db
+      .prepare("SELECT snapshot FROM profile_learning WHERE profileRoot = ?")
+      .get(profileRoot);
+    return row ? (JSON.parse(String(row.snapshot)) as ProfileLearningState) : undefined;
+  }
+
+  profileConversation(profileRoot: string): { role: string; content: string }[] {
+    return this.db
+      .prepare(
+        "SELECT content FROM profile_activity WHERE profileRoot = ? AND kind = 'conversation' ORDER BY id DESC LIMIT 4",
+      )
+      .all(profileRoot)
+      .reverse()
+      .map((row) => {
+        const { role, content } = JSON.parse(String(row.content));
+        return { role, content };
+      });
+  }
+
+  saveProfileLearningState(profileRoot: string, state: ProfileLearningState) {
+    this.db
+      .prepare(`INSERT INTO profile_learning(profileRoot, snapshot) VALUES (?, ?)
+      ON CONFLICT(profileRoot) DO UPDATE SET snapshot = excluded.snapshot`)
+      .run(profileRoot, JSON.stringify(state));
+  }
+
   githubCache(key: string): GitHubCacheEntry | undefined {
     const row = this.db.prepare("SELECT snapshot FROM github_cache WHERE key = ?").get(key);
     return row ? (JSON.parse(String(row.snapshot)) as GitHubCacheEntry) : undefined;
@@ -172,10 +228,28 @@ export class Store {
   }
 
   saveImplementation(entry: Implementation) {
+    const previous = this.latestImplementation(entry.itemId, entry.profileRoot);
     this.db
       .prepare(`INSERT INTO implementations (id, itemId, profileRoot, snapshot) VALUES (?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET snapshot = excluded.snapshot`)
       .run(entry.id, entry.itemId, entry.profileRoot, JSON.stringify(entry));
+    if (
+      previous?.id !== entry.id ||
+      previous.state !== entry.state ||
+      previous.progress?.turnState !== entry.progress?.turnState ||
+      previous.mergedCommit !== entry.mergedCommit ||
+      previous.completionReview?.head !== entry.completionReview?.head
+    ) {
+      const item = this.get(entry.itemId);
+      this.recordProfileActivity(entry.profileRoot, "implementation", {
+        itemId: entry.itemId,
+        originalCapture: item?.original,
+        state: entry.state,
+        turnState: entry.progress?.turnState ?? null,
+        mergedCommit: entry.mergedCommit ?? null,
+        taskStatus: item?.status,
+      });
+    }
   }
 
   replacePeople(profilePath: string, tenantId: string, people: Person[], syncedAt: string) {

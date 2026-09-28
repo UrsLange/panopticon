@@ -1,5 +1,6 @@
 import type { PeopleContext, Person } from "../../shared/people.js";
 import type { Item, ItemFields, ProfileDocument } from "../../shared/schema.js";
+import type { ProfileActivityWriter, ProfileConsolidation } from "./profile-learning-model.js";
 import type { ProfileUpdate } from "./profile-update-model.js";
 
 export type Today = { date: string; due: Item[]; suggested: Item[]; waiting: Item[] };
@@ -27,7 +28,7 @@ export interface CaptureRecords {
   update(id: string, fields: ItemChanges, revision: number): Item;
 }
 
-export interface CaptureStorage extends CaptureRecords {
+export interface CaptureStorage extends CaptureRecords, ProfileActivityWriter {
   capture(text: string): Item;
   list(): Item[];
   today(date: string): Today;
@@ -57,6 +58,7 @@ export interface ProfileNotes {
 }
 
 export interface ProfileAccess extends ProfileNotes {
+  consolidate(snapshot: ProfileDocument[], update: ProfileConsolidation): void;
   refresh(): void;
   initialize(about: string): void;
   edit(path: string, content: string, hash: string): ProfileDocument | undefined;
@@ -65,7 +67,8 @@ export interface ProfileAccess extends ProfileNotes {
 }
 
 export type Message = { id: number; role: string; content: string; sources: string[] };
-export interface ConversationHistory {
+export interface ConversationHistory extends ProfileActivityWriter {
+  profileConversation(profileRoot: string): { role: string; content: string }[];
   messages(): Message[];
   addMessage(role: "user" | "assistant", content: string, sources?: string[]): void;
 }

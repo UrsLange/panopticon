@@ -5,6 +5,7 @@ import { createHttpApp } from "./app.js";
 import { createApplication } from "./bootstrap.js";
 import { config } from "./config.js";
 import { startPeopleScheduler } from "./people-scheduler.js";
+import { startProfileLearningScheduler } from "./profile-learning-scheduler.js";
 import { startProjectScheduler, startWorkspaceScheduler } from "./project-scheduler.js";
 import { startT3Scheduler } from "./t3-scheduler.js";
 
@@ -23,6 +24,7 @@ const stopScheduler = startProjectScheduler(services.scanner);
 const stopWorkspaceScheduler = startWorkspaceScheduler(services.projects);
 const stopPeopleScheduler = startPeopleScheduler(services.peopleSync);
 const stopT3Scheduler = startT3Scheduler(services.t3);
+const stopProfileLearningScheduler = startProfileLearningScheduler(services.profileLearning);
 console.log(`Personal assistant API: http://127.0.0.1:${config.port}`);
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
@@ -30,5 +32,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
     stopWorkspaceScheduler();
     stopPeopleScheduler();
     stopT3Scheduler();
+    stopProfileLearningScheduler();
     void app.close();
   });

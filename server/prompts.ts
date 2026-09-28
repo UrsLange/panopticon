@@ -6,6 +6,7 @@ const names = [
   "capture",
   "conversation",
   "profile-update",
+  "profile-consolidation",
   "research",
   "research-limitations",
   "research-finalization",

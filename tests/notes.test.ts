@@ -39,6 +39,9 @@ function setup() {
       updateProfile: text.startsWith("note:"),
     })),
     ask: vi.fn<Assistant["ask"]>(),
+    consolidateProfile: async () => {
+      throw new Error("Unexpected profile consolidation");
+    },
     updateProfile: vi.fn<Assistant["updateProfile"]>(async (item, documents) => {
       const current = documents.find((doc) => doc.path === document.path);
       if (!current) throw new Error("Missing preferences");

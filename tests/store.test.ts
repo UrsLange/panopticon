@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Store } from "../server/store.js";
 import { dayInTimezone } from "../shared/schema.js";
+import type { Implementation } from "../shared/t3.js";
 
 const stores: Store[] = [];
 function store() {
@@ -31,6 +32,72 @@ it("persists GitHub validators, response data, and retry deadlines across databa
   stores.push(reopened);
   expect(reopened.githubCache("repos/acme/app")).toEqual(entry);
   expect(reopened.githubCache("repos/acme/unknown")).toBeUndefined();
+});
+
+it("retains learning checkpoints and provisional memory across restarts, scoped to each profile", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "pa-learning-state-")), "assistant.sqlite");
+  const original = new Store(path);
+  original.recordProfileActivity("/profile", "capture", { text: "My team owns onboarding." });
+  original.recordProfileActivity("/other", "capture", { text: "Another profile's observation." });
+  const state = {
+    cursor: 1,
+    completedDay: "2026-09-28",
+    lastAttempt: "2026-09-28T12:00:00Z",
+    lastSuccess: "2026-09-28T12:01:00Z",
+    summary: "Updated responsibility",
+    provisionalMemory: "Unresolved scope with evidence",
+    error: null,
+  };
+  original.saveProfileLearningState("/profile", state);
+  original.db.close();
+  const reopened = new Store(path);
+  stores.push(reopened);
+  expect(reopened.profileLearningState("/profile")).toEqual(state);
+  expect(reopened.profileLearningState("/other")).toBeUndefined();
+  expect(reopened.profileActivity("/profile", 0)).toHaveLength(1);
+  expect(reopened.profileActivity("/profile", 1)).toEqual([]);
+});
+
+it("journals implementation state transitions without duplicating unchanged polls or storing connection details", () => {
+  const db = store();
+  const item = db.capture("Prepare the onboarding portal.");
+  const entry: Implementation = {
+    id: "implementation",
+    itemId: item.id,
+    revision: 0,
+    profileRoot: "/profile",
+    endpoint: "https://private-instance.example",
+    environmentId: "environment",
+    repositoryId: "repository",
+    workspaceRoot: "/workspace",
+    baseBranch: "main",
+    projectId: "project",
+    title: "Onboarding",
+    prompt: "Generated implementation prompt",
+    model: { instanceId: "instance", model: "model" },
+    createdAt: "2026-09-28T12:00:00Z",
+    state: "submitted",
+    error: null,
+  };
+  db.saveImplementation(entry);
+  db.saveImplementation(entry);
+  db.saveImplementation({
+    ...entry,
+    progress: { turnState: "completed", checkedAt: "2026-09-28T12:01:00Z", error: null },
+  });
+  db.saveImplementation({
+    ...entry,
+    progress: { turnState: "completed", checkedAt: "2026-09-28T12:02:00Z", error: null },
+  });
+  const events = db.profileActivity("/profile", 0);
+  expect(events).toHaveLength(2);
+  expect(JSON.parse(events[1].content)).toMatchObject({
+    originalCapture: item.original,
+    turnState: "completed",
+    taskStatus: "open",
+  });
+  expect(events[1].content).not.toContain("private-instance");
+  expect(events[1].content).not.toContain("Generated implementation prompt");
 });
 
 describe("capture and planning", () => {

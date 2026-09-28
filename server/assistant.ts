@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import type { Assistant } from "./application/assistant.js";
+import { profileConsolidationSchema } from "./application/profile-learning-model.js";
 import { profileUpdateSchema } from "./application/profile-update-model.js";
 import { prompts } from "./prompts.js";
 import { refineCapture, responseHistory } from "./refinement.js";
@@ -109,6 +110,18 @@ export function createAssistant(
         text: { format: zodTextFormat(profileUpdateSchema, "profile_update") },
       });
       if (!response.output_parsed) throw new Error("The model did not return a profile update.");
+      return response.output_parsed;
+    },
+    async consolidateProfile(input) {
+      const response = await client.responses.parse({
+        model,
+        store: false,
+        instructions: prompts["profile-consolidation"],
+        input: JSON.stringify(input),
+        text: { format: zodTextFormat(profileConsolidationSchema, "profile_consolidation") },
+      });
+      if (!response.output_parsed)
+        throw new Error("The model did not return a profile consolidation.");
       return response.output_parsed;
     },
     async ask(text, context, history, sessionEvidence) {

@@ -1,4 +1,5 @@
 import type { ProfileAccess } from "./application/ports.js";
+import { validateSnapshot } from "./application/profile-update-rules.js";
 import type { Profile } from "./profile.js";
 import { applyProfileUpdate } from "./profile-update.js";
 
@@ -31,5 +32,12 @@ export function profileAdapter(profile: Profile): ProfileAccess {
       profile.change("incorporate profile note", () =>
         applyProfileUpdate(profile, snapshot, update),
       ),
+    consolidate: (snapshot, update) =>
+      profile.change("consolidate daily activity", () => {
+        validateSnapshot(snapshot, profile.documents());
+        for (const document of snapshot) profile.checkWritable(document.path);
+        if (update.changes.length)
+          applyProfileUpdate(profile, snapshot, { ...update, decision: "apply" });
+      }),
   };
 }

@@ -246,6 +246,9 @@ describe("local API", () => {
         expect(context.related.some((item) => item.references.length > 0)).toBe(true);
         return { answer: "Stored references are supplied", sources: [] };
       },
+      consolidateProfile: async () => {
+        throw new Error("Unexpected profile consolidation");
+      },
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -342,6 +345,9 @@ describe("local API", () => {
         ]);
         return { answer: context.candidates[0].target, sources: [] };
       },
+      consolidateProfile: async () => {
+        throw new Error("Unexpected profile consolidation");
+      },
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -394,6 +400,9 @@ describe("local API", () => {
         sources: [],
       }),
       ask: async () => ({ answer: "", sources: [] }),
+      consolidateProfile: async () => {
+        throw new Error("Unexpected profile consolidation");
+      },
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -425,6 +434,9 @@ describe("local API", () => {
         sources: [],
       }),
       ask: async () => ({ answer: "", sources: [] }),
+      consolidateProfile: async () => {
+        throw new Error("Unexpected profile consolidation");
+      },
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -523,6 +535,9 @@ describe("local API", () => {
         throw new Error("Provider failure");
       },
       ask: async () => ({ answer: "", sources: [] }),
+      consolidateProfile: async () => {
+        throw new Error("Unexpected profile consolidation");
+      },
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -560,6 +575,9 @@ describe("local API", () => {
         };
       },
       ask: async () => ({ answer: "", sources: [] }),
+      consolidateProfile: async () => {
+        throw new Error("Unexpected profile consolidation");
+      },
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },

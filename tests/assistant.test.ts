@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { expect, it } from "vitest";
 import type { AssistantContext } from "../server/application/assistant.js";
 import { createAssistant } from "../server/assistant.js";
+import { prompts } from "../server/prompts.js";
 
 it("uses Responses structured outputs and limits returned citations to supplied evidence", async () => {
   const requests: Record<string, unknown>[] = [];
@@ -28,7 +29,15 @@ it("uses Responses structured outputs and limits returned citations to supplied 
             prompt: "Explore inviting a colleague to onboarding.",
             sources: [],
           }
-        : { answer: "You sponsor Activation.", sources: ["profile.md", "invented.md"] };
+        : requests.length === 2
+          ? { answer: "You sponsor Activation.", sources: ["profile.md", "invented.md"] }
+          : {
+              summary: "Kept a useful unresolved implication.",
+              paths: [],
+              changes: [],
+              provisionalMemory:
+                "An upcoming launch is suggested, but its scope remains ambiguous.",
+            };
     response.setHeader("Content-Type", "application/json");
     response.end(
       JSON.stringify({
@@ -77,6 +86,37 @@ it("uses Responses structured outputs and limits returned citations to supplied 
     expect(JSON.parse((requests[0].input as { content: string }[])[0].content).context.today).toBe(
       "2026-09-17",
     );
+    const consolidationInput = {
+      documents: [
+        {
+          path: "profile.md",
+          title: "Profile",
+          type: "Profile",
+          description: "Context",
+          hash: "hash",
+          content: "Full context ".repeat(2000),
+        },
+      ],
+      activity: [
+        {
+          id: 12,
+          kind: "capture" as const,
+          content: "Prepare the partner briefing.",
+          createdAt: "2026-09-17T10:00:00Z",
+        },
+      ],
+      provisionalMemory: "Earlier candidate with its original evidence.",
+      date: "2026-09-17",
+      timezone: "Europe/Berlin",
+    };
+    const consolidated = await assistant.consolidateProfile(consolidationInput);
+    expect(consolidated.provisionalMemory).toContain("upcoming launch");
+    expect(JSON.parse(requests[2].input as string)).toEqual(consolidationInput);
+    expect(requests[2]).toMatchObject({
+      store: false,
+      instructions: prompts["profile-consolidation"],
+      text: { format: { name: "profile_consolidation", strict: true } },
+    });
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

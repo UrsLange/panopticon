@@ -11,6 +11,7 @@ import type { createProfileUpdates } from "./profile-updates.js";
 export function createCaptures({
   store,
   getAssistant,
+  getProfileRoot,
   context,
   notes,
   today,
@@ -18,6 +19,7 @@ export function createCaptures({
 }: {
   store: CaptureStorage;
   getAssistant: () => Assistant | null;
+  getProfileRoot: () => string;
   context: ReturnType<typeof createContext>;
   notes: ReturnType<typeof createProfileUpdates>;
   today: () => string;
@@ -177,6 +179,7 @@ export function createCaptures({
     history: (id: string) => store.history(id),
     capture(text: string) {
       const item = store.capture(text);
+      store.recordProfileActivity(getProfileRoot(), "capture", { itemId: item.id, text });
       void processItem(item.id);
       return captureState(item);
     },
@@ -220,19 +223,25 @@ export function createCaptures({
           "invalid",
           "These questions have changed. Reload before answering.",
         );
-      return captureState(
-        store.update(
-          id,
-          {
-            clarifications: item.clarifications.map((entry) => ({
-              ...entry,
-              answer:
-                input.answers.find((answer) => answer.id === entry.id)?.answer ?? entry.answer,
-            })),
-          },
-          input.revision,
-        ),
+      const updated = store.update(
+        id,
+        {
+          clarifications: item.clarifications.map((entry) => ({
+            ...entry,
+            answer: input.answers.find((answer) => answer.id === entry.id)?.answer ?? entry.answer,
+          })),
+        },
+        input.revision,
       );
+      store.recordProfileActivity(getProfileRoot(), "clarification", {
+        itemId: id,
+        originalCapture: item.original,
+        answers: input.answers.map((answer) => ({
+          question: item.clarifications.find((entry) => entry.id === answer.id)?.question,
+          answer: answer.answer,
+        })),
+      });
+      return captureState(updated);
     },
     async retry(id: string, input: { resetReferences: boolean; revision?: number }) {
       const item = store.get(id);
@@ -325,6 +334,15 @@ export function createCaptures({
         },
         revision,
       );
+      const changes = Object.fromEntries(
+        Object.entries(fields).filter(([key, value]) => value !== current[key as keyof ItemFields]),
+      );
+      if (Object.keys(changes).length)
+        store.recordProfileActivity(getProfileRoot(), "edit", {
+          itemId: id,
+          originalCapture: current.original,
+          changes,
+        });
       if (bodyChanged) {
         const active = processing.get(current.id);
         if (active)

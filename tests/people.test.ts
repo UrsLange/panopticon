@@ -582,6 +582,9 @@ it("includes selected people for captures and conversation follow-ups, and recor
       contexts.push(context);
       return { answer: "Anna is in Engineering", sources: ["people"] };
     },
+    consolidateProfile: async () => {
+      throw new Error("Unexpected profile consolidation");
+    },
     updateProfile: async () => {
       throw new Error("Unexpected profile update");
     },
@@ -646,6 +649,9 @@ it("clarifies ambiguous people through existing review and persists a corrected 
       };
     },
     ask: async () => ({ answer: "", sources: [] }),
+    consolidateProfile: async () => {
+      throw new Error("Unexpected profile consolidation");
+    },
     updateProfile: async () => {
       throw new Error("Unexpected profile update");
     },

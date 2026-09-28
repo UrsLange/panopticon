@@ -13,6 +13,7 @@ import { resolveImplementationRepository } from "./application/implementation-re
 import type { PeopleSync } from "./application/people-sync.js";
 import { createPreferences } from "./application/preferences.js";
 import { createProfileService } from "./application/profile.js";
+import { createProfileLearning } from "./application/profile-learning.js";
 import { createProfileUpdates } from "./application/profile-updates.js";
 import {
   createProjectWorkspace,
@@ -110,6 +111,7 @@ export function createApplication(options: AppOptions = {}) {
   const captures = createCaptures({
     store,
     getAssistant,
+    getProfileRoot: () => profileNotes.root,
     context,
     notes,
     today,
@@ -127,7 +129,21 @@ export function createApplication(options: AppOptions = {}) {
       createProjectWorkspaceIO((url, options) => repositoryInsights(url, github, options)),
     now: () => now().toISOString(),
   });
-  const conversation = createConversation({ store, getAssistant, context, searchSessions });
+  const conversation = createConversation({
+    store,
+    getAssistant,
+    context,
+    searchSessions,
+    getProfileRoot: () => profileNotes.root,
+  });
+  const profileLearning = createProfileLearning({
+    records: store,
+    getProfile: () => profileNotes,
+    getAssistant,
+    busy: () => notes.busy() || captures.busy() || scanner.isRunning(),
+    timezone: () => options.timezone ?? settings.timezone,
+    now,
+  });
   const t3 = createT3({
     records: store,
     settings,
@@ -163,7 +179,7 @@ export function createApplication(options: AppOptions = {}) {
     },
     scanner,
     peopleSync,
-    capturesBusy: () => notes.busy() || captures.busy(),
+    capturesBusy: () => notes.busy() || captures.busy() || profileLearning.busy(),
     assistantConfigured: !!options.assistant,
     ctxAvailable,
     timezone: () => options.timezone ?? settings.timezone,
@@ -185,7 +201,9 @@ export function createApplication(options: AppOptions = {}) {
     preferences,
     scanner,
     peopleSync,
+    profileLearning,
     async close() {
+      await profileLearning.close();
       await projects.close();
       await t3.close();
       await peopleSync.close();
