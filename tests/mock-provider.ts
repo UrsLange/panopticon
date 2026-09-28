@@ -275,7 +275,10 @@ export function mockProvider() {
       );
       return;
     }
-    if (input.tool_choice?.name === "read_validation_value") {
+    if (
+      input.tool_choice === "auto" &&
+      input.tools?.some((tool: { name?: string }) => tool.name === "read_validation_value")
+    ) {
       response.end(
         JSON.stringify({
           id: "resp_tool",

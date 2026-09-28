@@ -40,7 +40,7 @@ export async function validateToolCalling(apiKey: string, model: string, baseURL
     include: ["reasoning.encrypted_content"],
     input,
     tools,
-    tool_choice: { type: "function", name: "read_validation_value" },
+    tool_choice: "auto",
     parallel_tool_calls: false,
   });
   const calls = response.output.filter((item) => item.type === "function_call");
