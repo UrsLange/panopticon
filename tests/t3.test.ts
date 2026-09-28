@@ -1039,6 +1039,27 @@ it("persists private settings and handoffs, and exposes only sanitized connectio
     headers: { host: "localhost" },
   });
   expect(loaded.json()).toEqual(saved.json());
+  const patched = await app.inject({
+    method: "PATCH",
+    url: "/api/settings/t3/defaults",
+    headers: { host: "localhost" },
+    payload: { workspaceMode: "worktree", runtimeMode: "approval-required" },
+  });
+  expect(patched.statusCode).toBe(200);
+  expect(patched.json()).toEqual({
+    ...saved.json(),
+    workspaceMode: "worktree",
+    runtimeMode: "approval-required",
+  });
+  expect(new SettingsStore(defaults).t3Defaults()).toEqual(patched.json());
+  const invalid = await app.inject({
+    method: "PATCH",
+    url: "/api/settings/t3/defaults",
+    headers: { host: "localhost" },
+    payload: { runtimeMode: "unknown" },
+  });
+  expect(invalid.statusCode).toBe(400);
+  expect(settings.t3Defaults()).toEqual(patched.json());
 });
 
 it("resolves a local Git workspace and rejects repositories without a commit", async () => {

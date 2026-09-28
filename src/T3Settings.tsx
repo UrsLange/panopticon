@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { T3Status } from "../shared/t3";
+import type { T3ImplementationSettings, T3Status } from "../shared/t3";
 import { api } from "./api";
 import { useUnsavedSettings } from "./useUnsavedSettings";
 
@@ -14,19 +14,34 @@ export function T3Settings() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [autoStart, setAutoStart] = useState(false);
-  const autoStartDirty = !!status && autoStart !== (status.autoStart ?? false);
+  const [defaults, setDefaults] = useState<T3ImplementationSettings | null>(null);
+  const [workspaceMode, setWorkspaceMode] =
+    useState<T3ImplementationSettings["workspaceMode"]>("worktree");
+  const [runtimeMode, setRuntimeMode] =
+    useState<T3ImplementationSettings["runtimeMode"]>("approval-required");
+  const defaultsDirty =
+    !!defaults &&
+    (autoStart !== (defaults.autoStart ?? false) ||
+      workspaceMode !== defaults.workspaceMode ||
+      runtimeMode !== defaults.runtimeMode);
   const dirty =
     !!status &&
     (endpoint !== status.endpoint ||
       instanceId !== status.defaultModel.instanceId ||
       model !== status.defaultModel.model ||
       !!credential);
-  useUnsavedSettings(dirty || autoStartDirty);
+  useUnsavedSettings(dirty || defaultsDirty);
   useEffect(() => {
-    void api<T3Status>("/settings/t3")
-      .then((next) => {
+    void Promise.all([
+      api<T3Status>("/settings/t3"),
+      api<T3ImplementationSettings>("/settings/t3/defaults"),
+    ])
+      .then(([next, savedDefaults]) => {
         setStatus(next);
-        setAutoStart(next.autoStart ?? false);
+        setDefaults(savedDefaults);
+        setAutoStart(savedDefaults.autoStart ?? false);
+        setWorkspaceMode(savedDefaults.workspaceMode);
+        setRuntimeMode(savedDefaults.runtimeMode);
         setEditing(!next.configured);
         setEndpoint(next.endpoint);
         setInstanceId(next.defaultModel.instanceId);
@@ -59,8 +74,8 @@ export function T3Settings() {
     <section className="settings-card t3-settings">
       <h2>T3 Code</h2>
       <p>
-        Start implementation from a commitment using T3 Code on this machine. Configure the model,
-        checkout, and permissions in project details on the Projects tab.
+        Start implementation from a commitment using T3 Code on this machine. Set global defaults
+        here; projects inherit them unless overridden in project details on the Projects tab.
       </p>
       {status?.configured && (
         <p>
@@ -80,18 +95,25 @@ export function T3Settings() {
           setError("");
           setNotice("");
           try {
-            const saved = await api<T3Status>("/settings/t3/auto-start", "PUT", { autoStart });
-            setStatus(saved);
+            const saved = await api<T3ImplementationSettings>("/settings/t3/defaults", "PATCH", {
+              autoStart,
+              workspaceMode,
+              runtimeMode,
+            });
+            setDefaults(saved);
+            setStatus((current) => current && { ...current, autoStart: saved.autoStart });
             setAutoStart(saved.autoStart ?? false);
-            setNotice("Global auto-start setting saved.");
+            setWorkspaceMode(saved.workspaceMode);
+            setRuntimeMode(saved.runtimeMode);
+            setNotice("Global T3 defaults saved.");
           } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Could not save auto-start.");
+            setError(reason instanceof Error ? reason.message : "Could not save T3 defaults.");
           } finally {
             setBusy(false);
           }
         }}
       >
-        <fieldset disabled={busy || !status}>
+        <fieldset disabled={busy || !defaults}>
           <label className="field">
             Global auto-start after refinement
             <select
@@ -111,16 +133,50 @@ export function T3Settings() {
             prompt and one available repository. No separate launch consent is requested. This
             authorizes starting implementation, not publishing or other shared-system changes.
           </p>
-          <button className="primary" type="submit" disabled={!autoStartDirty}>
-            Save global auto-start
+          <label className="field">
+            Global implementation location
+            <select
+              value={workspaceMode}
+              onChange={(event) =>
+                setWorkspaceMode(event.target.value as T3ImplementationSettings["workspaceMode"])
+              }
+            >
+              <option value="worktree">New worktree</option>
+              <option value="checkout">Current checkout</option>
+            </select>
+          </label>
+          <label className="field">
+            Global permission level
+            <select
+              value={runtimeMode}
+              onChange={(event) =>
+                setRuntimeMode(event.target.value as T3ImplementationSettings["runtimeMode"])
+              }
+            >
+              <option value="approval-required">Supervised</option>
+              <option value="auto-accept-edits">Auto-accept edits</option>
+              <option value="full-access">Full access</option>
+            </select>
+          </label>
+          <p className="muted-text">
+            Defaults apply to new implementations. Existing handoff retries keep their original
+            settings.
+          </p>
+          <button className="primary" type="submit" disabled={!defaultsDirty}>
+            Save global T3 defaults
           </button>
           <button
             className="secondary"
             type="button"
-            disabled={!autoStartDirty}
-            onClick={() => setAutoStart(status?.autoStart ?? false)}
+            disabled={!defaultsDirty}
+            onClick={() => {
+              if (!defaults) return;
+              setAutoStart(defaults.autoStart ?? false);
+              setWorkspaceMode(defaults.workspaceMode);
+              setRuntimeMode(defaults.runtimeMode);
+            }}
           >
-            Cancel auto-start changes
+            Cancel global changes
           </button>
         </fieldset>
       </form>

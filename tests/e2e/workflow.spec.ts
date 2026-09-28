@@ -579,9 +579,17 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
     .getByRole("button", { name: "T3 Code", exact: true })
     .click();
   await expect(page.getByLabel("Global auto-start after refinement")).toHaveValue("false");
+  await expect(page.getByLabel("Global implementation location")).toHaveValue("worktree");
+  await expect(page.getByLabel("Global permission level")).toHaveValue("approval-required");
+  await page.getByLabel("Global implementation location").selectOption("checkout");
+  await page.getByLabel("Global permission level").selectOption("full-access");
   await page.getByLabel("Global auto-start after refinement").selectOption("true");
-  await page.getByRole("button", { name: "Save global auto-start", exact: true }).click();
-  await expect(page.getByText("Global auto-start setting saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Save global T3 defaults", exact: true }).click();
+  await expect(page.getByText("Global T3 defaults saved.")).toBeVisible();
+  expect(await (await request.get("/api/settings/t3/defaults")).json()).toMatchObject({
+    workspaceMode: "checkout",
+    runtimeMode: "full-access",
+  });
   expect((await (await request.get("/api/settings/t3")).json()).autoStart).toBe(true);
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -590,9 +598,18 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
     .getByRole("button", { name: "T3 Code", exact: true })
     .click();
   await expect(page.getByLabel("Global auto-start after refinement")).toHaveValue("true");
+  await expect(page.getByLabel("Global implementation location")).toHaveValue("checkout");
+  await expect(page.getByLabel("Global permission level")).toHaveValue("full-access");
+  await page.getByLabel("Global implementation location").selectOption("worktree");
+  await page.getByLabel("Global permission level").selectOption("auto-accept-edits");
+  await page.getByRole("button", { name: "Cancel global changes", exact: true }).click();
+  await expect(page.getByLabel("Global implementation location")).toHaveValue("checkout");
+  await expect(page.getByLabel("Global permission level")).toHaveValue("full-access");
+  await page.getByLabel("Global implementation location").selectOption("worktree");
+  await page.getByLabel("Global permission level").selectOption("approval-required");
   await page.getByLabel("Global auto-start after refinement").selectOption("false");
-  await page.getByRole("button", { name: "Save global auto-start", exact: true }).click();
-  await expect(page.getByText("Global auto-start setting saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Save global T3 defaults", exact: true }).click();
+  await expect(page.getByText("Global T3 defaults saved.")).toBeVisible();
   expect(
     (await request.put("/api/settings/t3/auto-start", { data: { autoStart: "true" } })).status(),
   ).toBe(400);
