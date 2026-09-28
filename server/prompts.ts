@@ -8,8 +8,6 @@ const names = [
   "profile-update",
   "profile-consolidation",
   "research",
-  "research-limitations",
-  "research-finalization",
   "project-exploration",
   "profile-enrichment",
   "connection-validation",

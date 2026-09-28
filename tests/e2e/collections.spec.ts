@@ -160,6 +160,7 @@ test("keeps new captures in Inbox until refinement and keeps an open draft intac
   await page.getByRole("button", { name: "View Tasks", exact: true }).click();
   await expect(page.locator(".item-row")).toContainText("Prepare launch");
   await page.getByRole("button", { name: /^Prepare launch/ }).click();
+  await page.getByText("Original input", { exact: true }).click();
   await page.getByLabel("User input", { exact: true }).fill("Prepare a launch idea");
   await page.getByRole("button", { name: "Save and refine", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refining…", exact: true })).toBeDisabled();

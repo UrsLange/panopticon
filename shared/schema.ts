@@ -34,6 +34,7 @@ export const itemFieldsSchema = z.object({
   status: statusSchema,
   project: z.string().max(200),
   noProject: z.boolean(),
+  execution: z.enum(["manual", "implementation"]),
   dueDate: dateSchema.nullable(),
   priority: z.enum(["normal", "high"]),
   relatedId: z.string().nullable(),
@@ -62,6 +63,7 @@ export function annotatedText(text: string, references: EntityReference[]) {
 }
 
 export type Item = ItemFields & {
+  parentId: string | null;
   clarifications: Clarification[];
   repositoryId: string | null;
   references: EntityReference[];
@@ -95,22 +97,22 @@ export const clarificationAnswersSchema = z.object({
     .max(20),
 });
 
-export const interpretationSchema = z.object({
-  prompt: z.string().max(30000),
-  sources: z.array(z.string()),
-  referenceIds: z.array(z.string()),
-  title: z.string(),
+export const refinementSchema = z.object({
+  id: z.string(),
+  title: z.string().trim().min(1).max(300),
   kind: z.enum(["idea", "note", "commitment"]),
-  project: z.string(),
-  dueDate: z.string().nullable(),
+  execution: z.enum(["manual", "implementation"]),
+  project: z.string().max(200),
+  noProject: z.boolean(),
+  dueDate: dateSchema.nullable(),
   priority: z.enum(["normal", "high"]),
   relatedId: z.string().nullable(),
-  rationale: z.string(),
-  needsClarification: z.boolean(),
-  clarificationQuestions: z.array(z.string().trim().min(1).max(1000)).max(20),
-  updateProfile: z.boolean(),
+  prompt: z.string().trim().min(1).max(30000),
+  sources: z.array(z.string()),
+  referenceIds: z.array(z.string()),
+  clarificationQuestions: z.array(z.string().trim().min(1)),
 });
-export type Interpretation = z.infer<typeof interpretationSchema>;
+export type Refinement = z.infer<typeof refinementSchema>;
 export type ProfileDocument = {
   path: string;
   title: string;

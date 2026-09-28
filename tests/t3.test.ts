@@ -41,6 +41,7 @@ function fixture() {
     capture.id,
     {
       kind: "commitment",
+      execution: "implementation",
       processing: "ready",
       prompt: "Search titles and show matching results.",
       references: [
@@ -161,6 +162,25 @@ it("blocks pending retries and automatic progress after choosing no project", as
   const outside = store.update(item.id, { noProject: true }, item.revision);
   await expect(service.implement(item.id, { revision: outside.revision })).rejects.toThrow(
     "Assign a project",
+  );
+  expect(client.launch).toHaveBeenCalledTimes(1);
+  const entry = store.latestImplementation(item.id, "/profile");
+  assert(entry);
+  store.saveImplementation({ ...entry, state: "submitted" });
+  await service.refresh(item.id);
+  expect(client.progress).not.toHaveBeenCalled();
+  expect(ports.localMerge).not.toHaveBeenCalled();
+  expect(store.get(item.id)?.status).toBe("open");
+  expect(service.options(item.id).latest?.id).toBe(entry.id);
+});
+
+it("blocks pending retries and automatic progress after switching to an ordinary project task", async () => {
+  const { service, store, item, client, ports } = fixture();
+  vi.mocked(client.launch).mockRejectedValueOnce(new Error("Unconfirmed"));
+  await expect(service.implement(item.id, { revision: item.revision })).rejects.toThrow();
+  const outside = store.update(item.id, { execution: "manual" }, item.revision);
+  await expect(service.implement(item.id, { revision: outside.revision })).rejects.toThrow(
+    "Choose Implementation",
   );
   expect(client.launch).toHaveBeenCalledTimes(1);
   const entry = store.latestImplementation(item.id, "/profile");
@@ -910,7 +930,7 @@ it("persists private settings and handoffs, and exposes only sanitized connectio
   assert(entry);
   store.update(
     item.id,
-    { kind: "commitment", processing: "ready", prompt: entry.prompt },
+    { kind: "commitment", execution: "implementation", processing: "ready", prompt: entry.prompt },
     item.revision,
   );
   store.saveImplementation({

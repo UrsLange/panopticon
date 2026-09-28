@@ -6,11 +6,11 @@
 
 Capture from any view. **Command–K** focuses the browser capture box; **Command–Enter** saves. The [Mac companion](setup.md#mac-capture-companion) adds a global shortcut and selected-text capture.
 
-A capture is saved before model processing. The assistant classifies it and refines its description using available context. Failed processing retains the capture and can be retried.
+A capture is saved before model processing. The assistant uses tools to inspect ctx session history, profile knowledge, captures and project files, then saves the useful outcome. Mixed captures can produce linked tasks, ideas and knowledge notes. Failed processing retains the capture and can be retried.
 
 Every capture starts in **Inbox**. **Needs your attention** holds captures requiring clarification, retry, or resumption; **Refining** holds work the assistant is processing automatically. Successful refinement moves ideas to **Notebook** and commitments to **Tasks**. Notes follow the profile workflow below. Editing the capture's **User input** sends it back through Inbox while retaining its task status and history.
 
-Open a capture or task to edit it in the details panel. **Prompt** holds the refined text; **User input** retains the capture text with resolved aliases. Original wording and revision history remain available. Refinement never closes an open panel or discards a draft.
+Open a capture or task to edit it in the details panel. The main content is the refined task, idea or implementation prompt. **Original input** retains the capture text with resolved aliases. Original wording and revision history remain available. Refinement never closes an open panel or discards a draft.
 
 Navigation badges mean **needs your attention**, not total items. Inbox counts captures requiring your help, excluding background refinement. Tasks counts each task due today, overdue, or ready for review once. Use **Needs your attention** in the task status filter to see those tasks. Page summaries show totals separately; Notebook has no attention badge.
 
@@ -20,7 +20,7 @@ Navigation badges mean **needs your attention**, not total items. Inbox counts c
 
 Click a task's completion circle once to finish it; **Undo** restores its previous status. Click its title for details, editing, and actions such as starting work or continuing in T3 Code. Closing the panel preserves your list position and filters.
 
-If the current brief is sufficient, choose **Mark as refined**. This accepts a task or idea without calling the model or marking the work done. Save edits first and wait for any running refinement to finish. Accepted tasks appear in **Tasks**, and accepted ideas appear in **Notebook**. Notes still use the separate **Add to profile** flow.
+If the current brief is sufficient, choose **Mark as refined**. This accepts a task or idea without calling the model or marking the work done. Save edits first and wait for any running refinement to finish. Accepted tasks appear in **Tasks**, and accepted ideas appear in **Notebook**. Clear knowledge notes are incorporated directly; pending notes retain clarification and retry actions.
 
 When refinement needs more information, **Let’s clarify the brief** presents individual questions. Type answers and choose **Save answers** to return later, or **Refine with answers** to continue. Partial answers work: subsequent rounds use the previous brief and all saved answers, asking about remaining gaps. Answers survive reloads and failed refinement attempts; earlier rounds remain under **Previous answers**. Original capture text is preserved. Older captures with prose-only clarification need **Refine again** once to generate structured questions.
 
@@ -34,9 +34,9 @@ Use **Mark in progress** for work you do outside T3 Code. **Mark waiting** pause
 
 ## Implement a commitment
 
-After [connecting T3 Code](setup.md#t3-code), open a commitment and save any edits. Complete refinement and resolve processing errors first. Select its discovered repository if project references do not identify one, then choose **Implement**.
+After [connecting T3 Code](setup.md#t3-code), open a task with **Execution → Implementation** and save any edits. Ordinary tasks can belong to projects and remain manual; project membership does not start implementation. Complete refinement and resolve processing errors first. Select its discovered repository if project references do not identify one, then choose **Implement**.
 
-Panopticon reuses the T3 project for that repository path or creates one. It immediately submits the refined task, notes, original wording, linked item, resolved references, and cited profile documents to a new thread. Each implementation uses a separate Git worktree from the current commit; uncommitted changes are not included. T3 runs the project's setup script and uses approval-required permissions.
+Panopticon reuses the T3 project for that repository path or creates one. It immediately submits the refined task, original wording, linked item, resolved references, and cited profile documents to a new thread. Each implementation uses a separate Git worktree from the current commit; uncommitted changes are not included. T3 runs the project's setup script and uses approval-required permissions.
 
 Choose **Continue in T3 Code** to follow progress and answer approvals in the existing thread. A confirmed handoff marks the commitment **In progress**; an unconfirmed handoff leaves its status unchanged. **Retry handoff** checks the original thread and reuses the saved task and command IDs when dispatch is still needed, including after a restart. Later edits are not included in that retry. **Start another implementation** explicitly creates a new thread from the latest saved version. A handoff does not establish successful execution or completion. Use **Mark merged** after the implementation has been merged.
 
@@ -52,7 +52,7 @@ Tracking errors appear on the task and leave completion unchanged. A changed tas
 
 ## Add knowledge to your profile
 
-An explicit memory request, such as “remember that I prefer atomic conventional commits,” authorizes immediate incorporation into your profile. Other notes remain available for manual incorporation; daily learning can also retain useful knowledge from your activity.
+A clear knowledge note, such as “I prefer atomic conventional commits,” is incorporated directly into your profile. No special prefix is required. Ambiguous intent or identity remains pending for clarification. Tasks and tentative ideas do not become established profile facts; daily learning can separately retain useful knowledge from your activity.
 
 For a pending note, open it and choose **Add to profile**. Save any text edits first. Answer clarification questions or use **Retry profile update** after resolving a failure.
 

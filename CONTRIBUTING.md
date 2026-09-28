@@ -58,10 +58,8 @@ Prompt files are in [prompts/](prompts/):
 | File | Purpose |
 | --- | --- |
 | `shared.md` | Shared capture/conversation instructions |
-| `capture.md` | Interpretation and classification |
+| `capture.md` | Tool-driven refinement and outcome classification |
 | `research.md` | Evidence gathering |
-| `research-limitations.md` | Handling missing evidence |
-| `research-finalization.md` | Finalizing after a research limit |
 | `conversation.md` | Conversation answers |
 | `profile-update.md` | Incorporating authorized notes |
 | `profile-consolidation.md` | Daily learning from activity and provisional observations |

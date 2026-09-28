@@ -111,6 +111,11 @@ export function createT3({
     const currentItem = records.get(itemId);
     if (currentItem?.noProject)
       throw new ApplicationError("invalid", "Assign a project before starting work in T3 Code.");
+    if (currentItem?.execution === "manual")
+      throw new ApplicationError(
+        "invalid",
+        "Choose Implementation before starting work in T3 Code.",
+      );
     const connection = settings.t3Connection();
     if (!connection) throw new ApplicationError("invalid", "Connect T3 Code in Settings first.");
     const profile = getProfile();
@@ -131,6 +136,7 @@ export function createT3({
       assertRevision(item, input.revision);
       if (
         item.kind !== "commitment" ||
+        item.execution !== "implementation" ||
         !["open", "in_progress", "in_review", "waiting"].includes(item.status) ||
         item.processing !== "ready" ||
         item.processingError ||
@@ -226,6 +232,7 @@ export function createT3({
       !item ||
       item.kind !== "commitment" ||
       item.noProject ||
+      item.execution !== "implementation" ||
       ["done", "archived"].includes(item.status)
     )
       return;
@@ -306,6 +313,7 @@ export function createT3({
       const entry = records.latestImplementation(item.id, getProfile().root);
       if (
         !entry?.completionReview ||
+        item.execution !== "implementation" ||
         item.kind !== "commitment" ||
         ["done", "archived"].includes(item.status) ||
         item.processing !== "ready" ||

@@ -40,6 +40,8 @@ export function capturedItem(text: string, id: string, now: string): Item {
     repositoryId: null,
     clarifications: [],
     noProject: false,
+    execution: "manual",
+    parentId: null,
   };
 }
 export function revisedItem(
@@ -54,7 +56,10 @@ export function revisedItem(
     revision: revision + 1,
     updatedAt: now,
   };
-  if (next.kind !== "commitment") next.dueDate = null;
+  if (next.kind !== "commitment") {
+    next.dueDate = null;
+    next.execution = "manual";
+  }
   if (next.noProject) {
     next.project = "";
     next.repositoryId = null;

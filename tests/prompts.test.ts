@@ -5,44 +5,16 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { prompts, renderPrompt } from "../server/prompts.js";
 
-it("inserts dynamic values literally without interpreting placeholders inside them", () => {
-  const calls = '{{minutes}}/$&/"quoted"';
-  const result = renderPrompt("research", {
-    calls,
-    minutes: "10",
-    limitations: "",
-    finalization: "",
-  });
-  expect(result).toContain(calls);
-  expect(result).toContain("10 minutes");
+it("inserts dynamic enrichment values literally", () => {
+  const root = '{{documents}}/$&/"quoted"';
+  const result = renderPrompt("profile-enrichment", { root, documents: "Document directory" });
+  expect(result).toContain(root);
+  expect(result).toContain("Document directory");
 });
 
-it("renders research limits and optional finalization instructions", () => {
-  const issues = "Unavailable {{calls}} source with $& in its name.";
-  const limitations = renderPrompt("research-limitations", { issues });
-  const result = renderPrompt("research", {
-    calls: "100",
-    minutes: "15",
-    limitations,
-    finalization: prompts["research-finalization"],
-  });
-  expect(result).toContain("100 tool calls");
-  expect(result).toContain("15 minutes");
-  expect(result).toContain(issues);
-  expect(result).toContain(prompts["research-finalization"]);
-  const researching = renderPrompt("research", {
-    calls: "100",
-    minutes: "15",
-    limitations: "",
-    finalization: "",
-  });
-  expect(researching).not.toContain("{{");
-  expect(researching).not.toContain(prompts["research-finalization"]);
-});
-
-it("identifies the file and missing variable when a template cannot be rendered", () => {
-  expect(() => renderPrompt("research", { calls: "100" })).toThrow(
-    "Missing prompt variable minutes in prompts/research.md",
+it("reports missing prompt variables", () => {
+  expect(() => renderPrompt("profile-enrichment", { root: "/profile" })).toThrow(
+    "Missing prompt variable documents in prompts/profile-enrichment.md",
   );
 });
 

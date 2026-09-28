@@ -11,24 +11,7 @@ it("uses Responses structured outputs and limits returned citations to supplied 
     for await (const chunk of request) body += chunk;
     const parsed = JSON.parse(body);
     requests.push(parsed);
-    const output =
-      requests.length === 1
-        ? {
-            title: "Onboarding idea",
-            kind: "idea",
-            project: "Activation",
-            dueDate: null,
-            priority: "normal",
-            relatedId: null,
-            rationale: "Tentative suggestion",
-            needsClarification: false,
-            clarificationQuestions: [],
-            updateProfile: false,
-            referenceIds: [],
-            prompt: "Explore inviting a colleague to onboarding.",
-            sources: [],
-          }
-        : { answer: "You sponsor Activation.", sources: ["profile.md", "invented.md"] };
+    const output = { answer: "You sponsor Activation.", sources: ["profile.md", "invented.md"] };
     response.setHeader("Content-Type", "application/json");
     response.end(
       JSON.stringify({
@@ -67,16 +50,11 @@ it("uses Responses structured outputs and limits returned citations to supplied 
       related: [],
       commitments: { date: "2026-09-17", due: [], suggested: [], waiting: [] },
     };
-    expect((await assistant.interpret("Perhaps we could invite a colleague", context)).kind).toBe(
-      "idea",
-    );
     const answer = await assistant.ask("What is my role?", context, [], "");
     expect(answer.sources).toEqual(["profile.md"]);
     expect(requests[0].store).toBe(false);
     expect(requests[0].text).toMatchObject({ format: { type: "json_schema", strict: true } });
-    expect(JSON.parse((requests[0].input as { content: string }[])[0].content).context.today).toBe(
-      "2026-09-17",
-    );
+    expect(JSON.parse(requests[0].input as string).context.today).toBe("2026-09-17");
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

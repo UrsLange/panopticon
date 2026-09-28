@@ -76,9 +76,9 @@ test("clarifies a demo over two rounds, preserving saved answers across reloads"
       .evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
   await page.getByRole("button", { name: "Refine with answers", exact: true }).click();
-  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
-    "Plan the Portal demo with Benjamin from Design.",
-  );
+  await expect(
+    page.getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ }),
+  ).toHaveValue("Plan the Portal demo with Benjamin from Design.");
   await expect(page.getByRole("region", { name: "Clarification questions" })).toHaveCount(0);
   const items = await (await request.get("/api/items")).json();
   const item = items.find(
@@ -138,20 +138,21 @@ test("creates aliases through the profile editor and shows persisted capture ann
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management]", { exact: true }),
   ).toBeVisible();
+  await page.getByText("Original input", { exact: true }).click();
   await page.getByLabel("User input", { exact: true }).fill("Ask about ghma tomorrow");
   await page.getByRole("button", { name: "Save and refine" }).click();
-  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
-    "Implement: Ask about ghma tomorrow",
-  );
+  await expect(
+    page.getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ }),
+  ).toHaveValue("Implement: Ask about ghma tomorrow");
   await page.reload();
   await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.getByRole("button", { name: /Ask about ghma/ }).click();
   await expect(
     page.getByText("Ask about ghma [GitHub Access Management] tomorrow", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
-    "Implement: Ask about ghma tomorrow",
-  );
+  await expect(
+    page.getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ }),
+  ).toHaveValue("Implement: Ask about ghma tomorrow");
   await page.getByText("Original capture & sources").click();
   await expect(page.locator("pre").filter({ hasText: /^Ask about ghma$/ })).toBeVisible();
 });
@@ -167,22 +168,25 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await expect(page.getByRole("status")).toContainText(/Captured\.|added to Notebook/);
   await page.getByRole("button", { name: "Notebook", exact: true }).click();
   await page.getByRole("button", { name: /Send the revised proposal/ }).click();
-  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
-    "Implement: Send the revised proposal to Anna",
-  );
+  await expect(
+    page.getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ }),
+  ).toHaveValue("Implement: Send the revised proposal to Anna");
+  await page.getByText("Original input", { exact: true }).click();
   const inputBounds = await page.getByLabel("User input", { exact: true }).boundingBox();
-  const promptBounds = await page.getByLabel("Prompt", { exact: true }).boundingBox();
+  const promptBounds = await page
+    .getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ })
+    .boundingBox();
   if (!inputBounds || !promptBounds) throw new Error("Missing input or prompt field");
-  expect(inputBounds.y + inputBounds.height).toBeLessThan(promptBounds.y);
+  expect(promptBounds.y + promptBounds.height).toBeLessThan(inputBounds.y);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByRole("button", { name: "Copy prompt", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Prompt copied", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Copy text", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     "Implement: Send the revised proposal to Anna",
   );
   await page.screenshot({ path: "test-results/refined-capture.png", fullPage: true });
   await page
-    .getByLabel("Prompt", { exact: true })
+    .getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ })
     .fill("Send Anna the proposal after reviewing its acceptance criteria.");
   await page.getByText("More actions", { exact: true }).click();
   await expect(page.getByRole("button", { name: "Refine again", exact: true })).toBeDisabled();
@@ -198,9 +202,9 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await page.getByRole("button", { name: "Today", exact: true }).click();
   await expect(page.getByRole("button", { name: /^Send the revised proposal/ })).toBeVisible();
   await page.getByRole("button", { name: /^Send the revised proposal/ }).click();
-  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
-    "Send Anna the proposal after reviewing its acceptance criteria.",
-  );
+  await expect(
+    page.getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ }),
+  ).toHaveValue("Send Anna the proposal after reviewing its acceptance criteria.");
   await page.getByRole("button", { name: "Close item" }).click();
   await page.getByRole("button", { name: "Complete Send the revised proposal to Anna" }).click();
   await expect(page.getByText("No deadlines in your way")).toBeVisible();
@@ -227,7 +231,7 @@ test("capture, organize, correct, complete, and retain an idea across reloads", 
   await page.getByRole("button", { name: "Close item" }).click();
 });
 
-test("incorporates explicit profile notes automatically and waits for approval on implicit notes", async ({
+test("incorporates clear profile knowledge with and without an explicit prefix", async ({
   page,
   request,
 }) => {
@@ -255,23 +259,12 @@ test("incorporates explicit profile notes automatically and waits for approval o
   await expect
     .poll(async () => {
       const items = await (await request.get("/api/items")).json();
-      return items.find((item: { original: string }) => item.original === implicit)?.kind;
+      return items.find((item: { original: string }) => item.original === implicit)?.status;
     })
-    .toBe("note");
-  const before = await (await request.get("/api/profile")).json();
-  expect(
-    before.find((doc: { path: string }) => doc.path === "browser-test-preferences.md").content,
-  ).not.toContain(implicit);
-  await page.getByRole("button", { name: /^Inbox/ }).click();
-  await page.getByRole("button", { name: /My browser-test review preference/ }).click();
-  await expect(
-    page.getByLabel("Status", { exact: true }).locator('option[value="done"]'),
-  ).toHaveJSProperty("disabled", true);
-  await page.getByRole("button", { name: "Add to profile", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "browser-test-preferences.md", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "browser-test-preferences.md", exact: true }).click();
+    .toBe("done");
+  await page.reload();
+  await page.getByRole("button", { name: "Your context", exact: true }).click();
+  await page.getByRole("button", { name: /Browser test preferences/ }).click();
   await expect(page.getByLabel("Markdown document")).toHaveValue(
     /My browser-test review preference is a short summary\./,
   );
@@ -609,14 +602,14 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
   await page.getByRole("button", { name: "Today", exact: true }).click();
   await page.getByLabel("What’s on your mind?").fill("Implement project search in T3 Code");
   await page.getByRole("button", { name: "Capture", exact: true }).click();
-  await page.getByRole("button", { name: "Notebook", exact: true }).click();
-  await page.getByRole("button", { name: /Implement project search in T3 Code/ }).click();
-  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue(
-    "Implement: Implement project search in T3 Code",
-  );
+  await page.getByRole("button", { name: /^Tasks/ }).click();
+  await page.getByRole("button", { name: /^Implement project search in T3 Code/ }).click();
+  await expect(
+    page.getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ }),
+  ).toHaveValue("Implement: Implement project search in T3 Code");
   await page.locator(".capture-details summary").click();
-  await page.getByLabel("Kind", { exact: true }).selectOption("commitment");
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByLabel("Kind", { exact: true })).toHaveValue("commitment");
+  await expect(page.getByLabel("Execution", { exact: true })).toHaveValue("implementation");
   await expect(page.getByText("All changes saved", { exact: true })).toBeVisible();
   const projects = await (await request.get("/api/projects")).json();
   execFileSync(
@@ -659,12 +652,14 @@ test("connects T3 Code and implements a saved commitment with recoverable handof
     { timeout: 10000 },
   );
   await expect(page.getByRole("button", { name: "Start in T3 Code", exact: true })).toBeEnabled();
-  await page.getByLabel("Prompt", { exact: true }).fill("Unsaved implementation change");
+  await page
+    .getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ })
+    .fill("Unsaved implementation change");
   await expect(
     page.getByRole("button", { name: "Save and start in T3 Code", exact: true }),
   ).toBeEnabled();
   await page
-    .getByLabel("Prompt", { exact: true })
+    .getByRole("textbox", { name: /^(Implementation prompt|Refined content)$/ })
     .fill("Implement: Implement project search in T3 Code");
   await page.getByRole("button", { name: "Start in T3 Code", exact: true }).click();
   await expect(page.getByRole("button", { name: "Retry handoff", exact: true })).toBeVisible();

@@ -33,7 +33,7 @@ export interface CaptureRecords {
 }
 
 export interface CaptureStorage extends CaptureRecords, ProfileActivityWriter {
-  capture(text: string): Item;
+  capture(text: string, parentId?: string | null): Item;
   list(): Item[];
   today(date: string): Today;
   history(id: string): { item: Item; changedAt: string }[];

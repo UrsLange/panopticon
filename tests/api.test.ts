@@ -8,6 +8,7 @@ import { config } from "../server/config.js";
 import { Profile } from "../server/profile.js";
 import { SettingsStore } from "../server/settings.js";
 import { Store } from "../server/store.js";
+import { refinementAgent } from "./refinement-agent.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -71,7 +72,6 @@ describe("local API", () => {
           kind,
           processing: "review",
           prompt: "Discuss the current plan.",
-          rationale: "Which Benjamin?",
         },
         captured.revision,
       );
@@ -220,7 +220,7 @@ describe("local API", () => {
 
   it("persists aliases, retrieves their targets, and reinterprets edited input", async () => {
     const assistant: Assistant = {
-      interpret: async (text, context) => {
+      interpret: refinementAgent(async (text, context) => {
         expect(
           context.profile.documents.some((doc) => doc.content.includes("Access details")),
         ).toBe(true);
@@ -231,17 +231,16 @@ describe("local API", () => {
           dueDate: null,
           priority: "normal",
           relatedId: null,
-          rationale: "Resolved",
-          needsClarification: false,
+
           clarificationQuestions: [],
-          updateProfile: false,
+
           referenceIds: context.candidates
             .filter((candidate) => candidate.available)
             .map((candidate) => candidate.id),
-          prompt: "",
+          prompt: "Useful refined content",
           sources: [],
         };
-      },
+      }),
       ask: async (_text, context) => {
         expect(context.related.some((item) => item.references.length > 0)).toBe(true);
         return { answer: "Stored references are supplied", sources: [] };
@@ -249,6 +248,7 @@ describe("local API", () => {
       consolidateProfile: async () => {
         throw new Error("Unexpected profile consolidation");
       },
+
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -314,7 +314,7 @@ describe("local API", () => {
 
   it("uses one alias target for all casing variants in capture and conversation", async () => {
     const assistant: Assistant = {
-      interpret: async (text, context) => {
+      interpret: refinementAgent(async (text, context) => {
         expect(context.candidates).toMatchObject([
           {
             mention: text.slice(4),
@@ -330,15 +330,14 @@ describe("local API", () => {
           dueDate: null,
           priority: "normal",
           relatedId: null,
-          rationale: "Resolved",
-          needsClarification: false,
+
           clarificationQuestions: [],
-          updateProfile: false,
+
           referenceIds: [context.candidates[0].id],
-          prompt: "",
+          prompt: "Useful refined content",
           sources: [],
         };
-      },
+      }),
       ask: async (text, context) => {
         expect(context.candidates).toMatchObject([
           { mention: text.slice(4), alias: "Marcus", match: "exact", available: true },
@@ -348,6 +347,7 @@ describe("local API", () => {
       consolidateProfile: async () => {
         throw new Error("Unexpected profile consolidation");
       },
+
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -384,25 +384,25 @@ describe("local API", () => {
 
   it("keeps the saved capture when the model invents a reference", async () => {
     const { app, store } = setup({
-      interpret: async () => ({
+      interpret: refinementAgent(async () => ({
         title: "Bad reference",
         kind: "note",
         project: "",
         dueDate: null,
         priority: "normal",
         relatedId: null,
-        rationale: "",
-        needsClarification: false,
+
         clarificationQuestions: [],
-        updateProfile: false,
+
         referenceIds: ["invented"],
-        prompt: "",
+        prompt: "Useful refined content",
         sources: [],
-      }),
+      })),
       ask: async () => ({ answer: "", sources: [] }),
       consolidateProfile: async () => {
         throw new Error("Unexpected profile consolidation");
       },
+
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -418,25 +418,25 @@ describe("local API", () => {
 
   it("only rebinds a stored alias when explicitly requested with the current revision", async () => {
     const { app, store, profile } = setup({
-      interpret: async (_text, context) => ({
+      interpret: refinementAgent(async (_text, context) => ({
         title: "Model title",
         kind: "idea",
         project: "",
         dueDate: null,
         priority: "normal",
         relatedId: null,
-        rationale: "",
-        needsClarification: false,
+
         clarificationQuestions: [],
-        updateProfile: false,
+
         referenceIds: context.candidates.map((candidate) => candidate.id),
-        prompt: "",
+        prompt: "Useful refined content",
         sources: [],
-      }),
+      })),
       ask: async () => ({ answer: "", sources: [] }),
       consolidateProfile: async () => {
         throw new Error("Unexpected profile consolidation");
       },
+
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -531,13 +531,14 @@ describe("local API", () => {
 
   it("keeps captures recoverable when model calls fail", async () => {
     const assistant: Assistant = {
-      interpret: async () => {
+      interpret: refinementAgent(async () => {
         throw new Error("Provider failure");
-      },
+      }),
       ask: async () => ({ answer: "", sources: [] }),
       consolidateProfile: async () => {
         throw new Error("Unexpected profile consolidation");
       },
+
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },
@@ -556,7 +557,7 @@ describe("local API", () => {
       finish = resolve;
     });
     const assistant: Assistant = {
-      interpret: async () => {
+      interpret: refinementAgent(async () => {
         await gate;
         return {
           title: "Model title",
@@ -565,19 +566,19 @@ describe("local API", () => {
           dueDate: null,
           priority: "normal",
           relatedId: null,
-          rationale: "Tentative idea",
-          needsClarification: false,
+
           clarificationQuestions: [],
-          updateProfile: false,
+
           referenceIds: [],
-          prompt: "",
+          prompt: "Useful refined content",
           sources: [],
         };
-      },
+      }),
       ask: async () => ({ answer: "", sources: [] }),
       consolidateProfile: async () => {
         throw new Error("Unexpected profile consolidation");
       },
+
       updateProfile: async () => {
         throw new Error("Unexpected profile update");
       },

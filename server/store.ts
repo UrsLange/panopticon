@@ -127,6 +127,17 @@ export class Store {
     ) {
       this.db.exec(`ALTER TABLE items ADD COLUMN "references" TEXT NOT NULL DEFAULT '[]'`);
     }
+    if (!columns.some((column) => column.name === "execution")) {
+      this.db.exec("ALTER TABLE items ADD COLUMN execution TEXT NOT NULL DEFAULT 'manual'");
+      this.db.exec(
+        "UPDATE items SET execution='implementation' WHERE kind='commitment' AND noProject=0 AND prompt<>''",
+      );
+      this.db.exec(
+        "UPDATE item_history SET snapshot=json_set(snapshot, '$.execution', CASE WHEN json_extract(snapshot, '$.kind')='commitment' AND coalesce(json_extract(snapshot, '$.noProject'),0)=0 AND coalesce(json_extract(snapshot, '$.prompt'),'')<>'' THEN 'implementation' ELSE 'manual' END, '$.parentId', NULL)",
+      );
+    }
+    if (!columns.some((column) => column.name === "parentId"))
+      this.db.exec("ALTER TABLE items ADD COLUMN parentId TEXT REFERENCES items(id)");
     if (
       !this.db
         .prepare("PRAGMA table_info(items)")
@@ -363,14 +374,14 @@ export class Store {
       : undefined;
   }
 
-  capture(text: string): Item {
+  capture(text: string, parentId: string | null = null): Item {
     const now = new Date().toISOString();
-    const item = capturedItem(text, randomUUID(), now);
+    const item = { ...capturedItem(text, randomUUID(), now), parentId };
     this.db
       .prepare(`INSERT INTO items
       (id, original, title, body, kind, status, project, dueDate, priority, relatedId,
-       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId, clarifications, noProject)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId, clarifications, noProject, execution, parentId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         ...Object.values({
           ...item,
@@ -413,7 +424,7 @@ export class Store {
       this.db
         .prepare(`UPDATE items SET title=?, body=?, kind=?, status=?, project=?, dueDate=?,
         priority=?, relatedId=?, updatedAt=?, revision=?, processing=?, processingError=?,
-        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=?, clarifications=?, noProject=? WHERE id=?`)
+        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=?, clarifications=?, noProject=?, execution=? WHERE id=?`)
         .run(
           next.title,
           next.body,
@@ -435,6 +446,7 @@ export class Store {
           next.repositoryId,
           JSON.stringify(next.clarifications),
           Number(next.noProject),
+          next.execution,
           id,
         );
       this.db.exec("COMMIT");

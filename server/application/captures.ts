@@ -1,7 +1,8 @@
 import { ZodError } from "zod";
-import { type Capture, type Item, type ItemFields, itemFieldsSchema } from "../../shared/schema.js";
-import { resolveReferences, retainReferences } from "./aliases.js";
-import type { Assistant, AssistantContext } from "./assistant.js";
+import type { Capture, Item, ItemFields } from "../../shared/schema.js";
+import { retainReferences } from "./aliases.js";
+import type { Assistant } from "./assistant.js";
+import { captureRefinement } from "./capture-refinement.js";
 import type { createContext } from "./context.js";
 import { ApplicationError } from "./errors.js";
 import { assertRevision } from "./items.js";
@@ -36,118 +37,34 @@ export function createCaptures({
           ? "paused"
           : item.processing,
   });
-  const mergeNote = notes.merge;
-  const processItem = (id: string, mode: "full" | "references" | "edited" = "full") => {
+  const processItem = (id: string, mode: "full" | "references" = "full") => {
     const referencesOnly = mode === "references";
     if (processing.has(id)) return processing.get(id);
     const task = (async () => {
       const item = store.get(id);
       if (!item || notes.has(id) || (item.kind === "note" && item.status === "done")) return;
+      const profileRoot = getProfileRoot();
+      let refinement: ReturnType<typeof captureRefinement> | undefined;
       try {
         const assistant = getAssistant();
         if (!assistant) return;
-        const evidence: AssistantContext = {
-          ...context(
-            item.body,
-            item.clarifications.map((entry) => entry.answer).filter(Boolean),
-            item.references,
-          ),
-          previousRefinement: {
-            prompt: item.prompt,
-            rationale: item.rationale,
-            sourcePaths: item.sourcePaths,
-            clarifications: item.clarifications,
+        refinement = captureRefinement(
+          item,
+          store,
+          context,
+          notes,
+          resolveRepository,
+          referencesOnly,
+          () => {
+            if (getProfileRoot() !== profileRoot)
+              throw new Error("Profile changed during refinement.");
           },
-        };
-        evidence.related = evidence.related.filter((related) => related.id !== id);
-        evidence.commitments = {
-          ...evidence.commitments,
-          due: evidence.commitments.due.filter((related) => related.id !== id),
-          suggested: evidence.commitments.suggested.filter((related) => related.id !== id),
-          waiting: evidence.commitments.waiting.filter((related) => related.id !== id),
-        };
-        const interpreted = await assistant.interpret(item.body, evidence);
-        if (interpreted.clarificationQuestions.length) {
-          interpreted.needsClarification = true;
-          interpreted.updateProfile = false;
-        }
-        const unresolved = evidence.candidates.filter(
-          (candidate) => interpreted.referenceIds.includes(candidate.id) && !candidate.available,
         );
-        if (unresolved.length) {
-          interpreted.referenceIds = interpreted.referenceIds.filter(
-            (id) => !unresolved.some((candidate) => candidate.id === id),
-          );
-          interpreted.needsClarification = true;
-          interpreted.updateProfile = false;
-          interpreted.clarificationQuestions.push(
-            ...unresolved.map((candidate) => `Who or what does “${candidate.mention}” refer to?`),
-          );
-          interpreted.rationale = [
-            interpreted.rationale,
-            ...unresolved.map(
-              (candidate) =>
-                `Please clarify who or what “${candidate.mention}” refers to; its identity is unresolved.`,
-            ),
-          ]
-            .filter(Boolean)
-            .join("\n\n");
-          interpreted.prompt += `\n\nClarify unresolved references before dependent work: ${unresolved.map((candidate) => candidate.mention).join(", ")}.`;
-        }
-        const references = resolveReferences(
-          interpreted.referenceIds,
-          evidence.candidates,
-          item.references,
-        );
-        const fields = itemFieldsSchema.parse({ ...item, ...interpreted });
-        if (item.noProject) fields.project = "";
-        if (
-          fields.relatedId &&
-          !evidence.related.some((related) => related.id === fields.relatedId && related.id !== id)
-        )
-          fields.relatedId = null;
-        const updated = store.update(
-          id,
-          {
-            ...(referencesOnly ? {} : fields),
-            references,
-            repositoryId: resolveRepository({ ...(referencesOnly ? item : fields), references }),
-            processing:
-              interpreted.needsClarification ||
-              (referencesOnly ? item.kind : fields.kind) === "note"
-                ? "review"
-                : "ready",
-            processingError: null,
-            rationale: interpreted.rationale,
-            clarifications: [
-              ...item.clarifications
-                .filter((entry) => entry.answer)
-                .map((entry) => ({ ...entry, resolved: true })),
-              ...[...new Set(interpreted.clarificationQuestions)].map((question, index) => ({
-                id: `${item.revision}:${index}`,
-                question,
-                answer: "",
-                resolved: false,
-              })),
-            ],
-            sourcePaths: [
-              ...new Set([
-                ...(referencesOnly ? item.sourcePaths : interpreted.sources),
-                ...references.map((reference) => reference.source),
-              ]),
-            ],
-          },
-          item.revision,
-        );
-        if (
-          mode === "full" &&
-          updated.kind === "note" &&
-          interpreted.updateProfile &&
-          !interpreted.needsClarification
-        )
-          await mergeNote(id, updated.revision);
+        await assistant.interpret(item.body, refinement.context, refinement.tools);
+        refinement.finish();
       } catch (error) {
-        if (store.get(id)?.revision === item.revision)
+        const latest = refinement?.latest() ?? item;
+        if (store.get(id)?.revision === latest.revision)
           store.update(
             id,
             {
@@ -157,7 +74,7 @@ export function createCaptures({
                   ? error.message
                   : "Interpretation failed. Check model settings, retry, or organize this item manually.",
             },
-            item.revision,
+            latest.revision,
           );
       }
     })().finally(() => processing.delete(id));
@@ -348,9 +265,9 @@ export function createCaptures({
         if (active)
           void active.then(() => {
             if (store.get(current.id)?.revision === updated.revision)
-              return processItem(current.id, "edited");
+              return processItem(current.id);
           });
-        else void processItem(current.id, "edited");
+        else void processItem(current.id);
       }
       return captureState(updated);
     },

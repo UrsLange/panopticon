@@ -8,6 +8,7 @@ async function capturePage(page: Page, changes: Partial<Capture> = {}) {
   let item: Capture = {
     ...capturedItem("Add Kiana to GitHub", "capture-test", "2026-09-23T09:00:00.000Z"),
     kind: "commitment",
+    execution: "implementation",
     prompt: "Add the specified access and verify it.",
     processing: "ready",
     refinement: "ready",
@@ -265,18 +266,26 @@ test("explains failures and previous clarification, and prevents duplicate refin
     refinement: "failed",
     processing: "pending",
     processingError: "Interpretation failed. Check model settings and retry.",
-    rationale: "Which access category and repository scope should Kiana receive?",
+    clarifications: [
+      {
+        id: "scope",
+        question: "Which access category and repository scope should Kiana receive?",
+        answer: "",
+        resolved: false,
+      },
+    ],
   });
   await expect(page.getByRole("region", { name: "Capture status" })).toContainText(
     "Refinement failed",
   );
-  await expect(page.getByText("Previous interpretation", { exact: true })).toBeVisible();
+  await expect(page.getByText("Previous interpretation", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/Which access category/)).toBeVisible();
   await page.screenshot({ path: "test-results/capture-failure-desktop.png" });
   await page.getByRole("button", { name: "Retry refinement", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refining…", exact: true })).toBeDisabled();
   await page.getByText("More actions", { exact: true }).click();
   await expect(page.getByRole("button", { name: "Refine again", exact: true })).toBeDisabled();
+  await page.getByText("Original input", { exact: true }).click();
   await page
     .getByLabel("User input", { exact: true })
     .fill("Kiana needs restricted access to portal.");
@@ -358,18 +367,20 @@ test("shows missing information and repository together and fits a narrow screen
   const state = await capturePage(page, {
     refinement: "review",
     processing: "review",
-    rationale: "Specify the access category.",
+    clarifications: [
+      { id: "category", question: "Specify the access category.", answer: "", resolved: false },
+    ],
   });
   state.options.configured = false;
   state.options.repositories = [];
   state.options.suggestedRepositoryId = null;
   await state.update({ revision: 1 });
   const status = page.getByRole("region", { name: "Capture status" });
-  await expect(status).toContainText("Specify the access category.");
+  await expect(page.getByRole("textbox", { name: /Specify the access category/ })).toBeVisible();
   await expect(status).toContainText("T3 Code is not connected.");
   await expect(status).toContainText("No implementation repositories are available.");
-  await page.getByRole("button", { name: "Add missing details", exact: true }).click();
-  await expect(page.getByLabel("User input", { exact: true })).toBeFocused();
+  await page.getByRole("button", { name: "Answer questions", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: /Specify the access category/ })).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator(".capture-editor").evaluate((element) => {
     element.scrollTop = 0;
@@ -381,7 +392,7 @@ test("shows missing information and repository together and fits a narrow screen
       .evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
   await expect(
-    page.getByRole("button", { name: "Add missing details", exact: true }),
+    page.getByRole("button", { name: "Answer questions", exact: true }),
   ).toBeInViewport();
 });
 
@@ -593,7 +604,8 @@ test("chooses no project, filters it separately, and can return to a named proje
 }) => {
   const state = await capturePage(page, { project: "GitHub access" });
   await page.locator(".capture-details summary").click();
-  await page.getByLabel("No project (outside local repositories)", { exact: true }).check();
+  await page.getByLabel("Execution", { exact: true }).selectOption("manual");
+  await page.getByLabel("No project", { exact: true }).check();
   await expect(page.getByLabel("Project", { exact: true })).toBeDisabled();
   await expect(page.getByLabel("Implementation repository")).toHaveCount(0);
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -612,10 +624,8 @@ test("chooses no project, filters it separately, and can return to a named proje
   await row.click();
   await expect(page.getByText("T3 Code is not connected.")).toHaveCount(0);
   await page.locator(".capture-details summary").click();
-  await expect(
-    page.getByLabel("No project (outside local repositories)", { exact: true }),
-  ).toBeChecked();
-  await page.getByLabel("No project (outside local repositories)", { exact: true }).uncheck();
+  await expect(page.getByLabel("No project", { exact: true })).toBeChecked();
+  await page.getByLabel("No project", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await page.getByRole("button", { name: "Close item", exact: true }).click();
   await expect(row).toHaveCount(0);
@@ -640,7 +650,7 @@ test("chooses no project, filters it separately, and can return to a named proje
 });
 
 test("completes a no-project task without a prompt or implementation setup", async ({ page }) => {
-  const state = await capturePage(page, { noProject: true, prompt: "" });
+  const state = await capturePage(page, { noProject: true, execution: "manual", prompt: "" });
   await expect(page.getByLabel("Implementation repository")).toHaveCount(0);
   await page.getByRole("button", { name: "Mark complete", exact: true }).click();
   await expect(page.getByRole("region", { name: "Capture status" })).toContainText("Completed");

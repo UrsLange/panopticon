@@ -37,7 +37,6 @@ export function createModelConnection(access: ModelAccess, provider: ModelProvid
           related: [],
           commitments: { date: "2026-01-01", due: [], suggested: [], waiting: [] },
         };
-        await assistant.interpret("An idea: improve onboarding. No deadline.", context);
         await assistant.ask("Reply briefly that the connection works.", context, [], "");
       } catch (error) {
         throw new Error(provider.errorMessage(error, true));

@@ -34,7 +34,13 @@ export function profileAdapter(profile: Profile): ProfileAccess {
       const result = await runProfileEditing(
         profile,
         {
-          "note.json": { content: JSON.stringify({ capture: item, captureDate: date }, null, 2) },
+          "note.json": {
+            content: JSON.stringify(
+              { capture: item, knowledge: item.prompt || item.body, captureDate: date },
+              null,
+              2,
+            ),
+          },
         },
         (workspace, tools) =>
           agent(workspace, [

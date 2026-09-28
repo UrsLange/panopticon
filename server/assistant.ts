@@ -87,7 +87,7 @@ export function createAssistant(
   });
   const instructions = prompts.shared;
   return {
-    async interpret(text, context) {
+    async interpret(text, context, tools) {
       return refineCapture(
         client,
         model,
@@ -95,6 +95,7 @@ export function createAssistant(
         text,
         context,
         research(),
+        tools,
       );
     },
     updateProfile: (workspace, tools) =>

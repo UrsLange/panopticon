@@ -148,6 +148,54 @@ export function mockProvider() {
       );
       return;
     }
+    const refining = input.tools?.some(
+      (tool: { name?: string }) => tool.name === "save_refinement",
+    );
+    if (refining) {
+      const calls = input.input.filter(
+        (entry: { type?: string }) => entry.type === "function_call",
+      );
+      const results = input.input.filter(
+        (entry: { type?: string }) => entry.type === "function_call_output",
+      );
+      if (results.length) {
+        const last = JSON.parse(results.at(-1).output);
+        const incorporate =
+          calls.at(-1)?.name === "save_refinement" &&
+          last.kind === "note" &&
+          !last.clarifications.some((q: { resolved: boolean }) => !q.resolved);
+        response.end(
+          JSON.stringify({
+            id: "resp_refined",
+            object: "response",
+            status: "completed",
+            output: incorporate
+              ? [
+                  {
+                    type: "function_call",
+                    id: "fc_note",
+                    call_id: "note",
+                    name: "incorporate_note",
+                    arguments: JSON.stringify({ id: last.id }),
+                  },
+                ]
+              : [
+                  {
+                    type: "message",
+                    id: "msg_refined",
+                    role: "assistant",
+                    status: "completed",
+                    content: [
+                      { type: "output_text", text: "Refinement finished.", annotations: [] },
+                    ],
+                  },
+                ],
+          }),
+        );
+        return;
+      }
+      input.text = { format: { name: "capture_interpretation" } };
+    }
     if (input.tools?.some((tool: { name?: string }) => tool.name === "list_profile_files")) {
       const workspace = JSON.parse(input.input[0].content);
       const results = input.input
@@ -279,7 +327,12 @@ export function mockProvider() {
             title: payload.capture,
             prompt: `Implement: ${payload.capture}`,
             sources: [],
-            kind: explicitNote || implicitNote ? "note" : "idea",
+            kind:
+              explicitNote || implicitNote
+                ? "note"
+                : payload.capture.startsWith("Implement ")
+                  ? "commitment"
+                  : "idea",
             project:
               payload.capture === "Implement project search in T3 Code" ? "example-project" : "",
             dueDate: null,
@@ -328,15 +381,30 @@ export function mockProvider() {
         created_at: 0,
         status: "completed",
         model: "test-model",
-        output: [
-          {
-            type: "message",
-            id: "msg_test",
-            status: "completed",
-            role: "assistant",
-            content: [{ type: "output_text", text: JSON.stringify(output), annotations: [] }],
-          },
-        ],
+        output: refining
+          ? [
+              {
+                type: "function_call",
+                id: "fc_save",
+                call_id: "save",
+                name: "save_refinement",
+                arguments: JSON.stringify({
+                  ...(output as object),
+                  id: payload.context.capture.id,
+                  execution: payload.capture.startsWith("Implement ") ? "implementation" : "manual",
+                  noProject: payload.context.capture.noProject,
+                }),
+              },
+            ]
+          : [
+              {
+                type: "message",
+                id: "msg_test",
+                status: "completed",
+                role: "assistant",
+                content: [{ type: "output_text", text: JSON.stringify(output), annotations: [] }],
+              },
+            ],
       }),
     );
   });

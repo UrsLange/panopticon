@@ -8,6 +8,7 @@ import { config } from "../server/config.js";
 import { Profile } from "../server/profile.js";
 import { SettingsStore } from "../server/settings.js";
 import { Store } from "../server/store.js";
+import { type Draft, refinementAgent } from "./refinement-agent.js";
 
 const headers = { host: "127.0.0.1:4317" };
 const cleanup: (() => Promise<void>)[] = [];
@@ -22,24 +23,24 @@ function setup() {
     profile.create("Working preferences", "Working rules", "Keep changes focused."),
   );
   const store = new Store(":memory:");
+  const draft = vi.fn<(text: string) => Promise<Draft>>(async (text) => ({
+    title: text,
+    kind: "note",
+    project: "",
+    dueDate: null,
+    priority: "normal",
+    relatedId: null,
+
+    clarificationQuestions: [],
+    referenceIds: [],
+    prompt: text,
+    sources: [],
+  }));
   const assistant = {
-    interpret: vi.fn<Assistant["interpret"]>(async (text) => ({
-      title: text,
-      kind: "note",
-      project: "",
-      dueDate: null,
-      priority: "normal",
-      relatedId: null,
-      rationale: "Profile context",
-      needsClarification: false,
-      clarificationQuestions: [],
-      referenceIds: [],
-      prompt: "",
-      sources: [],
-      updateProfile: text.startsWith("note:"),
-    })),
+    interpret: refinementAgent(draft),
     ask: vi.fn<Assistant["ask"]>(),
     consolidateProfile: vi.fn<Assistant["consolidateProfile"]>(),
+
     updateProfile: vi.fn<Assistant["updateProfile"]>(async (workspace, tools) => {
       const call = (name: string, input: unknown) => {
         const tool = tools.find((tool) => tool.name === name);
@@ -93,7 +94,7 @@ function setup() {
       headers,
       payload: { revision: store.get(id)?.revision },
     });
-  return { app, profile, document, store, assistant, process, merge };
+  return { app, profile, document, store, assistant, draft, process, merge };
 }
 
 it("automatically incorporates explicit notes and records completion without repeating retries", async () => {
@@ -114,24 +115,15 @@ it("automatically incorporates explicit notes and records completion without rep
   expect(store.history(note.id).length).toBe(2);
 });
 
-it("holds implicit notes for user approval and rejects manually marking them done", async () => {
-  const { app, store, assistant, process, merge } = setup();
+it("incorporates clear knowledge without requiring a special prefix", async () => {
+  const { store, assistant, process } = setup();
   const note = store.capture("Agents should make atomic conventional commits");
   await process(note.id);
-  expect(store.get(note.id)).toMatchObject({ kind: "note", status: "open", processing: "review" });
-  expect(assistant.updateProfile).not.toHaveBeenCalled();
-  const manual = await app.inject({
-    method: "PATCH",
-    url: `/api/items/${note.id}`,
-    headers,
-    payload: { status: "done", revision: store.get(note.id)?.revision },
-  });
-  expect(manual.statusCode).toBe(400);
-  await merge(note.id);
-  expect(store.get(note.id)?.status).toBe("done");
+  expect(store.get(note.id)).toMatchObject({ kind: "note", status: "done", processing: "ready" });
+  expect(assistant.updateProfile).toHaveBeenCalledTimes(1);
 });
 
-it("reopens edited incorporated notes without automatically applying the edit", async () => {
+it("refines edited incorporated notes and applies the corrected knowledge", async () => {
   const { app, store, assistant, process } = setup();
   const note = store.capture("note: keep commits atomic");
   await process(note.id);
@@ -153,27 +145,26 @@ it("reopens edited incorporated notes without automatically applying the edit", 
   });
   expect(edited.json()).toMatchObject({ status: "open", profilePath: null });
   await app.close();
-  expect(assistant.updateProfile).toHaveBeenCalledTimes(1);
-  expect(store.get(note.id)).toMatchObject({ status: "open", processing: "review" });
+  expect(assistant.updateProfile).toHaveBeenCalledTimes(2);
+  expect(store.get(note.id)).toMatchObject({ status: "done", processing: "ready" });
 });
 
 it.each(["idea", "commitment", "unclear"])(
-  "does not automatically merge %s captures even with an inconsistent authorization flag",
+  "does not automatically merge %s captures when they are ideas, tasks or ambiguous notes",
   async (kind) => {
-    const { store, assistant, process } = setup();
-    assistant.interpret.mockResolvedValue({
+    const { store, assistant, draft, process } = setup();
+    draft.mockResolvedValue({
       title: "Uncertain",
       kind: kind === "unclear" ? "note" : (kind as "idea" | "commitment"),
       project: "",
       dueDate: null,
       priority: "normal",
       relatedId: null,
-      rationale: "Needs consideration",
-      needsClarification: kind === "unclear",
-      clarificationQuestions: [],
+
+      clarificationQuestions: kind === "unclear" ? ["What should be remembered?"] : [],
       referenceIds: [],
-      updateProfile: true,
-      prompt: "",
+
+      prompt: "Useful refined content",
       sources: [],
     });
     const note = store.capture("note: ask Benni tomorrow");
@@ -205,7 +196,6 @@ it("keeps clarification requests pending without changing the profile", async ()
   await process(note.id);
   expect(store.get(note.id)).toMatchObject({
     status: "open",
-    rationale: "Which Benni do you mean?",
   });
   expect(readFileSync(join(profile.root, document.path), "utf8")).toBe(document.content);
 });

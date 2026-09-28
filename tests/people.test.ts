@@ -18,6 +18,7 @@ import { Profile } from "../server/profile.js";
 import { SettingsStore } from "../server/settings.js";
 import { Store } from "../server/store.js";
 import { defaultEntra, type EntraConfig, entraSchema, type Person } from "../shared/people.js";
+import { refinementAgent } from "./refinement-agent.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 it("detects only a valid tenant from Azure CLI and handles unavailable logins", async () => {
@@ -560,7 +561,7 @@ it("includes selected people for captures and conversation follow-ups, and recor
   await sync.run();
   const contexts: AssistantContext[] = [];
   const assistant: Assistant = {
-    interpret: async (_text, context) => {
+    interpret: refinementAgent(async (_text, context) => {
       contexts.push(context);
       return {
         title: "Ask Anna",
@@ -569,15 +570,14 @@ it("includes selected people for captures and conversation follow-ups, and recor
         dueDate: null,
         priority: "normal",
         relatedId: null,
-        rationale: "Anna from Engineering",
-        needsClarification: false,
+
         clarificationQuestions: [],
-        updateProfile: false,
+
         referenceIds: [],
-        prompt: "",
+        prompt: "Useful refined content",
         sources: ["people"],
       };
-    },
+    }),
     ask: async (_text, context) => {
       contexts.push(context);
       return { answer: "Anna is in Engineering", sources: ["people"] };
@@ -585,6 +585,7 @@ it("includes selected people for captures and conversation follow-ups, and recor
     consolidateProfile: async () => {
       throw new Error("Unexpected profile consolidation");
     },
+
     updateProfile: async () => {
       throw new Error("Unexpected profile update");
     },
@@ -630,7 +631,7 @@ it("clarifies ambiguous people through existing review and persists a corrected 
   await sync.run();
   const contexts: AssistantContext[] = [];
   const assistant: Assistant = {
-    interpret: async (_text, context) => {
+    interpret: refinementAgent(async (_text, context) => {
       contexts.push(context);
       return {
         title: "Ask Michael",
@@ -639,19 +640,24 @@ it("clarifies ambiguous people through existing review and persists a corrected 
         dueDate: null,
         priority: "normal",
         relatedId: null,
-        rationale: "",
-        needsClarification: false,
-        clarificationQuestions: [],
-        updateProfile: false,
-        referenceIds: context.candidates.slice(0, 1).map((candidate) => candidate.id),
+
+        clarificationQuestions: context.candidates.some((candidate) => !candidate.available)
+          ? ["Which Michael do you mean?"]
+          : [],
+
+        referenceIds: context.candidates
+          .filter((candidate) => candidate.available)
+          .slice(0, 1)
+          .map((candidate) => candidate.id),
         prompt: "Discuss onboarding.",
         sources: ["people"],
       };
-    },
+    }),
     ask: async () => ({ answer: "", sources: [] }),
     consolidateProfile: async () => {
       throw new Error("Unexpected profile consolidation");
     },
+
     updateProfile: async () => {
       throw new Error("Unexpected profile update");
     },
@@ -669,7 +675,7 @@ it("clarifies ambiguous people through existing review and persists a corrected 
     references: [],
     body: item.body,
   });
-  expect(store.get(item.id)?.rationale).toContain("Please clarify");
+  expect(store.get(item.id)?.clarifications[0].question).toBe("Which Michael do you mean?");
   const edit = await app.inject({
     method: "PATCH",
     url: `/api/items/${item.id}`,

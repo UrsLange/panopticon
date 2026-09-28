@@ -1006,6 +1006,7 @@ function ItemEditor({
     status: item.status,
     project: item.project,
     noProject: item.noProject,
+    execution: item.execution,
     dueDate: item.dueDate,
     priority: item.priority,
     relatedId: item.relatedId,
@@ -1079,6 +1080,8 @@ function ItemEditor({
   const canImplement =
     !fields.noProject &&
     !item.noProject &&
+    fields.execution === "implementation" &&
+    item.execution === "implementation" &&
     fields.kind === "commitment" &&
     ["open", "in_progress", "in_review", "waiting"].includes(fields.status) &&
     item.refinement === "ready" &&
@@ -1117,6 +1120,11 @@ function ItemEditor({
       setAnswers(Object.fromEntries(submitted.map((entry) => [entry.id, entry.answer])));
       return onAnswer(submitted, refine);
     });
+  const focusInput = () => {
+    const details = inputRef.current?.closest("details");
+    if (details) details.open = true;
+    inputRef.current?.focus();
+  };
   const implement = () =>
     run("Sending to T3 Code…", async () => {
       const saved = dirty ? await onSave(fields) : item;
@@ -1140,11 +1148,11 @@ function ItemEditor({
             ? note
               ? "Ready for profile review"
               : "Information needed"
-            : !fields.prompt.trim() && !note && !fields.noProject
+            : !fields.prompt.trim() && !note && fields.execution === "implementation"
               ? "Prompt needed"
               : submitted
                 ? statusLabels[item.status]
-                : pendingHandoff && !fields.noProject
+                : pendingHandoff && fields.execution === "implementation"
                   ? "Handoff unconfirmed"
                   : canImplement
                     ? "Ready for implementation"
@@ -1160,7 +1168,7 @@ function ItemEditor({
         ? { label: "Save and start in T3 Code", run: () => void implement() }
         : { label: "Save changes", run: () => void save() };
   } else if (!closed) {
-    if (pendingHandoff && !fields.noProject) {
+    if (pendingHandoff && fields.execution === "implementation") {
       action = options?.configured
         ? {
             label: "Retry handoff",
@@ -1190,12 +1198,12 @@ function ItemEditor({
             ?.focus(),
       };
     } else if (review && !note) {
-      action = { label: "Add missing details", run: () => inputRef.current?.focus() };
+      action = { label: "Add missing details", run: focusInput };
     } else if (note) {
       action = aiConfigured
         ? { label: "Add to profile", run: () => void run("Updating profile…", onAddToProfile) }
         : { label: "Open model settings", run: () => setSettingsSection("Model") };
-    } else if (fields.kind === "commitment" && fields.noProject) {
+    } else if (fields.kind === "commitment" && fields.execution === "manual") {
       action = {
         label: "Mark complete",
         run: () => void run("Completing…", () => onSave({ ...fields, status: "done" })),
@@ -1340,22 +1348,10 @@ function ItemEditor({
                       ? "Answer the questions below, then refine the brief again."
                       : "Add the missing information to User input, then save and refine."}
                 </p>
-                {item.rationale && <p className="capture-explanation">{item.rationale}</p>}
+                {note && item.rationale && <p className="capture-explanation">{item.rationale}</p>}
               </>
             )}
-            {!closed && !running && !review && item.rationale && (failed || paused) && (
-              <details open>
-                <summary>Previous interpretation</summary>
-                <p className="capture-explanation">{item.rationale}</p>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => inputRef.current?.focus()}
-                >
-                  Add missing details
-                </button>
-              </details>
-            )}
+
             {!closed &&
               item.processing !== "ready" &&
               ["idea", "commitment"].includes(item.kind) && (
@@ -1381,12 +1377,12 @@ function ItemEditor({
               !failed &&
               !paused &&
               !review &&
-              !fields.noProject &&
+              fields.execution === "implementation" &&
               !fields.prompt.trim() &&
               !note && <p>Write a complete prompt below, or use Refine again to generate one.</p>}
             {bodyChanged && (
               <p>
-                Saving your input will regenerate the prompt. Review the result before starting
+                Saving your input will refine the result again. Review the result before starting
                 implementation.
               </p>
             )}
@@ -1402,13 +1398,13 @@ function ItemEditor({
                 </button>
               </p>
             )}
-            {fields.noProject && (
-              <p>No project. Track this task here without a local repository.</p>
-            )}
-            {item.kind === "commitment" && (!fields.noProject || latest) && (
+
+            {item.kind === "commitment" && (fields.execution === "implementation" || latest) && (
               <div className="implementation">
-                {!fields.noProject && implementation.loading && <p>Checking T3 Code readiness…</p>}
-                {!fields.noProject &&
+                {fields.execution === "implementation" && implementation.loading && (
+                  <p>Checking T3 Code readiness…</p>
+                )}
+                {fields.execution === "implementation" &&
                   implementation.error &&
                   implementation.error !== latest?.error && (
                     <p role="alert">
@@ -1430,13 +1426,13 @@ function ItemEditor({
                       {latest.taskChanged && " (earlier task description)"}
                     </p>
                     {latest.error && <p role="alert">{latest.error}</p>}
-                    {pendingHandoff && !fields.noProject && (
+                    {pendingHandoff && fields.execution === "implementation" && (
                       <p>
                         Retry checks the same thread using the original saved task. It does not send
                         your current edits.
                       </p>
                     )}
-                    {submitted && !fields.noProject && (
+                    {submitted && fields.execution === "implementation" && (
                       <>
                         {latest.taskChanged && (
                           <p>
@@ -1503,7 +1499,7 @@ function ItemEditor({
                     )}
                   </>
                 )}
-                {options && !closed && !fields.noProject && (
+                {options && !closed && fields.execution === "implementation" && (
                   <>
                     {!options.configured && (
                       <p>
@@ -1638,48 +1634,80 @@ function ItemEditor({
               onChange={(event) => setFields({ ...fields, title: event.target.value })}
             />
           </label>
-          <label className="field">
-            User input
-            <textarea
-              ref={inputRef}
-              aria-label="User input"
-              rows={4}
-              value={fields.body}
-              maxLength={30000}
-              onChange={(event) => setFields({ ...fields, body: event.target.value })}
-            />
-          </label>
-          <label className="field">
-            Prompt
-            <textarea
-              ref={promptRef}
-              aria-label="Prompt"
-              rows={6}
-              value={fields.prompt}
-              maxLength={30000}
-              placeholder="A self-contained prompt will appear here after refinement."
-              onChange={(event) => setFields({ ...fields, prompt: event.target.value })}
-            />
-          </label>
-          <button
-            type="button"
-            className="text-button"
-            disabled={
-              busy ||
-              !fields.prompt.trim() ||
-              bodyChanged ||
-              running ||
-              item.processing === "pending"
-            }
-            onClick={() =>
-              void run("Copying…", async () => {
-                await navigator.clipboard.writeText(fields.prompt);
-                setCopiedPrompt(fields.prompt);
-              })
-            }
-          >
-            {copiedPrompt === fields.prompt ? "Prompt copied" : "Copy prompt"}
-          </button>
+          {!note && (
+            <>
+              <label className="field">
+                {fields.execution === "implementation"
+                  ? "Implementation prompt"
+                  : fields.kind === "idea"
+                    ? "Idea"
+                    : "Task"}
+                <textarea
+                  ref={promptRef}
+                  aria-label={
+                    fields.execution === "implementation"
+                      ? "Implementation prompt"
+                      : "Refined content"
+                  }
+                  rows={fields.execution === "implementation" ? 8 : 4}
+                  value={fields.prompt}
+                  maxLength={30000}
+                  placeholder="The refined result will appear here."
+                  onChange={(event) => setFields({ ...fields, prompt: event.target.value })}
+                />
+              </label>
+              <button
+                type="button"
+                className="text-button"
+                disabled={
+                  busy ||
+                  !fields.prompt.trim() ||
+                  bodyChanged ||
+                  running ||
+                  item.processing === "pending"
+                }
+                onClick={() =>
+                  void run("Copying…", async () => {
+                    await navigator.clipboard.writeText(fields.prompt);
+                    setCopiedPrompt(fields.prompt);
+                  })
+                }
+              >
+                {copiedPrompt === fields.prompt
+                  ? "Copied"
+                  : fields.execution === "implementation"
+                    ? "Copy prompt"
+                    : "Copy text"}
+              </button>
+            </>
+          )}
+          <details open={!fields.prompt && !note}>
+            <summary>Original input</summary>
+            <label className="field">
+              User input
+              <textarea
+                ref={inputRef}
+                aria-label="User input"
+                rows={4}
+                value={fields.body}
+                maxLength={30000}
+                onChange={(event) => setFields({ ...fields, body: event.target.value })}
+              />
+            </label>
+          </details>
+          {(item.parentId || items.some((child) => child.parentId === item.id)) && (
+            <section aria-label="Linked outcomes">
+              <strong>Linked outcomes</strong>
+              {items
+                .filter((entry) => entry.id === item.parentId || entry.parentId === item.id)
+                .map((entry) => (
+                  <p key={entry.id}>
+                    {entry.title} · {entry.kind === "commitment" ? "Task" : entry.kind} ·{" "}
+                    {entry.status}
+                  </p>
+                ))}
+            </section>
+          )}
           <details className="capture-details">
             <summary>
               Task details{" "}
@@ -1697,6 +1725,7 @@ function ItemEditor({
                     setFields({
                       ...fields,
                       kind: event.target.value as ItemFields["kind"],
+                      execution: event.target.value === "commitment" ? fields.execution : "manual",
                       status:
                         event.target.value === "note" &&
                         fields.kind !== "note" &&
@@ -1735,6 +1764,24 @@ function ItemEditor({
                 </select>
               </label>
             </div>
+            {fields.kind === "commitment" && (
+              <label className="field">
+                Execution
+                <select
+                  aria-label="Execution"
+                  value={fields.execution}
+                  onChange={(event) =>
+                    setFields({
+                      ...fields,
+                      execution: event.target.value as ItemFields["execution"],
+                    })
+                  }
+                >
+                  <option value="manual">Ordinary task</option>
+                  <option value="implementation">Implementation</option>
+                </select>
+              </label>
+            )}
             <label className="field">
               Project
               <input
@@ -1753,7 +1800,7 @@ function ItemEditor({
                   setFields({ ...fields, noProject: event.target.checked, project: "" })
                 }
               />
-              No project (outside local repositories)
+              No project
             </label>
             {fields.kind === "commitment" && (
               <div className="field-grid">
@@ -1810,12 +1857,6 @@ function ItemEditor({
             <div className="interpretation">
               <p>{annotatedText(item.body, item.references)}</p>
             </div>
-          )}
-          {item.rationale && !failed && !paused && !review && (
-            <details>
-              <summary>Interpretation</summary>
-              <p className="capture-explanation">{item.rationale}</p>
-            </details>
           )}
           {note && item.profilePath && (
             <details open>
@@ -1894,7 +1935,7 @@ function ItemEditor({
                     Resolve aliases again
                   </button>
                 )}
-                {submitted && !fields.noProject && (
+                {submitted && fields.execution === "implementation" && (
                   <button
                     type="button"
                     className="secondary"
@@ -1914,7 +1955,7 @@ function ItemEditor({
                       : "Connect a model to refine this capture."}
                 </p>
               )}
-              {submitted && !fields.noProject && (
+              {submitted && fields.execution === "implementation" && (
                 <p className="muted-text">
                   Another implementation starts a separate thread from the current saved version.
                 </p>

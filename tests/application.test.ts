@@ -8,6 +8,7 @@ import { createModelConnection } from "../server/application/model-connection.js
 import type { CaptureStorage, Message, ProfileNotes } from "../server/application/ports.js";
 import { createProfileUpdates } from "../server/application/profile-updates.js";
 import type { Item, ProfileDocument } from "../shared/schema.js";
+import { type Draft, refinementAgent } from "./refinement-agent.js";
 
 const date = "2026-09-19T12:00:00.000Z";
 const context: AssistantContext = {
@@ -71,24 +72,25 @@ function fixture() {
     incorporate,
   };
   let discovery = false;
+  const draft = vi.fn<(text: string, context: AssistantContext) => Promise<Draft>>(async () => ({
+    title: "A note",
+    kind: "note",
+    project: "",
+    dueDate: null,
+    priority: "normal",
+    relatedId: null,
+
+    clarificationQuestions: [],
+
+    referenceIds: [],
+    prompt: "A useful note",
+    sources: [],
+  }));
   const assistant: Assistant = {
     consolidateProfile: vi.fn(),
-    interpret: vi.fn<Assistant["interpret"]>(async () => ({
-      title: "A note",
-      kind: "note",
-      project: "",
-      dueDate: null,
-      priority: "normal",
-      relatedId: null,
-      rationale: "A preference",
-      needsClarification: false,
-      clarificationQuestions: [],
-      updateProfile: false,
-      referenceIds: [],
-      prompt: "",
-      sources: [],
-    })),
+    interpret: refinementAgent(draft),
     updateProfile: vi.fn<Assistant["updateProfile"]>(async () => "Saved"),
+
     ask: vi.fn(async () => ({ answer: "An answer", sources: [] })),
   };
   const notes = createProfileUpdates({
@@ -123,6 +125,7 @@ function fixture() {
   return {
     store,
     assistant,
+    draft,
     notes,
     captures,
     contextQuery,
@@ -227,7 +230,6 @@ it("keeps review decisions and failed profile writes pending", async () => {
   expect(f.store.get(first.id)).toMatchObject({
     status: "open",
     processing: "review",
-    rationale: "Which team?",
   });
   expect(f.incorporate).toHaveBeenCalledTimes(1);
   f.incorporate.mockImplementation(() => {
@@ -242,34 +244,28 @@ it("keeps review decisions and failed profile writes pending", async () => {
   });
 });
 
-it.each([
-  { authorized: false, clarification: false, applied: false },
-  { authorized: true, clarification: true, applied: false },
-  { authorized: true, clarification: false, applied: true },
-])(
-  "requires clear note authorization before incorporation: %j",
-  async ({ authorized, clarification, applied }) => {
+it.each([false, true])(
+  "incorporates knowledge directly unless clarification is needed: %s",
+  async (clarification) => {
     const f = fixture();
-    const base = await f.assistant.interpret("", context);
-    vi.mocked(f.assistant.interpret).mockResolvedValue({
-      ...base,
-      updateProfile: authorized,
-      needsClarification: clarification,
-      clarificationQuestions: [],
+    f.draft.mockResolvedValue({
+      kind: "note",
+      prompt: "A scoped preference",
+      clarificationQuestions: clarification ? ["Which team?"] : [],
     });
-    const item = f.captures.capture("An original capture");
+    const item = f.captures.capture("A scoped preference");
     await f.captures.close();
-    expect(f.incorporate).toHaveBeenCalledTimes(Number(applied));
-    expect(f.store.get(item.id)?.original).toBe("An original capture");
-    expect(f.store.get(item.id)?.status).toBe(applied ? "done" : "open");
+    expect(f.incorporate).toHaveBeenCalledTimes(clarification ? 0 : 1);
+    expect(f.store.get(item.id)?.original).toBe("A scoped preference");
+    expect(f.store.get(item.id)?.status).toBe(clarification ? "open" : "done");
   },
 );
 
 it("does not overwrite a concurrent manual edit with an obsolete interpretation", async () => {
   const f = fixture();
-  const result = await f.assistant.interpret("", context);
+  const result = await f.draft("", context);
   const gate = deferred<typeof result>();
-  vi.mocked(f.assistant.interpret).mockReturnValue(gate.promise);
+  vi.mocked(f.draft).mockReturnValue(gate.promise);
   const item = f.captures.capture("Original");
   f.store.update(item.id, { title: "Manual title", prompt: "My manual details" }, item.revision);
   gate.resolve(result);
@@ -286,16 +282,15 @@ it("does not overwrite a concurrent manual edit with an obsolete interpretation"
 
 it("saves researched prompts and actual sources while retaining the original capture", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
-  vi.mocked(f.assistant.interpret).mockResolvedValue({
+  const base = await f.draft("", context);
+  vi.mocked(f.draft).mockResolvedValue({
     ...base,
     kind: "commitment",
     project: "Activation",
     prompt: "Verify the invitation flow in a browser.",
     sources: ["rules.md", "project:activation/README.md", "ctx:abcdef12"],
-    needsClarification: true,
-    clarificationQuestions: [],
-    rationale: "Which release should this target?",
+
+    clarificationQuestions: ["Which release should this target?"],
   });
   const item = f.captures.capture("Review onboarding");
   await f.captures.close();
@@ -306,7 +301,6 @@ it("saves researched prompts and actual sources while retaining the original cap
     prompt: "Verify the invitation flow in a browser.",
     sourcePaths: ["rules.md", "project:activation/README.md", "ctx:abcdef12"],
     processing: "review",
-    rationale: "Which release should this target?",
   });
   const saved = f.store.get(item.id);
   if (!saved) throw new Error("Missing test capture");
@@ -320,8 +314,8 @@ it("saves researched prompts and actual sources while retaining the original cap
 
 it("persists the refined repository and clears or replaces it when the project changes", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
-  vi.mocked(f.assistant.interpret).mockResolvedValue({
+  const base = await f.draft("", context);
+  vi.mocked(f.draft).mockResolvedValue({
     ...base,
     kind: "commitment",
     project: "Activation",
@@ -344,8 +338,8 @@ it("persists the refined repository and clears or replaces it when the project c
 
 it("regenerates the full interpretation after input edits but preserves prompt-only edits", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
-  vi.mocked(f.assistant.interpret).mockResolvedValue({
+  const base = await f.draft("", context);
+  vi.mocked(f.draft).mockResolvedValue({
     ...base,
     kind: "commitment",
     title: "Original task",
@@ -361,7 +355,7 @@ it("regenerates the full interpretation after input edits but preserves prompt-o
     commitments: { ...context.commitments, due: [before], suggested: [before], waiting: [before] },
   });
   const gate = deferred<typeof base>();
-  vi.mocked(f.assistant.interpret).mockReturnValueOnce(gate.promise);
+  vi.mocked(f.draft).mockReturnValueOnce(gate.promise);
   f.captures.edit(item.id, { body: "Updated input" }, before.revision);
   expect(f.store.get(item.id)).toMatchObject({ processing: "pending", prompt: "Original prompt" });
   gate.resolve({
@@ -382,22 +376,22 @@ it("regenerates the full interpretation after input edits but preserves prompt-o
     sourcePaths: ["ctx:new"],
     processing: "ready",
   });
-  expect(f.assistant.interpret).toHaveBeenLastCalledWith("Updated input", expect.anything());
-  expect(vi.mocked(f.assistant.interpret).mock.lastCall?.[1]).toMatchObject({
+  expect(f.draft).toHaveBeenLastCalledWith("Updated input", expect.anything());
+  expect(vi.mocked(f.draft).mock.lastCall?.[1]).toMatchObject({
     related: [],
     commitments: { due: [], suggested: [], waiting: [] },
   });
-  vi.mocked(f.assistant.interpret).mockClear();
+  vi.mocked(f.draft).mockClear();
   f.captures.edit(item.id, { prompt: "My reviewed prompt" }, updated.revision);
   await f.captures.close();
   expect(f.store.get(item.id)?.prompt).toBe("My reviewed prompt");
-  expect(f.assistant.interpret).not.toHaveBeenCalled();
+  expect(f.draft).not.toHaveBeenCalled();
 });
 
 it("preserves a deliberate no-project choice through refinement and allows reassignment", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
-  vi.mocked(f.assistant.interpret).mockResolvedValue({
+  const base = await f.draft("", context);
+  vi.mocked(f.draft).mockResolvedValue({
     ...base,
     kind: "commitment",
     project: "Activation",
@@ -433,9 +427,9 @@ it("preserves a deliberate no-project choice through refinement and allows reass
 
 it("regenerates only the latest input when it changes during refinement", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
+  const base = await f.draft("", context);
   const gate = deferred<typeof base>();
-  vi.mocked(f.assistant.interpret)
+  vi.mocked(f.draft)
     .mockClear()
     .mockReturnValueOnce(gate.promise)
     .mockResolvedValue({
@@ -454,7 +448,7 @@ it("regenerates only the latest input when it changes during refinement", async 
     processing: "ready",
     original: "Original input",
   });
-  expect(vi.mocked(f.assistant.interpret).mock.calls.map(([input]) => input)).toEqual([
+  expect(vi.mocked(f.draft).mock.calls.map(([input]) => input)).toEqual([
     "Original input",
     "Latest input",
   ]);
@@ -462,7 +456,7 @@ it("regenerates only the latest input when it changes during refinement", async 
 
 it("marks explicit regeneration pending and preserves the previous prompt on failure", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
+  const base = await f.draft("", context);
   const item = f.store.capture("Input");
   const saved = f.store.update(
     item.id,
@@ -470,7 +464,7 @@ it("marks explicit regeneration pending and preserves the previous prompt on fai
     item.revision,
   );
   const gate = deferred<typeof base>();
-  vi.mocked(f.assistant.interpret).mockReturnValueOnce(gate.promise);
+  vi.mocked(f.draft).mockReturnValueOnce(gate.promise);
   const retry = f.captures.retry(item.id, { resetReferences: false, revision: saved.revision });
   expect(f.store.get(item.id)?.processing).toBe("pending");
   gate.resolve({ ...base, kind: "commitment", prompt: "Regenerated prompt" });
@@ -478,7 +472,7 @@ it("marks explicit regeneration pending and preserves the previous prompt on fai
   const latest = f.store.get(item.id);
   assert(latest);
   expect(latest.prompt).toBe("Regenerated prompt");
-  vi.mocked(f.assistant.interpret).mockRejectedValueOnce(new Error("Unavailable"));
+  vi.mocked(f.draft).mockRejectedValueOnce(new Error("Unavailable"));
   await f.captures.retry(item.id, { resetReferences: false, revision: latest.revision });
   expect(f.store.get(item.id)).toMatchObject({
     prompt: "Regenerated prompt",
@@ -489,9 +483,9 @@ it("marks explicit regeneration pending and preserves the previous prompt on fai
 
 it("exposes live refinement state and rejects duplicate refinement requests", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
+  const base = await f.draft("", context);
   const gate = deferred<typeof base>();
-  vi.mocked(f.assistant.interpret).mockClear().mockReturnValueOnce(gate.promise);
+  vi.mocked(f.draft).mockClear().mockReturnValueOnce(gate.promise);
   const item = f.captures.capture("Implement access");
   expect(item.refinement).toBe("running");
   expect(f.captures.list()[0].refinement).toBe("running");
@@ -507,17 +501,17 @@ it("exposes live refinement state and rejects duplicate refinement requests", as
   gate.resolve({ ...base, kind: "commitment", prompt: "Implement access" });
   await f.captures.close();
   expect(f.captures.list()[0].refinement).toBe("ready");
-  expect(f.assistant.interpret).toHaveBeenCalledTimes(1);
+  expect(f.draft).toHaveBeenCalledTimes(1);
 });
 
 it("retains interview answers across partial rounds and failed refinements", async () => {
   const f = fixture();
-  const base = await f.assistant.interpret("", context);
-  vi.mocked(f.assistant.interpret).mockResolvedValue({
+  const base = await f.draft("", context);
+  vi.mocked(f.draft).mockResolvedValue({
     ...base,
     kind: "idea",
     prompt: "Plan the demo.",
-    needsClarification: true,
+
     clarificationQuestions: ["Which project?", "Which Benjamin?"],
   });
   const item = f.captures.capture("Plan a demo with Benjamin");
@@ -541,20 +535,20 @@ it("retains interview answers across partial rounds and failed refinements", asy
     revision: current.revision,
     answers: [{ id: first.id, answer: "Portal" }],
   });
-  vi.mocked(f.assistant.interpret).mockRejectedValueOnce(new Error("Offline"));
+  vi.mocked(f.draft).mockRejectedValueOnce(new Error("Offline"));
   await f.captures.retry(item.id, { revision: current.revision, resetReferences: false });
   current = f.captures.list()[0];
   expect(current.clarifications[0].answer).toBe("Portal");
   expect(current.refinement).toBe("failed");
-  vi.mocked(f.assistant.interpret).mockResolvedValueOnce({
+  vi.mocked(f.draft).mockResolvedValueOnce({
     ...base,
     kind: "idea",
     prompt: "Plan the Portal demo.",
-    needsClarification: true,
+
     clarificationQuestions: ["Which Benjamin?"],
   });
   await f.captures.retry(item.id, { revision: current.revision, resetReferences: false });
-  expect(f.assistant.interpret).toHaveBeenLastCalledWith(
+  expect(f.draft).toHaveBeenLastCalledWith(
     item.body,
     expect.objectContaining({
       previousRefinement: expect.objectContaining({
@@ -575,7 +569,7 @@ it("retains interview answers across partial rounds and failed refinements", asy
     revision: current.revision,
     answers: [{ id: next.id, answer: "Benjamin from Design" }],
   });
-  vi.mocked(f.assistant.interpret).mockResolvedValueOnce({
+  vi.mocked(f.draft).mockResolvedValueOnce({
     ...base,
     kind: "idea",
     prompt: "Plan the Portal demo with Benjamin from Design.",
@@ -613,14 +607,13 @@ it("distinguishes paused and failed refinement and retains blockers after metada
   );
   expect(f.captures.edit(item.id, { title: "Renamed task" }, review.revision)).toMatchObject({
     refinement: "review",
-    rationale: "Which access category?",
   });
 });
 
 it("does not authorize a profile write during reference-only processing or manual completion", async () => {
   const f = fixture();
-  const result = await f.assistant.interpret("", context);
-  vi.mocked(f.assistant.interpret).mockResolvedValue({ ...result, updateProfile: true });
+  const result = await f.draft("", context);
+  vi.mocked(f.draft).mockResolvedValue({ ...result });
   const item = f.note();
   await f.captures.retry(item.id, { resetReferences: true, revision: item.revision });
   expect(f.incorporate).not.toHaveBeenCalled();
@@ -687,8 +680,6 @@ it("validates both model operations before saving a connection", async () => {
   expect(save).not.toHaveBeenCalled();
   await models.connect(input);
   expect(save).toHaveBeenCalledWith(input, input.baseURL);
-  expect(f.assistant.interpret).toHaveBeenCalledWith(
-    expect.any(String),
-    expect.objectContaining({ profile: { documents: [], directory: [] }, people: null }),
-  );
+  expect(f.draft).not.toHaveBeenCalled();
+  expect(f.assistant.ask).toHaveBeenCalled();
 });

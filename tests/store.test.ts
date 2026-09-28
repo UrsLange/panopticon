@@ -339,3 +339,51 @@ describe("capture and planning", () => {
     );
   });
 });
+
+it("migrates execution intent while preserving existing capture content and history", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "pa-refinement-migration-")), "assistant.sqlite");
+  const original = new Store(path);
+  const task = original.capture("Implement the portal");
+  original.update(
+    task.id,
+    {
+      kind: "commitment",
+      prompt: "Implement the portal with existing access rules",
+      rationale: "Existing interpretation",
+    },
+    task.revision,
+  );
+  const manual = original.capture("Call Anna");
+  original.update(
+    manual.id,
+    { kind: "commitment", noProject: true, prompt: "Call Anna" },
+    manual.revision,
+  );
+  const savedTask = original.get(task.id);
+  if (!savedTask) throw new Error("Task missing");
+  original.update(task.id, { priority: "high" }, savedTask.revision);
+  original.db.exec("ALTER TABLE items DROP COLUMN parentId");
+  original.db.exec("ALTER TABLE items DROP COLUMN execution");
+  original.db.exec(
+    "UPDATE item_history SET snapshot=json_remove(snapshot, '$.execution', '$.parentId')",
+  );
+  original.db.close();
+  const reopened = new Store(path);
+  stores.push(reopened);
+  expect(reopened.get(task.id)).toMatchObject({
+    execution: "implementation",
+    parentId: null,
+    original: "Implement the portal",
+    prompt: "Implement the portal with existing access rules",
+    rationale: "Existing interpretation",
+  });
+  expect(reopened.get(manual.id)).toMatchObject({ execution: "manual", parentId: null });
+  expect(
+    reopened.history(task.id).every(({ item }) => item.parentId === null && item.execution),
+  ).toBe(true);
+  expect(
+    reopened
+      .history(task.id)
+      .some(({ item }) => item.prompt === "Implement the portal with existing access rules"),
+  ).toBe(true);
+});
