@@ -18,6 +18,8 @@ export class ExplorationError extends Error {
 }
 export type ProjectExploration = {
   repository: string;
+  profileRoot: string;
+  validateSource: () => Promise<void>;
   document: ProfileDocument;
   model: string;
   onProgress?: (progress: ExplorationProgress) => void;

@@ -9,20 +9,6 @@ export function metadata(doc: ProfileDocument) {
     body: match ? doc.content.slice(match[0].length) : doc.content,
   };
 }
-export function summary(doc?: ProfileDocument) {
-  if (!doc) return "";
-  const body = metadata(doc).body;
-  const a = body.indexOf(start),
-    b = body.indexOf(end);
-  if (
-    a < 0 ||
-    b < a ||
-    body.indexOf(start, a + start.length) >= 0 ||
-    body.indexOf(end, b + end.length) >= 0
-  )
-    throw new Error("Managed summary markers were changed. Restore them before retrying.");
-  return body.slice(a + start.length, b).trim();
-}
 export function dueSlot(now: Date, timezone: string) {
   const date = dayInTimezone(now, timezone);
   const hour = Number(

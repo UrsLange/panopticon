@@ -7,8 +7,14 @@ import { prompts, renderPrompt } from "../server/prompts.js";
 
 it("inserts dynamic values literally without interpreting placeholders inside them", () => {
   const calls = '{{minutes}}/$&/"quoted"';
-  const result = renderPrompt("project-exploration", { calls, minutes: "10" });
-  expect(result).toContain(`${calls} tool calls and 10 minutes`);
+  const result = renderPrompt("research", {
+    calls,
+    minutes: "10",
+    limitations: "",
+    finalization: "",
+  });
+  expect(result).toContain(calls);
+  expect(result).toContain("10 minutes");
 });
 
 it("renders research limits and optional finalization instructions", () => {
@@ -35,8 +41,8 @@ it("renders research limits and optional finalization instructions", () => {
 });
 
 it("identifies the file and missing variable when a template cannot be rendered", () => {
-  expect(() => renderPrompt("project-exploration", { calls: "100" })).toThrow(
-    "Missing prompt variable minutes in prompts/project-exploration.md",
+  expect(() => renderPrompt("research", { calls: "100" })).toThrow(
+    "Missing prompt variable minutes in prompts/research.md",
   );
 });
 

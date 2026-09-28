@@ -55,25 +55,23 @@ Repository identity is based on its local path. Moving a checkout creates a new 
 
 ## Exploration and updates
 
-Repositories are reviewed sequentially with at most 100 tool calls, ten minutes per repository, and 400,000 accumulated context characters. Each model request has a two-minute timeout within that overall deadline. Discovery uses the existing generated summary and reads source and documentation through the shared research tools. File reads use 12,000-character pages and reject files larger than 2 MiB.
+Repositories are reviewed sequentially. The model receives the profile location and a read-only project artifact identifying its profile document and repository scope. It chooses which profile documents and repository files to inspect. There are no application-level call-count, accumulated-context or overall review-time budgets. Repository reads remain paginated in 12,000-character pages and reject files larger than 2 MiB.
 
-The model receives only `list_files`, `search_files`, and `read_file` for one repository. The tools reject paths outside that scope, symlinks, common credential files, binary files, and generated directories. No shell, history, network, or file-editing tools are exposed. Repository content is treated as untrusted evidence. Model requests use `store: false`; provider retention policies still apply.
+Repository tools provide file listing, content search and read-only access. They reject paths outside the selected scope, symlinks, common credential files, binary files and generated directories. Profile tools let the model read, edit, create, move or remove Markdown documents, inspect diffs, check structure and commit locally. There are no shell, history or source-repository editing tools. File contents are sent to the configured provider as the model reads them, including personal profile context. Requests use `store: false`; provider retention policies still apply.
 
-The model returns a nonempty Markdown summary, retrieved source IDs, and a completion flag. Discovery rejects unfinished responses, unsupported source IDs, summary markers, and reviews without a successful file read. Exceeding the context or time limit discards the result; at the tool-call limit, only a final answer is allowed. The application assembles the draft in memory, preserving metadata and personal notes. Those protected sections are not sent to the model.
+The model maintains knowledge directly instead of returning a summary for insertion. It can reorganize the previous project-summary section and supporting concepts while preserving personal knowledge and discovery identity. Renamed project documents are located by repository ID. The prompt requires evidence-based claims, useful relative source references, and preservation of unrelated context.
 
-Generated content belongs between `project-summary:start` and `project-summary:end` HTML comments. Keep your own context under **Personal notes**, outside those markers.
+Before committing, tools check profile structure, external edits, repository identity and source freshness. The completion tool requires retrieved supporting evidence and no outstanding profile edits. Successful changes create local `docs(profile): ...` commits. The scanner records the accepted fingerprint and availability afterward. Registration is committed separately, so a failed first review can leave a valid placeholder.
 
-Before applying a draft, the app checks metadata, protected text, markers, a nonempty summary, and unchanged source/profile snapshots. Invalid or stale drafts are discarded. Applying an accepted draft holds the profile write lock and creates a local `docs(profile): refresh project summary` commit. Registration is committed separately, so a failed first review can leave a valid placeholder.
+Failed reviews retain the last accepted fingerprint. Automatic retries wait 15 minutes. Direct edits or commits may already exist when a later step fails; review saved changes and resolve uncommitted edits before retrying. Structural checks do not verify model accuracy.
 
-Failed reviews retain the last accepted fingerprint. Automatic retries wait 15 minutes. A later navigation or commit failure may leave validated changes saved but uncommitted; review and resolve those changes before retrying. Structural checks do not verify model accuracy.
-
-Scans are serialized. Manual requests join active work, and roots or profiles cannot change during a scan. Exploration does not hold the profile lock, so you can keep reading and editing; concurrent edits invalidate stale drafts.
+Scans are serialized. Manual requests join active work, and roots or profiles cannot change during a scan. An editing session holds the profile write lock; competing app writes must wait or retry. External filesystem edits are detected before further writes or commits.
 
 ## Profile and local state
 
 Generated documents use `type: Project` and include repository identity, name, accepted fingerprint, availability, and `updated_at`. Absolute repository paths, attempt history, diagnostics, and scheduling state remain in local `project-scan.json`.
 
-`updated_at` changes when knowledge or availability changes. A successful review with an unchanged summary advances only the fingerprint.
+`updated_at` changes when knowledge or availability changes. A successful review with unchanged knowledge advances only the fingerprint.
 
 The root `index.md` maintains Projects and Aliases sections linking typed documents, including nested ones. Alias registries maintain Referenced concepts links. Managed sections preserve surrounding prose and metadata; malformed or duplicate markers cause an error.
 

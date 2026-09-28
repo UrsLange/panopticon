@@ -13,82 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { Profile, parseDocument } from "../server/profile.js";
-import { applyProfileUpdate } from "../server/profile-update.js";
 
 describe("portable profile", () => {
-  it.each([
-    "../escape.md",
-    "/escape.md",
-    ".git/config.md",
-    "nested/../../escape.md",
-    "nested\\escape.md",
-  ])("rejects unsafe model path %s", (path) => {
-    const profile = new Profile(mkdtempSync(join(tmpdir(), "pa-update-path-")));
-    profile.initialize();
-    const before = profile.documents();
-    expect(() =>
-      applyProfileUpdate(profile, before, {
-        decision: "apply",
-        summary: "",
-        paths: [path],
-        changes: [{ path, content: "---\ntype: Note\n---\nFact" }],
-      }),
-    ).toThrow("invalid");
-    expect(profile.documents()).toEqual(before);
-  });
-
-  it("applies nested concepts and alias navigation without changing existing metadata", () => {
-    const profile = new Profile(mkdtempSync(join(tmpdir(), "pa-update-nested-")));
-    profile.initialize();
-    const snapshot = profile.documents();
-    applyProfileUpdate(profile, snapshot, {
-      decision: "apply",
-      summary: "Added Alex",
-      paths: ["names/aliases.md"],
-      changes: [
-        {
-          path: "names/aliases.md",
-          content:
-            "---\ntype: Aliases\ntitle: Names\n---\n| Alias | Kind | Target |\n| --- | --- | --- |\n| Alex | person | alex@example.com |\n",
-        },
-      ],
-    });
-    expect(readFileSync(join(profile.root, "index.md"), "utf8")).toContain(
-      "[Names](names/aliases.md)",
-    );
-    expect(profile.documents().find((doc) => doc.path === "names/aliases.md")?.content).toContain(
-      "alex@example.com",
-    );
-  });
-
-  it("rejects symlink writes and protected metadata or generated section changes", () => {
-    const profile = new Profile(mkdtempSync(join(tmpdir(), "pa-update-protected-")));
-    profile.initialize();
-    const document = profile.create(
-      "Project",
-      "Project",
-      "<!-- project-summary:start -->\nGenerated\n<!-- project-summary:end -->",
-    );
-    const outside = mkdtempSync(join(tmpdir(), "pa-update-outside-"));
-    symlinkSync(outside, join(profile.root, "escape"));
-    const snapshot = profile.documents();
-    const update = (path: string, content: string) =>
-      applyProfileUpdate(profile, snapshot, {
-        decision: "apply",
-        summary: "",
-        paths: [document.path],
-        changes: [{ path, content }],
-      });
-    expect(() => update("escape/new.md", document.content)).toThrow("symbolic links");
-    expect(() =>
-      update(document.path, document.content.replace("type: Project", "type: Note")),
-    ).toThrow("metadata");
-    expect(() => update(document.path, document.content.replace("Generated", "Replaced"))).toThrow(
-      "managed section",
-    );
-    expect(profile.documents()).toEqual(snapshot);
-  });
-
   it("reconciles all project links while preserving index metadata and personal prose", () => {
     const root = mkdtempSync(join(tmpdir(), "pa-project-index-"));
     const profile = new Profile(root);

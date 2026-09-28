@@ -41,11 +41,11 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 
 **Capture.** Persist the original text, select context, resolve references, and request model interpretation. Research can retrieve more evidence. Save the result without overwriting concurrent manual edits. Failed processing leaves the capture available for retry.
 
-**Profile note.** Check authorization, serialize incorporation, and ask the model for Markdown changes. Validate a temporary copy, recheck the note and profile revisions, then write, verify, and commit under the profile lock. Failed or conflicting updates remain pending.
+**Profile note.** Check authorization and serialize incorporation. Give the model a read-only note artifact, including clarification answers and capture date, and the profile location. It uses the shared editing tools to inspect, update, check and commit knowledge directly. The completion tool records the concepts containing the incorporated note, including a verified no-op. Missing information leaves the note pending with the model’s clarification. Revision guards run before writes and commits; failed updates remain pending.
 
 **Profile learning.** Journal original user captures, changed fields, clarification question/answer pairs, labeled conversation messages, and implementation state transitions, scoped to the active profile. A daily task creates artifacts for all activity since the successful checkpoint and provisional memory. The model receives artifact paths and the repository location, then runs a tool loop to read, edit, create, move, delete, inspect diffs, check document structure, and commit. It decides what to retain, infer, refine, or discard and directly performs the edits. The application holds the profile lock, confines file access to profile Markdown and task artifacts, detects external edits, and honors Git hooks. It verifies that no agent edits remain uncommitted before persisting the checkpoint and updated provisional memory. Failures leave activity pending; a crash after a commit may replay activity, which the agent must deduplicate. Conversation events carry recent same-profile messages as historical context for short replies across runs.
 
-**Project discovery.** Enumerate repositories and compare local fingerprints. The configured model explores one repository with the shared read-only file tools and returns a structured summary. Application code inserts it into an in-memory draft. Validate protected content and source stability before applying and committing it. See [project discovery](project-discovery.md).
+**Project discovery.** Enumerate repositories and compare local fingerprints. The configured model reads a project artifact, explores one repository with read-only research tools, and directly maintains profile knowledge with the shared editing and commit tools. Completion requires retrieved evidence and committed edits. Tools check repository identity and source stability; the scanner records fingerprints and availability after success. See [project discovery](project-discovery.md).
 
 **People sync.** Read all Graph pages, normalize and validate records, then replace the profile and tenant's directory in one SQLite transaction. A failed refresh retains the previous snapshot.
 
@@ -76,8 +76,8 @@ Local storage does not mean local model processing. Requests can send:
 
 - Capture text, core and relevant profile documents, related items, and current commitments.
 - Additional profile files, discovered-project files, and CTX evidence retrieved during capture refinement.
-- The existing generated project summary and repository evidence retrieved during project discovery; personal notes and profile metadata are not included in discovery requests.
-- The **full Markdown profile**, note text, and capture date when incorporating a note.
+- Project task artifacts, repository evidence and profile documents selected by the project agent, including personal notes and metadata when read.
+- The note artifact, including clarification answers and capture date, and profile documents selected by the note agent.
 - Profile documents, the activity artifact, and provisional memory as the daily learning agent reads them with its tools. The model receives file locations first and chooses its reads; the application does not truncate the pending activity or impose call-count budgets. Activity starts being journaled with this version; older unscoped records are not backfilled.
 - Recent conversation messages and selected people candidates. Manual CTX search results require explicit sharing in Conversation.
 
@@ -91,4 +91,4 @@ Capture refinement uses the configured provider's hosted `web_search` tool to op
 
 Capture refinement permits 100 tool calls, including hosted web calls, over 15 minutes, up to 400,000 accumulated context characters, plus a two-minute finalization allowance. File reads use 12,000-character pages and reject files larger than 2 MiB. Unresolved evidence gaps require review and cannot authorize a profile update.
 
-The service binds to `127.0.0.1` for one local user. General-purpose shell execution and MCP are not connected to capture research or project discovery. Discovery exposes only file listing, content search, and reading within the selected repository; it has no history or file-editing tools. See [project discovery](project-discovery.md#exploration-and-updates).
+The service binds to `127.0.0.1` for one local user. General-purpose shell execution and MCP are not connected to capture research or project discovery. Discovery has read-only research access to the selected repository and editing tools confined to profile Markdown. It has no session-history access or source-repository write tools. See [project discovery](project-discovery.md#exploration-and-updates).

@@ -30,5 +30,5 @@ export interface DiscoveryPorts {
   identity(root: string, name: string): RepositoryIdentity;
   isProfileRepository(repository: string, profile: string): Promise<boolean>;
   snapshot(repository: string): Promise<{ fingerprint: string }>;
-  explore(request: ProjectExploration): Promise<string>;
+  explore(request: ProjectExploration): Promise<void>;
 }

@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import type { Assistant } from "../server/application/assistant.js";
 import { createApp } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
@@ -39,18 +39,34 @@ function setup() {
       updateProfile: text.startsWith("note:"),
     })),
     ask: vi.fn<Assistant["ask"]>(),
-    consolidateProfile: async () => {
-      throw new Error("Unexpected profile consolidation");
-    },
-    updateProfile: vi.fn<Assistant["updateProfile"]>(async (item, documents) => {
-      const current = documents.find((doc) => doc.path === document.path);
-      if (!current) throw new Error("Missing preferences");
-      return {
-        decision: "apply",
-        summary: "Added the preference.",
-        paths: [document.path],
-        changes: [{ path: document.path, content: `${current.content}\n${item.body}\n` }],
+    consolidateProfile: vi.fn<Assistant["consolidateProfile"]>(),
+    updateProfile: vi.fn<Assistant["updateProfile"]>(async (workspace, tools) => {
+      const call = (name: string, input: unknown) => {
+        const tool = tools.find((tool) => tool.name === name);
+        assert(tool);
+        return tool.execute(input);
       };
+      const note = JSON.parse(
+        (
+          (await call("read_file", {
+            path: workspace.artifactPaths["note.json"],
+            startLine: null,
+            endLine: null,
+          })) as { content: string }
+        ).content,
+      );
+      const current = (await call("read_file", {
+        path: document.path,
+        startLine: null,
+        endLine: null,
+      })) as { content: string };
+      await call("write_file", {
+        path: document.path,
+        content: `${current.content}\n${note.capture.body}\n`,
+      });
+      await call("commit_profile", { summary: "incorporate note" });
+      await call("complete_note", { paths: [document.path] });
+      return "Added the preference.";
     }),
   };
   const app = createApp({
@@ -182,14 +198,9 @@ it("keeps failed merges pending and allows a successful retry", async () => {
   expect(store.get(note.id)).toMatchObject({ status: "done", processingError: null });
 });
 
-it("holds conflicts without applying even changes included in a review response", async () => {
+it("keeps clarification requests pending without changing the profile", async () => {
   const { store, profile, document, assistant, process } = setup();
-  assistant.updateProfile.mockResolvedValue({
-    decision: "review",
-    summary: "Which Benni do you mean?",
-    paths: [],
-    changes: [{ path: document.path, content: "invalid" }],
-  });
+  assistant.updateProfile.mockResolvedValue("Which Benni do you mean?");
   const note = store.capture("note: Benni means another person");
   await process(note.id);
   expect(store.get(note.id)).toMatchObject({
@@ -199,39 +210,37 @@ it("holds conflicts without applying even changes included in a review response"
   expect(readFileSync(join(profile.root, document.path), "utf8")).toBe(document.content);
 });
 
-it("rejects invalid output before changing any profile document", async () => {
+it("keeps uncommitted edits visible and the note pending", async () => {
   const { store, profile, document, assistant, process } = setup();
-  assistant.updateProfile.mockResolvedValue({
-    decision: "apply",
-    summary: "Saved",
-    paths: [document.path],
-    changes: [
-      { path: document.path, content: `${document.content}\nNew fact` },
-      { path: "broken.md", content: "No frontmatter" },
-    ],
+  assistant.updateProfile.mockImplementation(async (_workspace, tools) => {
+    const tool = tools.find((tool) => tool.name === "write_file");
+    assert(tool);
+    await tool.execute({ path: document.path, content: `${document.content}\nNew fact` });
+    return "Saved";
   });
   const note = store.capture("note: new fact");
   await process(note.id);
   expect(store.get(note.id)?.status).toBe("open");
-  expect(readFileSync(join(profile.root, document.path), "utf8")).toBe(document.content);
+  expect(store.get(note.id)?.processingError).toContain("uncommitted");
+  expect(readFileSync(join(profile.root, document.path), "utf8")).toContain("New fact");
 });
 
 it("accepts already incorporated knowledge only with an existing concept reference", async () => {
   const { store, document, assistant, process } = setup();
-  assistant.updateProfile.mockResolvedValue({
-    decision: "apply",
-    summary: "Already present.",
-    paths: [document.path],
-    changes: [],
+  assistant.updateProfile.mockImplementation(async (_workspace, tools) => {
+    const tool = tools.find((tool) => tool.name === "complete_note");
+    assert(tool);
+    await tool.execute({ paths: [document.path] });
+    return "Already present.";
   });
   const note = store.capture("note: keep changes focused");
   await process(note.id);
   expect(store.get(note.id)?.status).toBe("done");
-  assistant.updateProfile.mockResolvedValue({
-    decision: "apply",
-    summary: "Already present.",
-    paths: ["invented.md"],
-    changes: [],
+  assistant.updateProfile.mockImplementation(async (_workspace, tools) => {
+    const tool = tools.find((tool) => tool.name === "complete_note");
+    assert(tool);
+    await tool.execute({ paths: ["invented.md"] });
+    return "Already present.";
   });
   const other = store.capture("note: new fact");
   await process(other.id);
@@ -244,14 +253,11 @@ it.each(["capture", "profile"])("does not overwrite concurrent %s edits", async 
   const gate = new Promise<void>((resolve) => {
     finish = resolve;
   });
-  assistant.updateProfile.mockImplementationOnce(async () => {
+  const implementation = assistant.updateProfile.getMockImplementation();
+  assert(implementation);
+  assistant.updateProfile.mockImplementationOnce(async (...args) => {
     await gate;
-    return {
-      decision: "apply",
-      summary: "Updated",
-      paths: [document.path],
-      changes: [{ path: document.path, content: `${document.content}\nStale result` }],
-    };
+    return implementation(...args);
   });
   const note = store.capture("note: keep commits atomic");
   const request = process(note.id);
@@ -260,7 +266,9 @@ it.each(["capture", "profile"])("does not overwrite concurrent %s edits", async 
   else writeFileSync(join(profile.root, document.path), `${document.content}\nExternal edit`);
   finish();
   await request;
-  expect(readFileSync(join(profile.root, document.path), "utf8")).not.toContain("Stale result");
+  expect(readFileSync(join(profile.root, document.path), "utf8")).not.toContain(
+    "note: keep commits atomic",
+  );
   expect(store.get(note.id)?.status).toBe("open");
 });
 

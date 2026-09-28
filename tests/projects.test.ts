@@ -15,6 +15,7 @@ import { dueSlot } from "../server/application/project-documents.js";
 import { createApp } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
 import { Profile } from "../server/profile.js";
+import { runProfileEditing } from "../server/profile-learning-workspace.js";
 import { createProjectScanner, repositorySnapshot } from "../server/projects.js";
 import { SettingsStore } from "../server/settings.js";
 import { Store } from "../server/store.js";
@@ -39,10 +40,20 @@ function fixture() {
   writeFileSync(join(repo, "README.md"), "# Example\nAn app for team onboarding.");
   return { root, projects, profile, settings, repo };
 }
-async function explore({ document }: ProjectExploration) {
-  return document.content.replace(
-    /<!-- project-summary:start -->[\s\S]*?<!-- project-summary:end -->/,
-    "<!-- project-summary:start -->\n## Purpose\nTeam onboarding\n\n## Sources\n- README.md\n<!-- project-summary:end -->",
+async function explore({ document, profileRoot, validateSource }: ProjectExploration) {
+  await validateSource();
+  const profile = new Profile(profileRoot);
+  if (profile.documents().find((doc) => doc.path === document.path)?.hash !== document.hash)
+    throw new Error("Profile document changed during review; retry the scan.");
+  profile.change("refresh project knowledge", () =>
+    profile.save(
+      document.path,
+      document.content.replace(
+        /<!-- project-summary:start -->[\s\S]*?<!-- project-summary:end -->/,
+        "<!-- project-summary:start -->\n## Purpose\nTeam onboarding\n\n## Sources\n- README.md\n<!-- project-summary:end -->",
+      ),
+      document.hash,
+    ),
   );
 }
 
@@ -68,9 +79,14 @@ it("does not commit external index edits made while a model reviews a project", 
 
 it("rejects empty summaries and preserves profile content after a failed model request", async () => {
   const { settings, profile } = fixture();
-  const empty = createProjectScanner(settings, async ({ document }) => document.content);
+  const empty = createProjectScanner(settings, async () => {
+    throw new ExplorationError({
+      category: "incomplete",
+      message: "Project review did not complete.",
+    });
+  });
   await empty.run();
-  expect(empty.status().projects[0].error).toContain("empty summary");
+  expect(empty.status().projects[0].error).toContain("did not complete");
   expect(readFileSync(join(profile.root, "index.md"), "utf8")).toContain(
     `(${empty.status().projects[0].document})`,
   );
@@ -89,55 +105,26 @@ it("rejects empty summaries and preserves profile content after a failed model r
   expect(retry.status().error).toBeNull();
 });
 
-it("reports edits outside the summary without accepting the new fingerprint", async () => {
+it("accepts agent reorganization beyond the old summary section", async () => {
   const { settings, profile, repo } = fixture();
   await createProjectScanner(settings, explore).run();
-  const before = profile.documents().find((doc) => doc.type === "Project");
   writeFileSync(join(repo, "source.ts"), "new source");
-  const scanner = createProjectScanner(settings, async ({ document }) => {
-    return document.content.replace("## Personal notes", "## Removed notes");
+  const scanner = createProjectScanner(settings, async ({ document, profileRoot }) => {
+    const target = new Profile(profileRoot);
+    target.change("reorganize project knowledge", () =>
+      target.save(
+        document.path,
+        document.content.replace("## Personal notes", "## Working context"),
+        document.hash,
+      ),
+    );
   });
   await scanner.run();
-  expect(scanner.status().projects[0].error).toContain("protected profile content");
-  const after = profile.documents().find((doc) => doc.type === "Project");
-  expect(after).toEqual(before);
+  expect(scanner.status().projects[0].error).toBeNull();
+  expect(profile.documents().find((doc) => doc.type === "Project")?.content).toContain(
+    "## Working context",
+  );
 });
-
-it.each(["frontmatter", "yaml", "metadata", "markers"])(
-  "rejects invalid %s in a draft without damaging the profile or blocking a retry",
-  async (failure) => {
-    const { settings, profile, repo } = fixture();
-    await createProjectScanner(settings, explore).run();
-    const before = profile.documents();
-    const head = execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-    });
-    writeFileSync(join(repo, "new.ts"), "new source");
-    const scanner = createProjectScanner(settings, async (request) => {
-      const content = await explore(request);
-      if (failure === "frontmatter") return "# No frontmatter";
-      if (failure === "yaml") return "---\ntype: [\n---\n";
-      if (failure === "metadata") return content.replace("type: Project", "type: Note");
-      return content.replace("## Purpose", "<!-- project-summary:start -->\n## Purpose");
-    });
-    await scanner.run();
-    expect(scanner.status().projects[0]).toMatchObject({
-      outcome: "failed",
-      diagnostic: { category: "validation" },
-    });
-    expect(profile.documents()).toEqual(before);
-    expect(profile.context("onboarding").documents.length).toBeGreaterThan(0);
-    expect(
-      execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" }),
-    ).toBe(head);
-    expect(
-      execFileSync("git", ["-C", profile.root, "status", "--porcelain"], { encoding: "utf8" }),
-    ).toBe("");
-    const retry = createProjectScanner(settings, explore);
-    await retry.run();
-    expect(retry.status().error).toBeNull();
-  },
-);
 
 it("keeps profile reads and edits available during discovery and rejects stale drafts", async () => {
   const { settings, profile, repo } = fixture();
@@ -179,7 +166,7 @@ it("keeps profile reads and edits available during discovery and rejects stale d
     expect(saved.statusCode).toBe(200);
     resume();
     await running;
-    expect(scanner.status().projects[0].error).toContain("changed during review");
+    expect(scanner.status().projects[0].error).toMatch(/changed/);
     expect(readFileSync(join(profile.root, document.path), "utf8")).toBe(updated);
   } finally {
     resume();
@@ -402,23 +389,6 @@ it("recognizes Git worktrees as direct child repositories", async () => {
   expect(scanner.status().error).toBeNull();
 });
 
-it("accepts newline normalization while restoring personal notes byte for byte", async () => {
-  const { settings, profile } = fixture();
-  let original = "";
-  const scanner = createProjectScanner(settings, async (request) => {
-    original = request.document.content;
-    return (await explore(request)).replace(/\n\n$/, "\n");
-  });
-  await scanner.run();
-  expect(scanner.status().error).toBeNull();
-  expect(scanner.status().projects[0].outcome).toBe("updated");
-  const content = profile.documents().find((doc) => doc.type === "Project")?.content ?? "";
-  expect(content.split("<!-- project-summary:end -->")[1]).toBe(
-    original.split("<!-- project-summary:end -->")[1],
-  );
-  expect(content).toContain("repository_fingerprint:");
-});
-
 it("publishes current activity and completed results before a scan finishes", async () => {
   const { settings, projects } = fixture();
   const second = join(projects, "second");
@@ -526,4 +496,35 @@ it("waits fifteen minutes after a long failed scan finishes before retrying", as
   now = new Date("2026-09-18T08:35:00Z");
   await scanner.run(true);
   expect(calls).toBe(2);
+});
+
+it("follows a project document renamed by the editing agent", async () => {
+  const { settings, profile } = fixture();
+  const scanner = createProjectScanner(settings, async (request) => {
+    await explore(request);
+    await runProfileEditing(new Profile(request.profileRoot), {}, async (_workspace, tools) => {
+      const move = tools.find((tool) => tool.name === "move_file");
+      const commit = tools.find((tool) => tool.name === "commit_profile");
+      if (!move || !commit) throw new Error("Missing editing tools");
+      await move.execute({ from: request.document.path, to: "projects/onboarding.md" });
+      await commit.execute({ summary: "organize project knowledge" });
+      return "Moved project knowledge.";
+    });
+  });
+  await scanner.run();
+  expect(scanner.status().projects[0]).toMatchObject({
+    document: "projects/onboarding.md",
+    outcome: "updated",
+    error: null,
+  });
+  expect(
+    profile.documents().find((doc) => doc.path === "projects/onboarding.md")?.content,
+  ).toContain("repository_fingerprint:");
+  expect(readFileSync(join(profile.root, "index.md"), "utf8")).toContain("projects/onboarding.md");
+  await scanner.run();
+  expect(scanner.status().projects[0]).toMatchObject({
+    document: "projects/onboarding.md",
+    outcome: "unchanged",
+    error: null,
+  });
 });

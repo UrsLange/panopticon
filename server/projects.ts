@@ -69,7 +69,7 @@ export async function repositorySnapshot(path: string) {
 
 export function createProjectScanner(
   settings: SettingsStore,
-  explorer: (request: ProjectExploration) => Promise<string> = (request) =>
+  explorer: (request: ProjectExploration) => Promise<void> = (request) =>
     exploreProject(request, settings.credentials()),
   now = () => new Date(),
 ) {
@@ -78,7 +78,7 @@ export function createProjectScanner(
 
 export function projectAdapters(
   dataDir: string,
-  explorer: (request: ProjectExploration) => Promise<string>,
+  explorer: (request: ProjectExploration) => Promise<void>,
 ): DiscoveryPorts {
   const stateFile = join(dataDir, "project-scan.json");
   const identity = (root: string, name: string) => {

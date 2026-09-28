@@ -55,7 +55,15 @@ function fixture() {
     content: "Existing knowledge",
     hash: "one",
   };
-  const incorporate = vi.fn();
+  const incorporate = vi.fn<ProfileNotes["incorporate"]>(async (_item, _date, agent, guard) => {
+    const summary = await agent({ profileRoot: "/profile", artifactPaths: {} }, []);
+    guard();
+    return {
+      decision: summary === "Which team?" ? "review" : "apply",
+      summary,
+      paths: [document.path],
+    };
+  });
   let profile: ProfileNotes = {
     root: "/profile",
     isGit: () => true,
@@ -80,12 +88,7 @@ function fixture() {
       prompt: "",
       sources: [],
     })),
-    updateProfile: vi.fn<Assistant["updateProfile"]>(async () => ({
-      decision: "apply",
-      summary: "Saved",
-      paths: [document.path],
-      changes: [],
-    })),
+    updateProfile: vi.fn<Assistant["updateProfile"]>(async () => "Saved"),
     ask: vi.fn(async () => ({ answer: "An answer", sources: [] })),
   };
   const notes = createProfileUpdates({
@@ -187,8 +190,8 @@ it("serializes profile notes, shares duplicate requests, and only completes afte
   await Promise.resolve();
   expect(f.assistant.updateProfile).toHaveBeenCalledTimes(1);
   expect(f.store.get(first.id)?.status).toBe("open");
-  expect(f.incorporate).not.toHaveBeenCalled();
-  gate.resolve({ decision: "apply", summary: "Saved", paths: ["preferences.md"], changes: [] });
+  expect(f.incorporate).toHaveBeenCalledTimes(1);
+  gate.resolve("Saved");
   await Promise.all([active, queued]);
   expect(f.incorporate).toHaveBeenCalledTimes(2);
   expect(f.store.list().every((item) => item.status === "done")).toBe(true);
@@ -207,9 +210,9 @@ it.each(["revision", "profile", "discovery"] as const)(
     if (change === "revision") f.store.update(item.id, { body: "Edited" }, item.revision);
     if (change === "profile") f.switchProfile();
     if (change === "discovery") f.startDiscovery();
-    gate.resolve({ decision: "apply", summary: "Saved", paths: ["preferences.md"], changes: [] });
+    gate.resolve("Saved");
     await task;
-    expect(f.incorporate).not.toHaveBeenCalled();
+    expect(f.incorporate).toHaveBeenCalledTimes(1);
     expect(f.store.get(item.id)?.status).toBe("open");
     if (change === "revision") expect(f.store.get(item.id)?.body).toBe("Edited");
     else expect(f.store.get(item.id)?.processingError).toContain("Profile update failed.");
@@ -218,12 +221,7 @@ it.each(["revision", "profile", "discovery"] as const)(
 
 it("keeps review decisions and failed profile writes pending", async () => {
   const f = fixture();
-  vi.mocked(f.assistant.updateProfile).mockResolvedValueOnce({
-    decision: "review",
-    summary: "Which team?",
-    paths: [],
-    changes: [],
-  });
+  vi.mocked(f.assistant.updateProfile).mockResolvedValueOnce("Which team?");
   const first = f.note();
   await f.notes.add(first.id, first.revision);
   expect(f.store.get(first.id)).toMatchObject({
@@ -231,7 +229,7 @@ it("keeps review decisions and failed profile writes pending", async () => {
     processing: "review",
     rationale: "Which team?",
   });
-  expect(f.incorporate).not.toHaveBeenCalled();
+  expect(f.incorporate).toHaveBeenCalledTimes(1);
   f.incorporate.mockImplementation(() => {
     throw new Error("Commit hook rejected the update");
   });

@@ -28,6 +28,126 @@ export function mockProvider() {
       response.end(JSON.stringify({ error: { message: "Unsupported schema" } }));
       return;
     }
+    if (
+      input.tools?.some((tool: { name?: string }) =>
+        ["complete_note", "complete_project_review"].includes(tool.name ?? ""),
+      )
+    ) {
+      const workspace = JSON.parse(input.input[0].content);
+      const results = input.input
+        .filter((item: { type: string }) => item.type === "function_call_output")
+        .map((item: { output: string }) => JSON.parse(item.output));
+      const step = results.length;
+      const project = !!workspace.artifactPaths["project.json"];
+      let call: { name: string; args: unknown } | undefined;
+      if (step === 0)
+        call = {
+          name: "read_file",
+          args: {
+            path: workspace.artifactPaths[project ? "project.json" : "note.json"],
+            startLine: null,
+            endLine: null,
+          },
+        };
+      else if (project) {
+        const artifact = JSON.parse(results[0].content);
+        if (step === 1)
+          call = {
+            name: "read_repository_file",
+            args: { scope: "repository", path: "README.md", offset: 0 },
+          };
+        if (step === 2)
+          call = {
+            name: "read_file",
+            args: { path: artifact.documentPath, startLine: null, endLine: null },
+          };
+        if (step === 3)
+          call = {
+            name: "write_file",
+            args: {
+              path: artifact.documentPath,
+              content: results[2].content.replace(
+                /<!-- project-summary:start -->[\s\S]*?<!-- project-summary:end -->/,
+                "<!-- project-summary:start -->\n## Purpose\nA project for team onboarding\n\n## Sources\n- README.md\n<!-- project-summary:end -->",
+              ),
+            },
+          };
+        if (step === 4) call = { name: "check_profile", args: {} };
+        if (step === 5)
+          call = { name: "commit_profile", args: { summary: "refresh project knowledge" } };
+        if (step === 6)
+          call = { name: "complete_project_review", args: { sources: ["repository/README.md"] } };
+      } else {
+        const path = "browser-test-preferences.md";
+        const artifact = JSON.parse(results[0].content);
+        if (step === 1) call = { name: "list_profile_files", args: {} };
+        if (step === 2)
+          call = {
+            name: "read_file",
+            args: {
+              path: results[1].files.includes(path) ? path : "index.md",
+              startLine: null,
+              endLine: null,
+            },
+          };
+        if (step === 3)
+          call = {
+            name: "write_file",
+            args: {
+              path,
+              content: `${results[1].files.includes(path) ? results[2].content : "---\ntype: Working rules\ntitle: Browser test preferences\n---\n\n# Browser test preferences\n"}\n${artifact.capture.body}\n`,
+            },
+          };
+        if (step === 4)
+          call = results[1].files.includes(path)
+            ? { name: "check_profile", args: {} }
+            : {
+                name: "write_file",
+                args: {
+                  path: "index.md",
+                  content: `${results[2].content}\n- [Browser test preferences](${path})\n`,
+                },
+              };
+        if (step === 5)
+          call = { name: "commit_profile", args: { summary: "incorporate profile note" } };
+        if (step === 6) call = { name: "complete_note", args: { paths: [path] } };
+      }
+      response.end(
+        JSON.stringify({
+          id: `resp_edit_${step}`,
+          object: "response",
+          status: "completed",
+          output: call
+            ? [
+                {
+                  type: "function_call",
+                  id: `fc_edit_${step}`,
+                  call_id: `edit_${step}`,
+                  name: call.name,
+                  arguments: JSON.stringify(call.args),
+                },
+              ]
+            : [
+                {
+                  type: "message",
+                  id: "msg_edit",
+                  role: "assistant",
+                  status: "completed",
+                  content: [
+                    {
+                      type: "output_text",
+                      text: project
+                        ? "Updated project knowledge."
+                        : "Saved your browser test preference.",
+                      annotations: [],
+                    },
+                  ],
+                },
+              ],
+        }),
+      );
+      return;
+    }
     if (input.tools?.some((tool: { name?: string }) => tool.name === "list_profile_files")) {
       const workspace = JSON.parse(input.input[0].content);
       const results = input.input
@@ -150,24 +270,6 @@ export function mockProvider() {
     const payload = JSON.parse(
       typeof input.input === "string" ? input.input : input.input[0].content,
     );
-    if (input.text.format.name === "project_summary" && input.input.length === 1) {
-      response.end(
-        JSON.stringify({
-          id: "resp_discovery",
-          object: "response",
-          status: "completed",
-          output: [
-            {
-              type: "function_call",
-              call_id: "call_readme",
-              name: "read_file",
-              arguments: JSON.stringify({ scope: "repository", path: "README.md", offset: 0 }),
-            },
-          ],
-        }),
-      );
-      return;
-    }
     const explicitNote = payload.capture === "note: I prefer browser-tested atomic commits.";
     const implicitNote =
       payload.capture === "My browser-test review preference is a short summary.";
@@ -217,38 +319,6 @@ export function mockProvider() {
         rationale: questions.length
           ? "The project and person need to be clear."
           : "The demo is ready to plan.",
-      };
-    }
-    if (input.text.format.name === "profile_update") {
-      const path = "browser-test-preferences.md";
-      const existing = payload.documents.find((doc: { path: string }) => doc.path === path);
-      const index = payload.documents.find((doc: { path: string }) => doc.path === "index.md");
-      const content = `${existing?.content ?? "---\ntype: Working rules\ntitle: Browser test preferences\n---\n\n# Browser test preferences\n"}\n${payload.capture.body}\n`;
-      output = {
-        decision: "apply",
-        summary: "Saved your browser test preference.",
-        paths: [path],
-        changes: [
-          { path, content },
-          ...(!existing
-            ? [
-                {
-                  path: index.path,
-                  content: `${index.content}\n- [Browser test preferences](${path})\n`,
-                },
-              ]
-            : []),
-        ],
-      };
-    }
-    if (input.text.format.name === "project_summary") {
-      const evidence = input.input.find(
-        (item: { type?: string }) => item.type === "function_call_output",
-      );
-      output = {
-        summary: "## Purpose\nA project for team onboarding\n\n## Sources\n- README.md",
-        sources: ["repository/README.md"],
-        complete: !!JSON.parse(evidence.output).content,
       };
     }
     response.end(

@@ -109,7 +109,7 @@ function fixture() {
       root: "/profile",
       isGit: () => true,
       documents: () => documents,
-      incorporate: () => {},
+      incorporate: async () => ({ decision: "apply" as const, summary: "Saved", paths: [] }),
     }),
     repositories: () => repositories,
     workspace: vi.fn(async (path: string) => ({ path, branch: "commit-sha" })),

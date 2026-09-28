@@ -1,7 +1,7 @@
+import { z } from "zod";
 import type { ProfileAccess } from "./application/ports.js";
 import type { Profile } from "./profile.js";
-import { runProfileLearning } from "./profile-learning-workspace.js";
-import { applyProfileUpdate } from "./profile-update.js";
+import { runProfileEditing, runProfileLearning } from "./profile-learning-workspace.js";
 
 export function profileAdapter(profile: Profile): ProfileAccess {
   return {
@@ -28,10 +28,50 @@ export function profileAdapter(profile: Profile): ProfileAccess {
         profile.reconcileIndex();
         return profile.documents().find((doc) => doc.path === document.path);
       }),
-    incorporate: (snapshot, update) =>
-      profile.change("incorporate profile note", () =>
-        applyProfileUpdate(profile, snapshot, update),
-      ),
+    async incorporate(item, date, agent, guard) {
+      let paths: string[] | undefined;
+      const schema = z.object({ paths: z.array(z.string()).min(1) });
+      const result = await runProfileEditing(
+        profile,
+        {
+          "note.json": { content: JSON.stringify({ capture: item, captureDate: date }, null, 2) },
+        },
+        (workspace, tools) =>
+          agent(workspace, [
+            ...tools.map((tool) => ({
+              ...tool,
+              execute(input: unknown) {
+                if (["write_file", "edit_file", "move_file", "delete_file"].includes(tool.name))
+                  paths = undefined;
+                return tool.execute(input);
+              },
+            })),
+            {
+              name: "complete_note",
+              description:
+                "Record that all of the note is incorporated or already present. Supply the profile concept paths containing the knowledge. Commit any edits first. If clarification is needed, do not call this tool; explain the question in your final response.",
+              parameters: z.toJSONSchema(schema),
+              execute(input) {
+                guard();
+                if (profile.pendingPaths().length)
+                  throw new Error("Commit profile edits before completing the note.");
+                const selected = schema.parse(input).paths;
+                if (
+                  selected.some(
+                    (path) =>
+                      !profile.documents().some((doc) => doc.path === path && doc.type !== "Index"),
+                  )
+                )
+                  throw new Error("Choose existing profile concepts containing the note.");
+                paths = selected;
+                return { completed: true };
+              },
+            },
+          ]),
+        guard,
+      );
+      return { summary: result.summary, decision: paths ? "apply" : "review", paths: paths ?? [] };
+    },
     consolidate: (input, agent) => runProfileLearning(profile, input, agent),
   };
 }

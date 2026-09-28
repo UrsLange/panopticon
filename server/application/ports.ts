@@ -2,10 +2,10 @@ import type { PeopleContext, Person } from "../../shared/people.js";
 import type { Item, ItemFields, ProfileDocument } from "../../shared/schema.js";
 import type {
   ProfileActivityWriter,
+  ProfileEditingAgent,
   ProfileLearningAgent,
   ProfileLearningInput,
 } from "./profile-learning-model.js";
-import type { ProfileUpdate } from "./profile-update-model.js";
 
 export type Today = { date: string; due: Item[]; suggested: Item[]; waiting: Item[] };
 export type ProfileContext = {
@@ -58,7 +58,12 @@ export interface ProfileNotes {
   readonly root: string;
   isGit(): boolean;
   documents(): ProfileDocument[];
-  incorporate(snapshot: ProfileDocument[], update: ProfileUpdate): void;
+  incorporate(
+    item: Item,
+    date: string,
+    agent: ProfileEditingAgent,
+    guard: () => void,
+  ): Promise<{ decision: "apply" | "review"; summary: string; paths: string[] }>;
 }
 
 export interface ProfileAccess extends ProfileNotes {

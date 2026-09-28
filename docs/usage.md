@@ -56,6 +56,8 @@ An explicit memory request, such as “remember that I prefer atomic conventiona
 
 For a pending note, open it and choose **Add to profile**. Save any text edits first. Answer clarification questions or use **Retry profile update** after resolving a failure.
 
+The model receives the note and clarification answers as an artifact, inspects existing profile knowledge, and uses tools to edit, verify and commit the update. It can reorganize concepts when useful and leaves unresolved questions pending. Tune this behavior in `prompts/profile-update.md` and restart the backend after changes.
+
 After a verified, committed note update, the note is marked **Added to profile** and leaves Inbox. Its content is available in **Your context**. Archiving a pending note dismisses the note workflow; daily learning separately considers recorded activity.
 
 Profile updates use local `docs(profile): ...` commits and never push. Uncommitted edits in a target file block updates; unrelated changes remain untouched. If a commit fails, files may already be saved. Resolve the Git problem and review and commit those changes before retrying.

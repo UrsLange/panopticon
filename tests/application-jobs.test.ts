@@ -53,12 +53,17 @@ function discovery(saved: Partial<ScanStatus> = {}) {
     identity,
     isProfileRepository: async () => false,
     snapshot: vi.fn(async () => ({ fingerprint: "source-one" })),
-    explore: vi.fn(async ({ document }) =>
-      document.content.replace(
-        "<!-- project-summary:start -->",
-        "<!-- project-summary:start -->\nVerified summary",
-      ),
-    ),
+    explore: vi.fn(async ({ document, validateSource }) => {
+      await validateSource();
+      const index = documents.findIndex((doc) => doc.path === document.path);
+      documents[index] = record(
+        document.path,
+        document.content.replace(
+          "<!-- project-summary:start -->",
+          "<!-- project-summary:start -->\nVerified summary",
+        ),
+      );
+    }),
   };
   const settings = {
     projectRoots: ["/repos"],
@@ -84,32 +89,20 @@ it("validates discovered drafts before applying and skips unchanged repository e
   expect(f.profile.refresh).toHaveBeenCalledTimes(3);
 });
 
-it.each(["metadata", "personal notes", "source"])(
-  "rejects discovery when %s changes and schedules a retry",
-  async (change) => {
-    const f = discovery();
-    if (change === "source")
-      vi.mocked(f.io.snapshot)
-        .mockResolvedValueOnce({ fingerprint: "one" })
-        .mockResolvedValue({ fingerprint: "two" });
-    else
-      vi.mocked(f.io.explore).mockImplementation(async ({ document }) =>
-        change === "metadata"
-          ? document.content.replace("repository_name: repo", "repository_name: other")
-          : document.content
-              .replace("<!-- project-summary:start -->", "<!-- project-summary:start -->\nSummary")
-              .replace("## Personal notes", "## Replaced notes"),
-      );
-    await f.scanner.run();
-    expect(f.profile.apply).not.toHaveBeenCalled();
-    expect(f.scanner.status()).toMatchObject({
-      completedSlot: null,
-      nextRetry: "2026-09-19T12:15:00.000Z",
-    });
-    expect(f.scanner.status().projects[0].outcome).toBe("failed");
-    expect(f.documents[0].content).not.toContain("repository_fingerprint");
-  },
-);
+it("rejects a changed source and schedules a retry", async () => {
+  const f = discovery();
+  vi.mocked(f.io.snapshot)
+    .mockResolvedValueOnce({ fingerprint: "one" })
+    .mockResolvedValue({ fingerprint: "two" });
+  await f.scanner.run();
+  expect(f.profile.apply).not.toHaveBeenCalled();
+  expect(f.scanner.status()).toMatchObject({
+    completedSlot: null,
+    nextRetry: "2026-09-19T12:15:00.000Z",
+  });
+  expect(f.scanner.status().projects[0].outcome).toBe("failed");
+  expect(f.documents[0].content).not.toContain("repository_fingerprint");
+});
 
 it("reports saved-but-uncommitted discovery writes as unverified", async () => {
   const f = discovery();
@@ -132,10 +125,7 @@ it("rejects a stale profile draft without replacing the concurrent edit", async 
       hash: "manual-edit",
       content: `${document.content}Manual addition`,
     };
-    return document.content.replace(
-      "<!-- project-summary:start -->",
-      "<!-- project-summary:start -->\nSummary",
-    );
+    throw new Error("Profile document changed during review; retry the scan.");
   });
   await f.scanner.run();
   expect(f.scanner.status().projects[0].error).toContain("changed during review");
@@ -152,10 +142,15 @@ it("coalesces discovery requests and restores interrupted scan diagnostics", asy
     vi.mocked(f.io.explore).mockImplementation(async ({ document }) => {
       resolve();
       await gate;
-      return document.content.replace(
-        "<!-- project-summary:start -->",
-        "<!-- project-summary:start -->\nSummary",
-      );
+      const index = f.documents.findIndex((doc) => doc.path === document.path);
+      f.documents[index] = {
+        ...document,
+        content: document.content.replace(
+          "<!-- project-summary:start -->",
+          "<!-- project-summary:start -->\nSummary",
+        ),
+        hash: "updated",
+      };
     });
   });
   const active = f.scanner.run();

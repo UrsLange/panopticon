@@ -2,7 +2,6 @@ import { dayInTimezone } from "../../shared/schema.js";
 import type { Assistant } from "./assistant.js";
 import { ApplicationError } from "./errors.js";
 import type { CaptureRecords, ProfileNotes } from "./ports.js";
-import { profileUpdateSchema } from "./profile-update-model.js";
 
 export function createProfileUpdates({
   store,
@@ -39,17 +38,22 @@ export function createProfileUpdates({
           if (!target.isGit()) throw new Error("Connect a profile repository in Settings.");
           if (discoveryRunning())
             throw new Error("Wait for project discovery to finish, then retry.");
-          const snapshot = target.documents();
-          const result = profileUpdateSchema.parse(
-            await assistant.updateProfile(
-              item,
-              snapshot,
-              dayInTimezone(new Date(item.createdAt), timezone()),
-            ),
+          const guard = () => {
+            if (store.get(id)?.revision !== revision)
+              throw new Error("Note changed during the update. Retry with the latest note.");
+            if (getProfile() !== target)
+              throw new Error("Profile changed. Retry in the intended profile.");
+            if (discoveryRunning())
+              throw new Error("Wait for project discovery to finish, then retry.");
+          };
+          guard();
+          const result = await target.incorporate(
+            item,
+            dayInTimezone(new Date(item.createdAt), timezone()),
+            assistant.updateProfile,
+            guard,
           );
-          if (store.get(id)?.revision !== revision) return;
-          if (getProfile() !== target)
-            throw new Error("Profile changed. Retry in the intended profile.");
+          guard();
           if (result.decision === "review") {
             store.update(
               id,
@@ -60,7 +64,6 @@ export function createProfileUpdates({
           }
           if (discoveryRunning())
             throw new Error("Wait for project discovery to finish, then retry.");
-          target.incorporate(snapshot, result);
           store.update(
             id,
             {

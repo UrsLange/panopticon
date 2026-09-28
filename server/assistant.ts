@@ -3,8 +3,7 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import type { Assistant } from "./application/assistant.js";
-import { profileUpdateSchema } from "./application/profile-update-model.js";
-import { consolidateProfile } from "./profile-learning-agent.js";
+import { consolidateProfile, runProfileAgent } from "./profile-learning-agent.js";
 import { prompts } from "./prompts.js";
 import { refineCapture, responseHistory } from "./refinement.js";
 import type { Research } from "./research-tools.js";
@@ -98,20 +97,8 @@ export function createAssistant(
         research(),
       );
     },
-    async updateProfile(item, documents, date) {
-      const response = await client.responses.parse({
-        model,
-        store: false,
-        instructions: prompts["profile-update"],
-        input: JSON.stringify({
-          capture: { body: item.body, captureDate: date },
-          documents,
-        }),
-        text: { format: zodTextFormat(profileUpdateSchema, "profile_update") },
-      });
-      if (!response.output_parsed) throw new Error("The model did not return a profile update.");
-      return response.output_parsed;
-    },
+    updateProfile: (workspace, tools) =>
+      runProfileAgent(client, model, prompts["profile-update"], workspace, tools),
     consolidateProfile: (workspace, tools) => consolidateProfile(client, model, workspace, tools),
     async ask(text, context, history, sessionEvidence) {
       const response = await client.responses.parse({

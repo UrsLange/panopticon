@@ -2,25 +2,16 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import type { ProjectExploration } from "../server/application/exploration.js";
-import { parseConcept } from "../server/application/profile-document.js";
 import { end, start } from "../server/application/project-documents.js";
-import { config } from "../server/config.js";
 import { Profile } from "../server/profile.js";
-import { explorationLimits, exploreProject } from "../server/project-exploration.js";
-import { createProjectScanner } from "../server/projects.js";
-import { SettingsStore } from "../server/settings.js";
+import { exploreProject } from "../server/project-exploration.js";
 
 const connection = {
   apiKey: "discovery-key",
   baseURL: "https://provider.example/v1",
   model: "selected-model",
-};
-const findings = {
-  summary: "## Purpose\nTeam onboarding. See README.md.",
-  sources: ["repository/README.md"],
-  complete: true,
 };
 const call = (name: string, args: unknown, id = name) => ({
   type: "function_call",
@@ -30,13 +21,13 @@ const call = (name: string, args: unknown, id = name) => ({
   arguments: JSON.stringify(args),
   namespace: null,
 });
-const readme = call("read_file", { scope: "repository", path: "README.md", offset: 0 });
+const readme = call("read_repository_file", { scope: "repository", path: "README.md", offset: 0 });
 const message = (value: unknown) => ({
   type: "message",
   id: "msg_test",
   role: "assistant",
   status: "completed",
-  content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }],
+  content: [{ type: "output_text", text: String(value), annotations: [] }],
 });
 type ModelRequest = {
   model: string;
@@ -75,9 +66,29 @@ function fixture(previous = "Old summary") {
   mkdirSync(repository);
   writeFileSync(join(repository, "README.md"), "A project for team onboarding.");
   const content = `---\ntype: Project\ntitle: 'Literal ${start}'\ncustom: keep\n---\n\n${start}\n${previous}\n${end}\n\n## Personal notes\nPrivate note.\n\n`;
-  const document = { ...parseConcept(content, "project.md"), hash: "before" };
-  const request: ProjectExploration = { repository, document, model: connection.model };
-  return { root, request };
+  const profile = new Profile(join(root, "profile"));
+  profile.initialize();
+  const document = profile.change("add project", () => profile.create("Project", "Project", ""));
+  profile.change("seed project knowledge", () =>
+    profile.save(
+      document.path,
+      content.replace(
+        "custom: keep",
+        "custom: keep\nrepository_id: test-project\nrepository_name: repository\nproject_discovery: true",
+      ),
+      document.hash,
+    ),
+  );
+  const current = profile.documents().find((doc) => doc.path === document.path);
+  assert(current);
+  const request: ProjectExploration = {
+    repository,
+    profileRoot: profile.root,
+    document: current,
+    model: connection.model,
+    validateSource: async () => {},
+  };
+  return { root, request, profile };
 }
 
 afterEach(() => {
@@ -86,7 +97,81 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("uses the configured connection, researches files and returns a draft with protected content intact", async () => {
+function successfulReview(request: ProjectExploration, reorganization = false) {
+  return (_input: ModelRequest, index: number) => {
+    if (index === 0) return [readme];
+    if (index === 1)
+      return [call("read_file", { path: request.document.path, startLine: null, endLine: null })];
+    if (index === 2)
+      return [
+        call("write_file", {
+          path: request.document.path,
+          content: request.document.content
+            .replace("Old summary", "## Purpose\nTeam onboarding. See README.md.")
+            .replace(
+              "## Personal notes",
+              reorganization ? "## Working context" : "## Personal notes",
+            ),
+        }),
+      ];
+    if (index === 3) return [call("profile_diff", {})];
+    if (index === 4) return [call("commit_profile", { summary: "refresh project knowledge" })];
+    if (index === 5)
+      return [call("complete_project_review", { sources: ["repository/README.md"] })];
+    return [message("Updated project knowledge.")];
+  };
+}
+
+it("researches a repository and directly edits and commits profile knowledge", async () => {
+  const { request, profile } = fixture();
+  const model = provider(successfulReview(request, true));
+  const progress = vi.fn();
+  await exploreProject({ ...request, onProgress: progress }, connection);
+  const document = profile.documents().find((doc) => doc.path === request.document.path);
+  assert(document);
+  expect(document.content).toContain("Team onboarding. See README.md.");
+  expect(document.content).toContain("## Working context\nPrivate note.");
+  expect(document.content).toContain("custom: keep");
+  expect(
+    execFileSync("git", ["-C", profile.root, "status", "--porcelain"], { encoding: "utf8" }),
+  ).toBe("");
+  expect(
+    execFileSync("git", ["-C", profile.root, "log", "-1", "--format=%s"], { encoding: "utf8" }),
+  ).toContain("docs(profile): refresh project knowledge");
+  expect(readFileSync(join(request.repository, "README.md"), "utf8")).toContain("team onboarding");
+  expect(model.requests[0].tools.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining([
+      "list_files",
+      "search_files",
+      "read_repository_file",
+      "edit_file",
+      "commit_profile",
+      "complete_project_review",
+    ]),
+  );
+  expect(model.requests[0]).not.toHaveProperty("text");
+  expect(model.requests[0]).not.toHaveProperty("max_output_tokens");
+  expect(progress).toHaveBeenCalledWith({ phase: "reading", filesRead: 1 });
+  expect(progress).toHaveBeenLastCalledWith({ phase: "validating" });
+});
+
+it("permits a verified no-op without making a commit", async () => {
+  const { request, profile } = fixture();
+  const head = execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" });
+  provider((_input, index) =>
+    index === 0
+      ? [readme]
+      : index === 1
+        ? [call("complete_project_review", { sources: ["repository/README.md"] })]
+        : [message("Existing knowledge remains accurate.")],
+  );
+  await exploreProject(request, connection);
+  expect(execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" })).toBe(
+    head,
+  );
+});
+
+it("recovers from tool errors and preserves encrypted reasoning history", async () => {
   const { request } = fixture();
   const reasoning = {
     type: "reasoning",
@@ -94,113 +179,133 @@ it("uses the configured connection, researches files and returns a draft with pr
     summary: [],
     encrypted_content: "reasoning",
   };
-  const model = provider((_request, index) => {
+  const model = provider((_input, index) => {
     if (index === 0)
-      return [reasoning, call("list_files", { scope: "repository", path: "", offset: 0 })];
+      return [
+        reasoning,
+        call("read_repository_file", { scope: "repository", path: "missing.md", offset: 0 }),
+      ];
     if (index === 1) return [readme];
-    return [message(findings)];
+    if (index === 2)
+      return [call("complete_project_review", { sources: ["repository/README.md"] })];
+    return [message("Verified existing knowledge.")];
   });
-  const progress = vi.fn();
-  const draft = await exploreProject({ ...request, onProgress: progress }, connection);
-  expect(draft).toBe(request.document.content.replace("Old summary", findings.summary));
-  expect(request.document.content).toContain("Old summary");
-  expect(readFileSync(join(request.repository, "README.md"), "utf8")).toBe(
-    "A project for team onboarding.",
-  );
-  expect(model.requests).toHaveLength(3);
-  for (const input of model.requests) {
-    expect(input).toMatchObject({ model: connection.model, store: false });
-    expect(input.tools.map((tool) => tool.name)).toEqual([
-      "list_files",
-      "search_files",
-      "read_file",
-    ]);
-    expect(JSON.stringify(input)).not.toContain("Private note");
-    expect(JSON.stringify(input)).not.toContain(request.repository);
-  }
+  await exploreProject(request, connection);
   expect(model.requests[1].input).toContainEqual(reasoning);
   expect(model.requests[1].input.find((item) => item.type === "function_call")).not.toHaveProperty(
     "namespace",
   );
-  expect(JSON.stringify(model.requests[2])).toContain("A project for team onboarding.");
-  expect(progress).toHaveBeenCalledWith({ phase: "reading", filesRead: 1 });
-  expect(progress).toHaveBeenCalledWith({ responseId: "resp_3" });
-  expect(progress).toHaveBeenLastCalledWith({ phase: "validating" });
+  expect(
+    model.requests[1].input.some(
+      (item) => item.type === "function_call_output" && item.output?.includes("error"),
+    ),
+  ).toBe(true);
 });
 
-it("preserves the entire document when the reviewed summary is unchanged", async () => {
-  const { request } = fixture(findings.summary);
-  provider((_input, index) => (index === 0 ? [readme] : [message(findings)]));
-  expect(await exploreProject(request, connection)).toBe(request.document.content);
-});
-
-it("recovers a mistaken path and supports paginated reads and content search", async () => {
-  const { request } = fixture();
-  writeFileSync(join(request.repository, "README.md"), `${"x".repeat(12000)}Team onboarding`);
-  const model = provider((_input, index) => {
-    if (index === 0)
-      return [call("read_file", { scope: "repository", path: "missing.md", offset: 0 })];
-    if (index === 1)
-      return [
-        call("search_files", { scope: "repository", path: "", query: "onboarding", offset: 0 }),
-      ];
-    if (index === 2) return [readme];
-    if (index === 3)
-      return [call("read_file", { scope: "repository", path: "README.md", offset: 12000 })];
-    return [message(findings)];
-  });
-  const progress = vi.fn();
-  await exploreProject({ ...request, onProgress: progress }, connection);
-  expect(JSON.stringify(model.requests[1])).toContain("Context lookup failed");
-  expect(JSON.stringify(model.requests[3])).toContain('\\"nextOffset\\":12000');
-  expect(JSON.stringify(model.requests[4])).toContain("Team onboarding");
-  expect(progress).toHaveBeenCalledWith({ phase: "reading", filesRead: 1 });
-  expect(progress).not.toHaveBeenCalledWith({ phase: "reading", filesRead: 2 });
-});
-
-it("blocks private files, escaped paths and unoffered tools without sending their contents", async () => {
+it("blocks private sources, escaped paths and repository writes", async () => {
   const { request, root } = fixture();
   writeFileSync(join(root, "private.md"), "private-outside-data");
   writeFileSync(join(request.repository, ".env"), "private-env-data");
-  writeFileSync(join(request.repository, "access-token.txt"), "private-token-data");
   symlinkSync(join(root, "private.md"), join(request.repository, "link.md"));
   const model = provider((_input, index) =>
     index === 0
       ? [
-          ...["../private.md", ".env", "access-token.txt", "link.md"].map((path) =>
-            call("read_file", { scope: "repository", path, offset: 0 }, path),
+          ...["../private.md", ".env", "link.md"].map((path) =>
+            call("read_repository_file", { scope: "repository", path, offset: 0 }, path),
           ),
-          call("read_file", { scope: "profile", path: "project.md", offset: 0 }, "profile"),
-          call("search_history", { query: "private" }),
-          call("write_file", { path: "README.md", content: "Changed" }),
+          call("write_file", { path: join(request.repository, "README.md"), content: "Changed" }),
         ]
-      : [message({ ...findings, complete: false })],
+      : [message("Unable to finish.")],
   );
   await expect(exploreProject(request, connection)).rejects.toMatchObject({
     diagnostic: { category: "incomplete" },
   });
-  const results = model.requests[1].input.filter((item) => item.type === "function_call_output");
-  expect(results).toHaveLength(7);
-  expect(results.every((item) => item.output?.includes("Context lookup failed"))).toBe(true);
-  expect(JSON.stringify(model.requests)).not.toMatch(/private-(outside|env|token)-data/);
+  expect(
+    model.requests[1].input
+      .filter((item) => item.type === "function_call_output")
+      .every((item) => item.output?.includes("error")),
+  ).toBe(true);
+  expect(JSON.stringify(model.requests)).not.toMatch(/private-(outside|env)-data/);
   expect(readFileSync(join(request.repository, "README.md"), "utf8")).toContain("team onboarding");
 });
 
-it.each([
-  ["unread evidence", findings, false, "incomplete"],
-  ["unfinished review", { ...findings, complete: false }, true, "incomplete"],
-  ["invented citations", { ...findings, sources: ["repository/invented.md"] }, true, "incomplete"],
-  ["empty summary", { ...findings, summary: " " }, true, "invalid-output"],
-  ["injected markers", { ...findings, summary: start }, true, "invalid-output"],
-  ["invalid structure", { text: "not a summary" }, true, "invalid-output"],
-])("rejects %s without changing the profile", async (_label, result, read, category) => {
+it.each(["unread", "invented", "unfinished"])("rejects %s completion evidence", async (failure) => {
   const { request } = fixture();
-  const before = request.document.content;
-  provider((_input, index) => (index === 0 && read ? [readme] : [message(result)]));
-  await expect(exploreProject(request, connection)).rejects.toMatchObject({
-    diagnostic: { category },
+  provider((_input, index) => {
+    if (index === 0 && failure !== "unread") return [readme];
+    if (index <= 1 && failure !== "unfinished")
+      return [
+        call("complete_project_review", {
+          sources: [failure === "invented" ? "repository/invented.md" : "repository/README.md"],
+        }),
+      ];
+    return [message("Done")];
   });
-  expect(request.document.content).toBe(before);
+  await expect(exploreProject(request, connection)).rejects.toMatchObject({
+    diagnostic: { category: "incomplete" },
+  });
+});
+
+it.each(["source", "profile"])(
+  "preserves concurrent %s edits and rejects the stale update",
+  async (target) => {
+    const { request, profile } = fixture();
+    let changed = false;
+    const valid = successfulReview(request);
+    provider((input, index) => {
+      if (index === 2) {
+        changed = true;
+        if (target === "profile")
+          writeFileSync(
+            join(profile.root, request.document.path),
+            `${request.document.content}External edit`,
+          );
+      }
+      return valid(input, index);
+    });
+    await expect(
+      exploreProject(
+        {
+          ...request,
+          validateSource: async () => {
+            if (target === "source" && changed) throw new Error("Repository changed during review");
+          },
+        },
+        connection,
+      ),
+    ).rejects.toThrow();
+    const committed = execFileSync(
+      "git",
+      ["-C", profile.root, "show", `HEAD:${request.document.path}`],
+      { encoding: "utf8" },
+    );
+    expect(committed).toContain("Old summary");
+    if (target === "profile")
+      expect(readFileSync(join(profile.root, request.document.path), "utf8")).toContain(
+        "External edit",
+      );
+  },
+);
+
+it("does not accept a final message while edits remain uncommitted", async () => {
+  const { request } = fixture();
+  provider((_input, index) =>
+    index === 0
+      ? [readme]
+      : index === 1
+        ? [
+            call("write_file", {
+              path: request.document.path,
+              content: `${request.document.content}New fact`,
+            }),
+          ]
+        : index === 2
+          ? [call("complete_project_review", { sources: ["repository/README.md"] })]
+          : [message("Done")],
+  );
+  await expect(exploreProject(request, connection)).rejects.toMatchObject({
+    diagnostic: { category: "incomplete" },
+  });
 });
 
 it("retains provider status without exposing response bodies or retrying", async () => {
@@ -210,7 +315,6 @@ it("retains provider status without exposing response bodies or retrying", async
   );
   const failure = await exploreProject(request, connection).catch((error) => error);
   expect(failure.diagnostic).toMatchObject({ category: "provider", statusCode: 503 });
-  expect(failure.message).toContain("HTTP 503");
   expect(JSON.stringify(failure)).not.toContain("sensitive-provider-body");
   expect(model.fetch).toHaveBeenCalledTimes(1);
 });
@@ -220,77 +324,5 @@ it("rejects incomplete provider responses", async () => {
   provider(() =>
     Response.json({ id: "resp_incomplete", object: "response", status: "incomplete", output: [] }),
   );
-  await expect(exploreProject(request, connection)).rejects.toMatchObject({
-    diagnostic: { category: "incomplete" },
-  });
-});
-
-it("caps tool calls and rejects a provider that continues after finalization", async () => {
-  const { request } = fixture();
-  const model = provider((_input, index) => [
-    call("read_file", { scope: "repository", path: "README.md", offset: 0 }, `read_${index}`),
-  ]);
-  await expect(exploreProject(request, connection)).rejects.toMatchObject({
-    diagnostic: { category: "tool-limit" },
-  });
-  expect(model.requests).toHaveLength(explorationLimits.calls + 1);
-  expect(model.requests.at(-1)?.tool_choice).toBe("none");
-});
-
-it("stops oversized context before sending it to the provider", async () => {
-  const { request } = fixture("x".repeat(explorationLimits.contextCharacters));
-  const model = provider(() => [message(findings)]);
-  await expect(exploreProject(request, connection)).rejects.toMatchObject({
-    diagnostic: { category: "context-limit" },
-  });
-  expect(model.fetch).not.toHaveBeenCalled();
-});
-
-it("does not apply a response arriving after the discovery deadline", async () => {
-  vi.useFakeTimers();
-  const { request } = fixture();
-  provider(async () => {
-    await vi.advanceTimersByTimeAsync(explorationLimits.milliseconds);
-    return Response.json({
-      id: "resp_late",
-      object: "response",
-      status: "completed",
-      output: [message(findings)],
-    });
-  });
-  await expect(exploreProject(request, connection)).rejects.toMatchObject({
-    diagnostic: { category: "timeout" },
-  });
-});
-
-it("wires discovery to saved credentials and applies only a validated summary", async () => {
-  const { request, root } = fixture();
-  execFileSync("git", ["init", request.repository], { stdio: "ignore" });
-  const profile = new Profile(join(root, "profile"));
-  profile.initialize();
-  const settings = new SettingsStore({
-    ...config,
-    dataDir: join(root, "data"),
-    profileDir: profile.root,
-    apiKey: "wrong-default",
-    keyFile: "",
-  });
-  settings.saveValidated(connection, connection.baseURL);
-  settings.saveProjectRoots([root]);
-  const model = provider((_input, index) => (index === 0 ? [readme] : [message(findings)]));
-  const scanner = createProjectScanner(settings);
-  await scanner.run();
-  expect(scanner.status().error).toBeNull();
-  expect(scanner.status().projects[0]).toMatchObject({
-    outcome: "updated",
-    model: connection.model,
-    filesRead: 1,
-    responseId: "resp_2",
-  });
-  expect(profile.documents().find((doc) => doc.type === "Project")?.content).toContain(
-    findings.summary,
-  );
-  await scanner.run();
-  expect(model.requests).toHaveLength(2);
-  expect(scanner.status().projects[0].outcome).toBe("unchanged");
+  await expect(exploreProject(request, connection)).rejects.toThrow("did not complete");
 });

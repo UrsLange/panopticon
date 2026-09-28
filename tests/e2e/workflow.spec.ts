@@ -431,7 +431,7 @@ test("configures project roots and discovers project knowledge without onboardin
   ).toContainText("A project for team onboarding");
   await page.getByRole("button", { name: "Close document" }).click();
   await page.getByText("Diagnostics", { exact: true }).click();
-  await expect(page.getByText("resp_test", { exact: true })).toBeVisible();
+  await expect(page.getByText("resp_edit_7", { exact: true })).toBeVisible();
   await page.getByLabel("Project status").selectOption("attention");
   await expect(page.getByText("No projects match your search and filter.")).toBeVisible();
   await page.getByLabel("Project status").selectOption("all");

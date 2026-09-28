@@ -1,31 +1,19 @@
 import { basename } from "node:path";
 import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
-import type { ResponseInputItem } from "openai/resources/responses/responses";
 import { z } from "zod";
 import type { Connection } from "./application/connection.js";
 import { ExplorationError, type ProjectExploration } from "./application/exploration.js";
-import { end, metadata, start, summary } from "./application/project-documents.js";
-import { renderPrompt } from "./prompts.js";
-import { responseHistory } from "./refinement.js";
+import { metadata } from "./application/project-documents.js";
+import { Profile } from "./profile.js";
+import { runProfileAgent } from "./profile-learning-agent.js";
+import { runProfileEditing } from "./profile-learning-workspace.js";
+import { prompts } from "./prompts.js";
 import { createResearch } from "./research-tools.js";
 
-export const explorationLimits = {
-  calls: 100,
-  milliseconds: 10 * 60000,
-  contextCharacters: 400000,
-};
-const resultSchema = z.object({
-  summary: z.string().trim().min(1),
-  sources: z.array(z.string()).min(1),
-  complete: z.boolean(),
-});
-
 export async function exploreProject(
-  { repository, document, model, onProgress }: ProjectExploration,
+  { repository, profileRoot, document, model, onProgress, validateSource }: ProjectExploration,
   connection: Connection,
 ) {
-  const previous = summary(document);
   onProgress?.({ phase: "connecting", model });
   const client = new OpenAI({
     apiKey: connection.apiKey,
@@ -33,135 +21,115 @@ export async function exploreProject(
     maxRetries: 0,
     fetchOptions: { redirect: "error" },
   });
+  const profile = new Profile(profileRoot);
   const research = createResearch([
     { id: "repository", name: basename(repository), root: repository },
   ]);
-  const tools = research.tools.filter(({ name }) =>
-    ["list_files", "search_files", "read_file"].includes(name),
-  );
-  const input: ResponseInputItem[] = [
-    {
-      type: "message",
-      role: "user",
-      content: JSON.stringify({ scopes: research.scopes, previousSummary: previous }),
-    },
-  ];
-  const instructions = renderPrompt("project-exploration", {
-    calls: String(explorationLimits.calls),
-    minutes: String(explorationLimits.milliseconds / 60000),
-  });
-  const sources = new Set<string>();
   const reads = new Set<string>();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), explorationLimits.milliseconds);
-  timeout.unref();
-  let calls = 0;
+  const sources = new Set<string>();
+  let completed = false;
+  const verifyIdentity = () => {
+    const previous = metadata(document).data;
+    const current = profile
+      .documents()
+      .find((doc) => metadata(doc).data.repository_id === previous.repository_id);
+    if (
+      !current ||
+      metadata(current).data.project_discovery !== true ||
+      metadata(current).data.repository_name !== previous.repository_name
+    )
+      throw new Error("Preserve the project's discovery identity in the profile.");
+  };
+  const completion = z.object({ sources: z.array(z.string()).min(1) });
   try {
-    while (true) {
-      controller.signal.throwIfAborted();
-      if (JSON.stringify(input).length >= explorationLimits.contextCharacters)
-        throw new ExplorationError({
-          category: "context-limit",
-          message: "Project discovery exceeded its context limit. The summary was not applied.",
-        });
-      const response = await client.responses.parse(
-        {
-          model,
-          store: false,
-          include: ["reasoning.encrypted_content"],
-          instructions,
-          input,
-          tools: tools.map(({ name, description, parameters }) => ({
-            type: "function" as const,
-            name,
-            description,
-            parameters,
-            strict: true,
-          })),
-          tool_choice: calls >= explorationLimits.calls ? "none" : "auto",
-          max_output_tokens: 10000,
-          text: { format: zodTextFormat(resultSchema, "project_summary") },
+    await runProfileEditing(
+      profile,
+      {
+        "project.json": {
+          content: JSON.stringify(
+            {
+              documentPath: document.path,
+              repositoryId: metadata(document).data.repository_id,
+              scopes: research.scopes,
+            },
+            null,
+            2,
+          ),
         },
-        { timeout: 120000, signal: controller.signal },
-      );
-      controller.signal.throwIfAborted();
-      onProgress?.({ responseId: response.id });
-      if (response.status !== "completed")
-        throw new ExplorationError({
-          category: "incomplete",
-          message: "Project discovery did not complete. The summary was not applied.",
-        });
-      const requested = response.output.filter((item) => item.type === "function_call");
-      if (!requested.length) {
-        const result = resultSchema.parse(response.output_parsed);
-        if (
-          !result.complete ||
-          !reads.size ||
-          result.sources.some((source) => !sources.has(source))
-        )
+      },
+      async (workspace, profileTools) => {
+        const tools = profileTools.map((tool) => ({
+          ...tool,
+          async execute(input: unknown) {
+            if (tool.name === "commit_profile") {
+              await validateSource();
+              verifyIdentity();
+            }
+            if (["write_file", "edit_file", "move_file", "delete_file"].includes(tool.name)) {
+              completed = false;
+              onProgress?.({ phase: "updating" });
+            }
+            return tool.execute(input);
+          },
+        }));
+        const repositoryTools = research.tools
+          .filter(({ name }) => ["list_files", "search_files", "read_file"].includes(name))
+          .map((tool) => ({
+            name: tool.name === "read_file" ? "read_repository_file" : tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+            async execute(input: unknown) {
+              const result = await tool.execute(input, new AbortController().signal);
+              for (const source of result.sources) sources.add(source);
+              if (tool.name === "read_file") {
+                for (const source of result.sources) reads.add(source);
+                onProgress?.({ phase: "reading", filesRead: reads.size });
+              }
+              return result.data;
+            },
+          }));
+        const result = await runProfileAgent(
+          client,
+          model,
+          prompts["project-exploration"],
+          workspace,
+          [
+            ...tools,
+            ...repositoryTools,
+            {
+              name: "complete_project_review",
+              description:
+                "Finish the repository review after committing profile edits, or verifying that existing knowledge is accurate. Supply retrieved source IDs supporting the findings.",
+              parameters: z.toJSONSchema(completion),
+              async execute(input) {
+                const evidence = completion.parse(input).sources;
+                if (!reads.size || evidence.some((source) => !sources.has(source)))
+                  throw new Error(
+                    "Read repository evidence and cite retrieved sources before completing the review.",
+                  );
+                if (profile.pendingPaths().length)
+                  throw new Error("Commit profile edits before completing the review.");
+                await validateSource();
+                verifyIdentity();
+                completed = true;
+                return { completed: true };
+              },
+            },
+          ],
+          (id) => onProgress?.({ responseId: id }),
+        );
+        if (!completed)
           throw new ExplorationError({
             category: "incomplete",
-            message:
-              "Project discovery returned incomplete or unsupported findings. The summary was not applied.",
+            message: "Project review did not complete. Review any saved edits before retrying.",
           });
-        if (result.summary.includes(start) || result.summary.includes(end))
-          throw new ExplorationError({
-            category: "invalid-output",
-            message: "Project discovery returned summary markers. The summary was not applied.",
-          });
-        onProgress?.({ phase: "updating" });
-        const body = metadata(document).body;
-        const bodyOffset = document.content.length - body.length;
-        const draft =
-          result.summary === previous
-            ? document.content
-            : document.content.slice(0, bodyOffset + body.indexOf(start) + start.length) +
-              `\n${result.summary}\n` +
-              document.content.slice(bodyOffset + body.indexOf(end));
+        await validateSource();
         onProgress?.({ phase: "validating" });
-        return draft;
-      }
-      input.push(...responseHistory(response.output));
-      for (const call of requested) {
-        controller.signal.throwIfAborted();
-        if (calls >= explorationLimits.calls)
-          throw new ExplorationError({
-            category: "tool-limit",
-            message: "Project discovery exceeded its tool-call limit. The summary was not applied.",
-          });
-        calls++;
-        let output: unknown;
-        try {
-          const tool = tools.find((tool) => tool.name === call.name);
-          if (!tool) throw new Error("Unknown tool");
-          const result = await tool.execute(JSON.parse(call.arguments), controller.signal);
-          output = result.data;
-          for (const source of result.sources) sources.add(source);
-          if (call.name === "read_file") {
-            for (const source of result.sources) reads.add(source);
-            onProgress?.({ phase: "reading", filesRead: reads.size });
-          }
-        } catch {
-          controller.signal.throwIfAborted();
-          output = {
-            error:
-              "Context lookup failed. Use the supplied file tools and scope; list files to correct a path. Excluded, oversized, binary and symlinked files cannot be read. If required evidence remains unavailable, return complete: false.",
-          };
-        }
-        input.push({
-          type: "function_call_output",
-          call_id: call.call_id,
-          output: JSON.stringify(output),
-        });
-      }
-    }
+        return result;
+      },
+    );
   } catch (error) {
     if (error instanceof ExplorationError) throw error;
-    if (controller.signal.aborted || error instanceof OpenAI.APIConnectionTimeoutError)
-      throw new ExplorationError({
-        category: "timeout",
-        message: "Project discovery timed out. The summary was not applied; retry the scan.",
-      });
     if (error instanceof OpenAI.APIError)
       throw new ExplorationError({
         category: "provider",
@@ -170,11 +138,6 @@ export async function exploreProject(
           ? `The model provider returned HTTP ${error.status}. Check provider availability and access.`
           : "The model provider could not be reached. Check your connection and model settings.",
       });
-    throw new ExplorationError({
-      category: "invalid-output",
-      message: "Project discovery returned invalid output. The summary was not applied.",
-    });
-  } finally {
-    clearTimeout(timeout);
+    throw error;
   }
 }

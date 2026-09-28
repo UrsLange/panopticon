@@ -1,15 +1,8 @@
 import type { PeopleContext } from "../../shared/people.js";
-import type {
-  AssistantReply,
-  EntityReference,
-  Interpretation,
-  Item,
-  ProfileDocument,
-} from "../../shared/schema.js";
+import type { AssistantReply, EntityReference, Interpretation, Item } from "../../shared/schema.js";
 import type { ReferenceCandidate } from "./aliases.js";
 import type { ProfileContext, Today } from "./ports.js";
-import type { ProfileLearningAgent } from "./profile-learning-model.js";
-import type { ProfileUpdate } from "./profile-update-model.js";
+import type { ProfileEditingAgent, ProfileLearningAgent } from "./profile-learning-model.js";
 
 export type AssistantContext = {
   previousRefinement?: Pick<Item, "prompt" | "rationale" | "clarifications" | "sourcePaths">;
@@ -24,7 +17,7 @@ export type AssistantContext = {
 
 export interface Assistant {
   interpret(text: string, context: AssistantContext): Promise<Interpretation>;
-  updateProfile(item: Item, documents: ProfileDocument[], date: string): Promise<ProfileUpdate>;
+  updateProfile: ProfileEditingAgent;
   consolidateProfile: ProfileLearningAgent;
   ask(
     text: string,

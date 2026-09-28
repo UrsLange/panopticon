@@ -5,8 +5,7 @@ import {
   ExplorationError,
   type ExplorationProgress,
 } from "./exploration.js";
-import { parseConcept } from "./profile-document.js";
-import { dueSlot, end, metadata, start, summary } from "./project-documents.js";
+import { dueSlot, end, metadata, start } from "./project-documents.js";
 import type { DiscoveryPorts, DiscoverySettings, RepositoryIdentity } from "./project-ports.js";
 
 export type ProjectStatus = {
@@ -257,55 +256,43 @@ export class ProjectScanner {
             `---\n${stringify({ type: "Project", title: project.name, description: `Discovered Git project: ${project.name}`, project_discovery: true, repository_id: id, repository_name: project.name, availability: "available" })}---\n\n${start}\n${end}\n\n## Personal notes\n\n`,
           );
         const snapshot = await this.io.snapshot(path);
-        const before = profile.documents().find((item) => item.path === file);
+        const beforeDocuments = profile.documents();
+        const before = beforeDocuments.find((item) => item.path === file);
         if (!before) throw new Error("Profile document unavailable");
         const old = metadata(before);
         let current = before;
         if (old.data.repository_fingerprint !== snapshot.fingerprint) {
-          const draft = await this.io.explore({
+          await this.io.explore({
             repository: path,
+            profileRoot: profile.root,
             document: before,
             model: this.settings.connection().model,
+            validateSource: async () => {
+              if ((await this.io.snapshot(path)).fingerprint !== snapshot.fingerprint)
+                throw new Error("Repository changed during review; retry the scan.");
+            },
             onProgress: (progress) => {
               Object.assign(project, progress);
             },
           });
           project.phase = "validating";
-          try {
-            current = { ...before, ...parseConcept(draft, file) };
-          } catch (error) {
-            throw new Error(
-              `Project discovery produced invalid profile content: ${(error as Error).message}`,
+          const afterDocuments = profile.documents();
+          const updated = afterDocuments.find((item) => metadata(item).data.repository_id === id);
+          if (!updated) throw new Error("Profile document missing after project review.");
+          current = updated;
+          project.document = current.path;
+          documentChanged =
+            afterDocuments.length !== beforeDocuments.length ||
+            afterDocuments.some(
+              (item) =>
+                !beforeDocuments.some(
+                  (previous) => previous.path === item.path && previous.hash === item.hash,
+                ),
             );
-          }
-          if (JSON.stringify(metadata(current).data) !== JSON.stringify(old.data))
-            throw new Error(
-              "Project discovery changed protected profile metadata. The draft was rejected; retry the scan.",
-            );
-          this.persist();
-          const previousBody = old.body;
-          const currentBody = metadata(current).body;
-          summary(before);
-          if (
-            previousBody.split(start)[0] !== currentBody.split(start)[0] ||
-            previousBody.split(end)[1]?.replace(/[\r\n]+$/, "") !==
-              currentBody.split(end)[1]?.replace(/[\r\n]+$/, "") ||
-            !summary(current)
-          )
-            throw new Error(
-              "Project discovery changed protected profile content or produced an empty summary. The draft was rejected; retry the scan.",
-            );
-          if (previousBody.split(end)[1] !== currentBody.split(end)[1]) {
-            const restored =
-              current.content.slice(0, current.content.indexOf(end) + end.length) +
-              previousBody.split(end)[1];
-            current = { ...before, ...parseConcept(restored, file) };
-          }
           if ((await this.io.snapshot(path)).fingerprint !== snapshot.fingerprint)
             throw new Error("Repository changed during review; retry the scan.");
         }
-        const knowledgeChanged =
-          !doc || summary(current) !== summary(before) || old.data.availability !== "available";
+        const knowledgeChanged = !doc || documentChanged || old.data.availability !== "available";
         const data = {
           ...metadata(current).data,
           repository_fingerprint: snapshot.fingerprint,
@@ -313,7 +300,7 @@ export class ProjectScanner {
           updated_at: knowledgeChanged ? this.now().toISOString() : old.data.updated_at,
         };
         const content = `---\n${stringify(data)}---\n${metadata(current).body}`;
-        profile.apply(before, content, () => {
+        profile.apply(current, content, () => {
           documentChanged = true;
         });
         project.outcome = knowledgeChanged ? "updated" : "unchanged";
