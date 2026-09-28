@@ -183,6 +183,11 @@ export async function refineCapture(
                 error:
                   "Invalid tool arguments. Check the tool schema and retry with valid JSON and all required fields.",
               };
+            } else if (call.name === "search_history") {
+              output = {
+                error:
+                  "History search is unavailable. Continue with the capture and other available evidence. Explain any material limitation; ask a specific clarification question only if missing information is necessary to refine this task.",
+              };
             } else {
               issues.add(`${call.name} could not retrieve requested context.`);
               output = {

@@ -8,6 +8,10 @@ Refine this capture with evidence. Use the supplied scope IDs to
         For commitments, consult profile preferences/rules and search CTX for relevant prior work;
         inspect useful history hits and current project files before depending on them. For simple
         self-contained ideas or notes, research only when it would resolve missing context.
+        No matching CTX history is a valid search result, not a failure or a reason by itself to
+        ask for clarification. If history search is unavailable, use the capture and other evidence;
+        ask only specific questions about information necessary to refine the task. Do not ask the
+        user to supply history or resolve a tool failure when the brief is already self-contained.
         Use web_search to open relevant links supplied in the capture and search the web when
         external context is needed. Read the linked page before relying on its contents; do not
         infer them from the URL. If a link is inaccessible or requires authentication, explain

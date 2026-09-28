@@ -326,7 +326,59 @@ it("can correct a missing file path without treating recovered evidence as incom
   expect(JSON.stringify(model.requests[1].input)).toContain("locate the correct path");
 });
 
-it("marks unavailable research and fabricated citations for review without authorizing profile writes", async () => {
+it.each(["empty", "unavailable"])(
+  "refines a self-contained capture with %s history without forcing clarification",
+  async (history) => {
+    if (history === "empty")
+      vi.mocked(searchSessionEvidence).mockResolvedValueOnce({
+        results: [],
+        moreAvailable: false,
+        coverage: "Existing CTX index only.",
+      });
+    else vi.mocked(searchSessionEvidence).mockRejectedValueOnce(new Error("CTX is unavailable"));
+    const model = await provider((_request, index) =>
+      index === 0
+        ? [call("search_history", { query: "unknown", project: null, since: null }, "search")]
+        : [message({ ...interpretation, sources: [] })],
+    );
+    const assistant = createAssistant("test-key", "test", model.url, () => createResearch([]));
+    const result = await assistant?.interpret("Review onboarding", context);
+    expect(result).toEqual({ ...interpretation, sources: [] });
+    const output = model.requests[1].input.find((item) => item.type === "function_call_output");
+    expect(JSON.parse(output?.output ?? "")).toEqual(
+      history === "empty"
+        ? { results: [], moreAvailable: false, coverage: "Existing CTX index only." }
+        : { error: expect.stringContaining("History search is unavailable") },
+    );
+  },
+);
+
+it("preserves specific clarification questions when unavailable history leaves a material gap", async () => {
+  vi.mocked(searchSessionEvidence).mockRejectedValueOnce(new Error("CTX is unavailable"));
+  const clarified = {
+    ...interpretation,
+    sources: [],
+    needsClarification: true,
+    clarificationQuestions: ["Which onboarding change did you agree on?"],
+  };
+  const model = await provider((_request, index) =>
+    index === 0
+      ? [
+          call(
+            "search_history",
+            { query: "onboarding agreement", project: null, since: null },
+            "search",
+          ),
+        ]
+      : [message(clarified)],
+  );
+  const assistant = createAssistant("test-key", "test", model.url, () => createResearch([]));
+  expect(
+    await assistant?.interpret("Implement the onboarding change we agreed on", context),
+  ).toEqual(clarified);
+});
+
+it("marks fabricated citations for review even when history is unavailable without authorizing profile writes", async () => {
   vi.mocked(searchSessionEvidence).mockRejectedValueOnce(new Error("CTX is unavailable"));
   const model = await provider((_request, index) =>
     index === 0
@@ -343,11 +395,9 @@ it("marks unavailable research and fabricated citations for review without autho
   const assistant = createAssistant("test-key", "test", model.url, () => createResearch([]));
   const result = await assistant?.interpret("Remember my review preference", context);
   expect(result).toMatchObject({ needsClarification: true, updateProfile: false, sources: [] });
-  expect(result?.rationale).toContain("search_history could not retrieve");
   expect(result?.rationale).toContain("citations were not retrieved");
-  expect(result?.prompt).toContain("search_history could not retrieve");
   expect(result?.prompt).toContain("Clarify material gaps before dependent work");
-  expect(JSON.stringify(model.requests[1].input)).toContain("Context lookup failed");
+  expect(JSON.stringify(model.requests[1].input)).toContain("History search is unavailable");
 });
 
 const researchTool: ResearchTool = {
