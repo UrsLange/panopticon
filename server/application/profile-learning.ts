@@ -3,11 +3,7 @@ import { dayInTimezone } from "../../shared/schema.js";
 import type { Assistant } from "./assistant.js";
 import { ApplicationError, ProfileCommitError } from "./errors.js";
 import type { ProfileAccess } from "./ports.js";
-import {
-  type ProfileLearningRecords,
-  type ProfileLearningState,
-  profileConsolidationSchema,
-} from "./profile-learning-model.js";
+import type { ProfileLearningRecords, ProfileLearningState } from "./profile-learning-model.js";
 
 export function createProfileLearning({
   records,
@@ -61,29 +57,16 @@ export function createProfileLearning({
     active = Promise.resolve()
       .then(async () => {
         try {
-          const documents = profile.documents();
-          const pending = records.profileActivity(profile.root, previous.cursor);
-          const activity = [];
-          let size = 0;
-          for (const event of pending) {
-            if (activity.length && size + event.content.length > 60000) break;
-            activity.push(event);
-            size += event.content.length;
-          }
-          const result = profileConsolidationSchema.parse(
-            await assistant.consolidateProfile({
-              documents,
+          const activity = records.profileActivity(profile.root, previous.cursor);
+          const result = await profile.consolidate(
+            {
               activity,
               provisionalMemory: previous.provisionalMemory,
               date: day,
               timezone: zone,
-            }),
+            },
+            assistant.consolidateProfile,
           );
-          if (getProfile() !== profile)
-            throw new Error("Profile changed during consolidation. Retry in the intended profile.");
-          if (busy())
-            throw new Error("Wait for active profile work before retrying consolidation.");
-          profile.consolidate(documents, result);
           const cursor = activity.at(-1)?.id ?? previous.cursor;
           records.saveProfileLearningState(profile.root, {
             ...attempt,

@@ -28,6 +28,85 @@ export function mockProvider() {
       response.end(JSON.stringify({ error: { message: "Unsupported schema" } }));
       return;
     }
+    if (input.tools?.some((tool: { name?: string }) => tool.name === "list_profile_files")) {
+      const workspace = JSON.parse(input.input[0].content);
+      const results = input.input
+        .filter((item: { type: string }) => item.type === "function_call_output")
+        .map((item: { output: string }) => JSON.parse(item.output));
+      const step = results.length;
+      const path = "partner-enablement.md";
+      const statement = "My team now owns partner enablement.";
+      let call: { name: string; args: unknown } | null = null;
+      let summary = "No new profile knowledge to retain.";
+      if (step === 0)
+        call = {
+          name: "read_file",
+          args: { path: workspace.activityPath, startLine: null, endLine: null },
+        };
+      else if (
+        JSON.parse(results[0].content).activity.some((event: { evidence: unknown }) =>
+          JSON.stringify(event.evidence).includes(statement),
+        )
+      ) {
+        if (step === 1) call = { name: "list_profile_files", args: {} };
+        else if (!results[1].files.includes(path)) {
+          if (step === 2)
+            call = {
+              name: "read_file",
+              args: { path: "index.md", startLine: null, endLine: null },
+            };
+          if (step === 3)
+            call = {
+              name: "write_file",
+              args: {
+                path,
+                content: `---\ntype: Team\ntitle: Partner enablement\ndescription: Team responsibility\n---\n\n${statement}\n`,
+              },
+            };
+          if (step === 4)
+            call = {
+              name: "write_file",
+              args: {
+                path: "index.md",
+                content: `${results[2].content}\n- [Partner enablement](${path})\n`,
+              },
+            };
+          if (step === 5) call = { name: "profile_diff", args: {} };
+          if (step === 6) call = { name: "check_profile", args: {} };
+          if (step === 7)
+            call = { name: "commit_profile", args: { summary: "consolidate daily activity" } };
+          if (step === 8) summary = "Recorded the team's partner enablement responsibility.";
+        }
+      }
+      response.end(
+        JSON.stringify({
+          id: `resp_learning_${step}`,
+          object: "response",
+          status: "completed",
+          output: call
+            ? [
+                {
+                  type: "function_call",
+                  id: `fc_learning_${step}`,
+                  call_id: `learning_${step}`,
+                  name: call.name,
+                  arguments: JSON.stringify(call.args),
+                  status: "completed",
+                },
+              ]
+            : [
+                {
+                  type: "message",
+                  id: "msg_learning",
+                  role: "assistant",
+                  status: "completed",
+                  content: [{ type: "output_text", text: summary, annotations: [] }],
+                },
+              ],
+        }),
+      );
+      return;
+    }
     if (input.tool_choice?.name === "read_validation_value") {
       response.end(
         JSON.stringify({
@@ -138,29 +217,6 @@ export function mockProvider() {
         rationale: questions.length
           ? "The project and person need to be clear."
           : "The demo is ready to plan.",
-      };
-    }
-    if (input.text.format.name === "profile_consolidation") {
-      const statement = "My team now owns partner enablement.";
-      const path = "partner-enablement.md";
-      const existing = payload.documents.some((doc: { path: string }) => doc.path === path);
-      const learned =
-        !existing &&
-        payload.activity.some((event: { content: string }) => event.content.includes(statement));
-      output = {
-        summary: learned
-          ? "Recorded the team's partner enablement responsibility."
-          : "No new profile knowledge to retain.",
-        paths: learned ? [path] : [],
-        changes: learned
-          ? [
-              {
-                path,
-                content: `---\ntype: Team\ntitle: Partner enablement\ndescription: Team responsibility\n---\n\n${statement}\n`,
-              },
-            ]
-          : [],
-        provisionalMemory: "",
       };
     }
     if (input.text.format.name === "profile_update") {

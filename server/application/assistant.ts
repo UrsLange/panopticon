@@ -8,7 +8,7 @@ import type {
 } from "../../shared/schema.js";
 import type { ReferenceCandidate } from "./aliases.js";
 import type { ProfileContext, Today } from "./ports.js";
-import type { ProfileActivity, ProfileConsolidation } from "./profile-learning-model.js";
+import type { ProfileLearningAgent } from "./profile-learning-model.js";
 import type { ProfileUpdate } from "./profile-update-model.js";
 
 export type AssistantContext = {
@@ -25,13 +25,7 @@ export type AssistantContext = {
 export interface Assistant {
   interpret(text: string, context: AssistantContext): Promise<Interpretation>;
   updateProfile(item: Item, documents: ProfileDocument[], date: string): Promise<ProfileUpdate>;
-  consolidateProfile(input: {
-    documents: ProfileDocument[];
-    activity: ProfileActivity[];
-    provisionalMemory: string;
-    date: string;
-    timezone: string;
-  }): Promise<ProfileConsolidation>;
+  consolidateProfile: ProfileLearningAgent;
   ask(
     text: string,
     context: AssistantContext,

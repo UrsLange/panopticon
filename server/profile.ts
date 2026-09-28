@@ -138,6 +138,14 @@ export class Profile {
   constructor(readonly root: string) {}
 
   change<T>(summary: string, action: () => T): T {
+    return this.session(action, () => this.commit(summary));
+  }
+
+  runAgent<T>(action: () => T): T {
+    return this.session(action, () => {});
+  }
+
+  private session<T>(action: () => T, finish: () => void): T {
     if (this.writes)
       throw new ProfileCommitError("Profile is being updated. Wait for it to finish, then retry.");
     const lock = this.git([
@@ -152,24 +160,6 @@ export class Profile {
     const release = () => {
       this.writes = null;
       unlock();
-    };
-    const finish = () => {
-      const paths = [...writes]
-        .filter(([path, before]) => {
-          const file = join(this.root, path);
-          return (existsSync(file) ? readFileSync(file, "utf8") : null) !== before;
-        })
-        .map(([path]) => path);
-      if (!paths.length) return;
-      try {
-        this.git(["add", "--all", "--", ...paths]);
-        this.git(["commit", "--only", "-m", `docs(profile): ${summary}`, "--", ...paths]);
-      } catch (error) {
-        const stderr = (error as { stderr?: Buffer | string }).stderr?.toString().trim();
-        throw new ProfileCommitError(
-          `Profile saved, but not committed. ${stderr || "Check Git identity, hooks, and repository access."}`,
-        );
-      }
     };
     try {
       const result = action();
@@ -186,6 +176,30 @@ export class Profile {
     } catch (error) {
       release();
       throw error;
+    }
+  }
+
+  pendingPaths() {
+    return [...(this.writes ?? [])]
+      .filter(([path, before]) => {
+        const file = join(this.root, path);
+        return (existsSync(file) ? readFileSync(file, "utf8") : null) !== before;
+      })
+      .map(([path]) => path);
+  }
+
+  commit(summary: string) {
+    const paths = this.pendingPaths();
+    if (!paths.length) return;
+    try {
+      this.git(["add", "--all", "--", ...paths]);
+      this.git(["commit", "--only", "-m", `docs(profile): ${summary}`, "--", ...paths]);
+      this.writes?.clear();
+    } catch (error) {
+      const stderr = (error as { stderr?: Buffer | string }).stderr?.toString().trim();
+      throw new ProfileCommitError(
+        `Profile saved, but not committed. ${stderr || "Check Git identity, hooks, and repository access."}`,
+      );
     }
   }
 

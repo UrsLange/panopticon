@@ -66,7 +66,7 @@ Profile updates use local `docs(profile): ...` commits and never push. Uncommitt
 
 Choose **Learn from recent activity** to run a pass immediately. The model updates existing knowledge rather than building a diary, and local Git diffs show its changes. Daily learning does not mark captures as incorporated or complete tasks. Learning starts with activity recorded by this version; older unscoped conversations and captures are not automatically imported.
 
-The full profile and recorded activity are sent to your configured model. Review the first few Git diffs to tune `prompts/profile-consolidation.md`; restart the backend after editing the prompt. Inferences remain model judgments, not verified facts.
+The model receives an activity artifact and the profile location, then uses tools to read context, update files, inspect its work, and commit changes. Its file reads are sent to your configured provider. Review the first few Git diffs to tune `prompts/profile-consolidation.md`; restart the backend after editing the prompt. Inferences remain model judgments, not verified facts.
 
 **Your context** edits the profile's Markdown documents. Custom concept types, nested directories, and unknown metadata are supported. External changes are discovered every five seconds; reselect a document to load its latest contents. Stale saves are rejected.
 

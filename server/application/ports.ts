@@ -1,6 +1,10 @@
 import type { PeopleContext, Person } from "../../shared/people.js";
 import type { Item, ItemFields, ProfileDocument } from "../../shared/schema.js";
-import type { ProfileActivityWriter, ProfileConsolidation } from "./profile-learning-model.js";
+import type {
+  ProfileActivityWriter,
+  ProfileLearningAgent,
+  ProfileLearningInput,
+} from "./profile-learning-model.js";
 import type { ProfileUpdate } from "./profile-update-model.js";
 
 export type Today = { date: string; due: Item[]; suggested: Item[]; waiting: Item[] };
@@ -58,7 +62,10 @@ export interface ProfileNotes {
 }
 
 export interface ProfileAccess extends ProfileNotes {
-  consolidate(snapshot: ProfileDocument[], update: ProfileConsolidation): void;
+  consolidate(
+    input: ProfileLearningInput,
+    agent: ProfileLearningAgent,
+  ): Promise<{ summary: string; provisionalMemory: string }>;
   refresh(): void;
   initialize(about: string): void;
   edit(path: string, content: string, hash: string): ProfileDocument | undefined;

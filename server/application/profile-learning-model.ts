@@ -1,10 +1,24 @@
-import { z } from "zod";
-import { profileUpdateSchema } from "./profile-update-model.js";
-
-export const profileConsolidationSchema = profileUpdateSchema.omit({ decision: true }).extend({
-  provisionalMemory: z.string().max(12000),
-});
-export type ProfileConsolidation = z.infer<typeof profileConsolidationSchema>;
+export type ProfileLearningInput = {
+  activity: ProfileActivity[];
+  provisionalMemory: string;
+  date: string;
+  timezone: string;
+};
+export type ProfileLearningWorkspace = {
+  profileRoot: string;
+  activityPath: string;
+  provisionalMemoryPath: string;
+};
+export type ProfileLearningTool = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute(input: unknown): unknown | Promise<unknown>;
+};
+export type ProfileLearningAgent = (
+  workspace: ProfileLearningWorkspace,
+  tools: ProfileLearningTool[],
+) => Promise<string>;
 export type ProfileActivityKind =
   | "capture"
   | "edit"

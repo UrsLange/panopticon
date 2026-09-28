@@ -153,7 +153,7 @@ export class Store {
   profileActivity(profileRoot: string, after: number): ProfileActivity[] {
     return this.db
       .prepare(
-        "SELECT id, kind, content, createdAt FROM profile_activity WHERE profileRoot = ? AND id > ? ORDER BY id LIMIT 100",
+        "SELECT id, kind, content, createdAt FROM profile_activity WHERE profileRoot = ? AND id > ? ORDER BY id",
       )
       .all(profileRoot, after) as ProfileActivity[];
   }
