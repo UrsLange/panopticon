@@ -605,13 +605,27 @@ test("tracks outside work without T3 and filters started and completed tasks", a
   await page.getByLabel("Filter task status").selectOption("in_progress");
   await page.getByRole("button", { name: /^Add Kiana to GitHub/ }).click();
   await page.getByRole("button", { name: "Mark done", exact: true }).click();
-  await page.getByRole("button", { name: "Close item", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.item.status).toBe("done");
   await page.getByLabel("Filter task status").selectOption("done");
   await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
   expect(state.launches).toHaveLength(0);
   await page.getByRole("button", { name: "Reopen Add Kiana to GitHub", exact: true }).click();
   await page.getByLabel("Filter task status").selectOption("open");
   await expect(page.getByRole("button", { name: /^Add Kiana to GitHub/ })).toBeVisible();
+});
+
+test("keeps capture details open when marking done fails", async ({ page }) => {
+  const state = await capturePage(page);
+  await page.route("**/api/items/capture-test", (route) =>
+    route.fulfill({ status: 500, json: { error: "Could not update status." } }),
+  );
+  await page.getByRole("button", { name: "Mark done", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
+    "Could not update status.",
+  );
+  expect(state.item.status).toBe("open");
 });
 
 test("chooses no project, filters it separately, and can return to a named project", async ({

@@ -2008,7 +2008,10 @@ function ItemEditor({
                     className="secondary"
                     disabled={busy}
                     onClick={() =>
-                      void run("Completing…", () => onSave({ ...fields, status: "done" }))
+                      void run("Completing…", async () => {
+                        await onSave({ ...fields, status: "done" });
+                        if (!submitted) onClose();
+                      })
                     }
                   >
                     {submitted ? "Mark merged" : "Mark done"}
