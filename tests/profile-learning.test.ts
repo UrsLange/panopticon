@@ -260,13 +260,14 @@ it("rejects external changes without overwriting them or consuming activity", as
       join(f.profile.root, f.document.path),
       `${f.document.content}\nManual correction\n`,
     );
-    await expect(
-      call(tools, "write_file", { path: f.document.path, content: "Model overwrite" }),
-    ).rejects.toThrow("outside the learning session");
+    await call(tools, "write_file", { path: f.document.path, content: "Model overwrite" });
     return "No changes.";
   });
   await f.learning.run();
   expect(f.store.profileLearningState(f.profile.root)?.cursor).toBe(0);
+  expect(f.learning.status().error).toBe(
+    `Profile changed outside the editing session: ${f.document.path}. Review the changes before retrying.`,
+  );
   expect(readFileSync(join(f.profile.root, f.document.path), "utf8")).toContain(
     "Manual correction",
   );

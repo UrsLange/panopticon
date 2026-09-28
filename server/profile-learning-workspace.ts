@@ -18,6 +18,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { ProfileCommitError } from "./application/errors.js";
 import type {
+  ProfileEditingAgent,
   ProfileLearningAgent,
   ProfileLearningInput,
   ProfileLearningTool,
@@ -29,6 +30,46 @@ export function runProfileLearning(
   input: ProfileLearningInput,
   agent: ProfileLearningAgent,
 ) {
+  return runProfileEditing(
+    profile,
+    {
+      "activity.json": {
+        content: JSON.stringify(
+          {
+            date: input.date,
+            timezone: input.timezone,
+            activity: input.activity.map(({ content, ...event }) => ({
+              ...event,
+              evidence: JSON.parse(content),
+            })),
+          },
+          null,
+          2,
+        ),
+      },
+      "provisional-memory.md": { content: input.provisionalMemory, writable: true },
+    },
+    (workspace, tools) =>
+      agent(
+        {
+          profileRoot: workspace.profileRoot,
+          activityPath: workspace.artifactPaths["activity.json"],
+          provisionalMemoryPath: workspace.artifactPaths["provisional-memory.md"],
+        },
+        tools,
+      ),
+  ).then(({ summary, artifacts }) => ({
+    summary,
+    provisionalMemory: artifacts["provisional-memory.md"],
+  }));
+}
+
+export function runProfileEditing(
+  profile: Profile,
+  suppliedArtifacts: Record<string, { content: string; writable?: boolean }>,
+  agent: ProfileEditingAgent,
+  guard: () => void = () => {},
+) {
   return profile.runAgent(async () => {
     const root = realpathSync(profile.root);
     const expected = new Map(
@@ -36,9 +77,10 @@ export function runProfileLearning(
     );
     for (const path of expected.keys()) profile.checkWritable(path);
     const originalPaths = new Set(expected.keys());
-    const artifacts = mkdtempSync(join(tmpdir(), "pa-profile-learning-"));
-    const activityPath = join(artifacts, "activity.json");
-    const provisionalMemoryPath = join(artifacts, "provisional-memory.md");
+    const artifacts = mkdtempSync(join(tmpdir(), "pa-profile-editing-"));
+    const artifactPaths = Object.fromEntries(
+      Object.keys(suppliedArtifacts).map((name) => [name, join(artifacts, name)]),
+    );
     const git = (...args: string[]) =>
       execFileSync("git", ["--literal-pathspecs", "-C", root, ...args], {
         encoding: "utf8",
@@ -62,7 +104,12 @@ export function runProfileLearning(
       return { file, local };
     };
     const locate = (path: string, write = false) => {
-      if (path === provisionalMemoryPath || (!write && path === activityPath)) return path;
+      const artifact = Object.entries(artifactPaths).find(([, file]) => file === path);
+      if (artifact) {
+        if (write && !suppliedArtifacts[artifact[0]].writable)
+          throw new Error("This artifact is read-only.");
+        return path;
+      }
       return profilePath(path).file;
     };
     const files = (directory = root): string[] =>
@@ -76,11 +123,12 @@ export function runProfileLearning(
             : [];
       });
     const verifyObserved = () => {
+      guard();
       for (const [path, content] of expected) {
         const { file } = profilePath(path);
         if ((existsSync(file) ? readFileSync(file, "utf8") : null) !== content)
           throw new ProfileCommitError(
-            `Profile changed outside the learning session: ${path}. Review the changes before retrying.`,
+            `Profile changed outside the editing session: ${path}. Review the changes before retrying.`,
           );
       }
       for (const path of files()) profile.checkWritable(path);
@@ -92,7 +140,11 @@ export function runProfileLearning(
       return { file, local };
     };
     const write = (path: string, content: string) => {
-      if (path === provisionalMemoryPath) {
+      if (
+        Object.entries(artifactPaths).some(
+          ([name, file]) => file === path && suppliedArtifacts[name].writable,
+        )
+      ) {
         writeFileSync(path, content);
         return;
       }
@@ -152,7 +204,7 @@ export function runProfileLearning(
       ),
       tool(
         "write_file",
-        "Create or replace a profile Markdown document or the provisional memory artifact. Read existing content first to preserve unrelated knowledge.",
+        "Create or replace a profile Markdown document or a writable supplied artifact. Read existing content first to preserve unrelated knowledge.",
         z.object({ path: z.string(), content: z.string() }),
         ({ path, content }) => {
           locate(path, true);
@@ -162,7 +214,7 @@ export function runProfileLearning(
       ),
       tool(
         "edit_file",
-        "Replace one exact, unique occurrence in a profile document or the provisional memory artifact.",
+        "Replace one exact, unique occurrence in a profile document or a writable supplied artifact.",
         z.object({ path: z.string(), oldText: z.string().min(1), newText: z.string() }),
         ({ path, oldText, newText }) => {
           const content = readFileSync(locate(path, true), "utf8");
@@ -238,32 +290,20 @@ export function runProfileLearning(
       ),
     ];
     try {
-      writeFileSync(
-        activityPath,
-        JSON.stringify(
-          {
-            date: input.date,
-            timezone: input.timezone,
-            activity: input.activity.map(({ content, ...event }) => ({
-              ...event,
-              evidence: JSON.parse(content),
-            })),
-          },
-          null,
-          2,
-        ),
-      );
-      writeFileSync(provisionalMemoryPath, input.provisionalMemory);
-      const summary = await agent(
-        { profileRoot: root, activityPath, provisionalMemoryPath },
-        tools,
-      );
+      for (const [name, artifact] of Object.entries(suppliedArtifacts))
+        writeFileSync(artifactPaths[name], artifact.content);
+      const summary = await agent({ profileRoot: root, artifactPaths }, tools);
       verify();
       if (profile.pendingPaths().length)
         throw new ProfileCommitError(
-          "Profile learning left uncommitted changes. Review and commit the saved files before retrying.",
+          "Profile editing left uncommitted changes. Review and commit the saved files before retrying.",
         );
-      return { summary, provisionalMemory: readFileSync(provisionalMemoryPath, "utf8") };
+      return {
+        summary,
+        artifacts: Object.fromEntries(
+          Object.entries(artifactPaths).map(([name, file]) => [name, readFileSync(file, "utf8")]),
+        ),
+      };
     } finally {
       rmSync(artifacts, { recursive: true, force: true });
     }

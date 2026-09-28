@@ -19,6 +19,14 @@ export type ProfileLearningAgent = (
   workspace: ProfileLearningWorkspace,
   tools: ProfileLearningTool[],
 ) => Promise<string>;
+export type ProfileEditingWorkspace = {
+  profileRoot: string;
+  artifactPaths: Record<string, string>;
+};
+export type ProfileEditingAgent = (
+  workspace: ProfileEditingWorkspace,
+  tools: ProfileLearningTool[],
+) => Promise<string>;
 export type ProfileActivityKind =
   | "capture"
   | "edit"

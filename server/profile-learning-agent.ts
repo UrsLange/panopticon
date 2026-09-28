@@ -13,13 +13,24 @@ export async function consolidateProfile(
   workspace: ProfileLearningWorkspace,
   tools: ProfileLearningTool[],
 ) {
+  return runProfileAgent(client, model, prompts["profile-consolidation"], workspace, tools);
+}
+
+export async function runProfileAgent(
+  client: OpenAI,
+  model: string,
+  instructions: string,
+  workspace: object,
+  tools: ProfileLearningTool[],
+  onResponse?: (id: string) => void,
+) {
   const input: ResponseInputItem[] = [{ role: "user", content: JSON.stringify(workspace) }];
   while (true) {
     const response = await client.responses.create({
       model,
       store: false,
       include: ["reasoning.encrypted_content"],
-      instructions: prompts["profile-consolidation"],
+      instructions,
       input,
       tools: tools.map(({ name, description, parameters }) => ({
         type: "function",
@@ -30,10 +41,11 @@ export async function consolidateProfile(
       })),
       parallel_tool_calls: false,
     });
-    if (response.status !== "completed") throw new Error("Profile learning did not complete.");
+    onResponse?.(response.id);
+    if (response.status !== "completed") throw new Error("Profile editing did not complete.");
     const calls = response.output.filter((item) => item.type === "function_call");
     if (!calls.length) {
-      if (!response.output_text.trim()) throw new Error("Profile learning returned no summary.");
+      if (!response.output_text.trim()) throw new Error("Profile editing returned no summary.");
       return response.output_text;
     }
     input.push(...responseHistory(response.output));
