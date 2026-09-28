@@ -1,4 +1,3 @@
-import { refinementAgent } from "./refinement-agent.js";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,8 +9,9 @@ import { createApplication } from "../server/bootstrap.js";
 import { config } from "../server/config.js";
 import { SettingsStore } from "../server/settings.js";
 import { Store } from "../server/store.js";
-import type { Refinement, Item } from "../shared/schema.js";
+import type { Item, Refinement } from "../shared/schema.js";
 import { t3OverridesSchema } from "../shared/t3.js";
+import { refinementAgent } from "./refinement-agent.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -95,7 +95,7 @@ function fixture(global?: boolean, override?: boolean) {
     clarificationQuestions: [],
   };
   const assistant: Assistant = {
-    interpret: vi.fn(refinementAgent(() => structuredClone(result))),
+    interpret: vi.fn(refinementAgent(async () => structuredClone(result))),
     consolidateProfile: vi.fn(),
     updateProfile: vi.fn(),
     ask: vi.fn(),
@@ -221,11 +221,13 @@ it("does not launch failed refinement, stale results, or manually accepted brief
   vi.mocked(f.assistant.interpret).mockRejectedValueOnce(new Error("provider failed"));
   const failed = await f.refine();
   expect(failed.processingError).toBeTruthy();
-  vi.mocked(f.assistant.interpret).mockImplementationOnce(async () => {
-    const item = f.store.list().find((entry) => entry.id !== failed.id) as Item;
-    f.store.update(item.id, { title: "Concurrent edit" }, item.revision);
-    return f.result;
-  });
+  vi.mocked(f.assistant.interpret).mockImplementationOnce(
+    refinementAgent(async () => {
+      const item = f.store.list().find((entry) => entry.id !== failed.id) as Item;
+      f.store.update(item.id, { title: "Concurrent edit" }, item.revision);
+      return f.result;
+    }),
+  );
   const stale = await f.refine();
   expect(stale.title).toBe("Concurrent edit");
   expect(stale.processing).toBe("pending");
@@ -324,6 +326,7 @@ it("serializes simultaneous automatic and manual launches before any handoff exi
 });
 
 it.each([
+  { execution: "manual" },
   { processing: "pending" },
   { processingError: "Previous refinement failed" },
   { clarifications: [{ id: "question", question: "Which version?", answer: "", resolved: false }] },

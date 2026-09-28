@@ -51,6 +51,7 @@ function setup() {
     store,
     getAssistant: () => assistant,
     getProfileRoot: () => profile.root,
+    autoStart: vi.fn(),
     context,
     notes,
     today: () => "2026-09-28",
