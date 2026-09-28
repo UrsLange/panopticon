@@ -184,6 +184,7 @@ export function captureRefinement(
                 ? "review"
                 : "ready",
             processingError: null,
+            autoStartError: null,
             sourcePaths: [
               ...new Set([...sources, ...references.map((reference) => reference.source)]),
             ],

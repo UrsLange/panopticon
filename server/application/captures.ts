@@ -17,6 +17,7 @@ export function createCaptures({
   notes,
   today,
   resolveRepository,
+  autoStart,
 }: {
   store: CaptureStorage;
   getAssistant: () => Assistant | null;
@@ -25,6 +26,7 @@ export function createCaptures({
   notes: ReturnType<typeof createProfileUpdates>;
   today: () => string;
   resolveRepository(item: Pick<Item, "project" | "references" | "noProject">): string | null;
+  autoStart(itemId: string, revision: number): Promise<unknown>;
 }) {
   const processing = new Map<string, Promise<void>>();
   const captureState = (item: Item): Capture => ({
@@ -62,6 +64,7 @@ export function createCaptures({
         );
         await assistant.interpret(item.body, refinement.context, refinement.tools);
         refinement.finish();
+        await autoStart(id, refinement.latest().revision);
       } catch (error) {
         const latest = refinement?.latest() ?? item;
         if (store.get(id)?.revision === latest.revision)

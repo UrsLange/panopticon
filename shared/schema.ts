@@ -64,6 +64,7 @@ export function annotatedText(text: string, references: EntityReference[]) {
 
 export type Item = ItemFields & {
   parentId: string | null;
+  autoStartError?: string | null;
   clarifications: Clarification[];
   repositoryId: string | null;
   references: EntityReference[];

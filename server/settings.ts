@@ -54,13 +54,14 @@ export class SettingsStore {
     this.save({ t3 });
   }
   t3Defaults(): T3ImplementationSettings {
-    return (
-      this.saved.t3Defaults ?? {
+    return {
+      autoStart: false,
+      ...(this.saved.t3Defaults ?? {
         model: this.saved.t3?.defaultModel ?? { instanceId: "codex", model: "" },
         workspaceMode: "worktree",
         runtimeMode: "approval-required",
-      }
-    );
+      }),
+    };
   }
   saveT3Defaults(t3Defaults: T3ImplementationSettings) {
     this.save({ t3Defaults });

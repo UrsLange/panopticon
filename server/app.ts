@@ -62,6 +62,9 @@ export function createHttpApp(services: Application, port: number) {
     return preferences.chooseDirectory();
   });
   app.get("/api/settings/t3", async () => services.t3.status());
+  app.put("/api/settings/t3/auto-start", async (request) =>
+    services.t3.saveAutoStart(z.object({ autoStart: z.boolean() }).parse(request.body).autoStart),
+  );
   app.get("/api/settings/t3/defaults", async () => services.t3.defaults());
   app.put("/api/settings/t3/defaults", async (request) =>
     services.t3.saveDefaults(t3ImplementationSchema.parse(request.body)),

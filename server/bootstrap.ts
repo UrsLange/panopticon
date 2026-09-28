@@ -117,6 +117,7 @@ export function createApplication(options: AppOptions = {}) {
     today,
     resolveRepository: (item) =>
       resolveImplementationRepository(item, repositories(), profileNotes.documents()),
+    autoStart: (id, revision) => t3.autoStart(id, revision),
   });
   const profiles = createProfileService(() => profileNotes);
   const github = createGitHubApi(store);
@@ -205,10 +206,10 @@ export function createApplication(options: AppOptions = {}) {
     async close() {
       await profileLearning.close();
       await projects.close();
-      await t3.close();
       await peopleSync.close();
       await scanner.close();
       await captures.close();
+      await t3.close();
       await notes.close();
       if (!options.store) store.db.close();
     },

@@ -96,6 +96,8 @@ export class Store {
       );
     `);
     const columns = this.db.prepare("PRAGMA table_info(items)").all();
+    if (!columns.some((column) => column.name === "autoStartError"))
+      this.db.exec("ALTER TABLE items ADD COLUMN autoStartError TEXT");
     if (!columns.some((column) => column.name === "clarifications"))
       this.db.exec("ALTER TABLE items ADD COLUMN clarifications TEXT NOT NULL DEFAULT '[]'");
     if (!columns.some((column) => column.name === "noProject")) {
@@ -380,8 +382,8 @@ export class Store {
     this.db
       .prepare(`INSERT INTO items
       (id, original, title, body, kind, status, project, dueDate, priority, relatedId,
-       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId, clarifications, noProject, execution, parentId)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       createdAt, updatedAt, revision, processing, processingError, rationale, sourcePaths, "references", profilePath, prompt, repositoryId, clarifications, noProject, execution, parentId, autoStartError)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         ...Object.values({
           ...item,
@@ -402,6 +404,7 @@ export class Store {
           Item,
           | "processing"
           | "processingError"
+          | "autoStartError"
           | "rationale"
           | "sourcePaths"
           | "references"
@@ -424,7 +427,7 @@ export class Store {
       this.db
         .prepare(`UPDATE items SET title=?, body=?, kind=?, status=?, project=?, dueDate=?,
         priority=?, relatedId=?, updatedAt=?, revision=?, processing=?, processingError=?,
-        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=?, clarifications=?, noProject=?, execution=? WHERE id=?`)
+        rationale=?, sourcePaths=?, "references"=?, profilePath=?, prompt=?, repositoryId=?, clarifications=?, noProject=?, execution=?, autoStartError=? WHERE id=?`)
         .run(
           next.title,
           next.body,
@@ -447,6 +450,7 @@ export class Store {
           JSON.stringify(next.clarifications),
           Number(next.noProject),
           next.execution,
+          next.autoStartError ?? null,
           id,
         );
       this.db.exec("COMMIT");

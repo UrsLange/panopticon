@@ -42,6 +42,7 @@ export function capturedItem(text: string, id: string, now: string): Item {
     noProject: false,
     execution: "manual",
     parentId: null,
+    autoStartError: null,
   };
 }
 export function revisedItem(

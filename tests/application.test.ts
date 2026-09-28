@@ -106,6 +106,7 @@ function fixture() {
     getProfileRoot: () => profile.root,
     getAssistant: () => assistant,
     context: contextQuery,
+    autoStart: vi.fn(async () => {}),
     notes,
     today: () => context.today,
     resolveRepository: (item) =>

@@ -701,6 +701,27 @@ it("resolves project overrides independently, freezes retry settings, and skips 
     workspaceMode: "worktree",
     runtimeMode: "auto-accept-edits",
   });
+  const overridden = store.latestImplementation(item.id, "/profile");
+  const nextDefaults: T3ImplementationSettings = {
+    autoStart: true,
+    model: { instanceId: "next-global-provider", model: "next-global-model" },
+    workspaceMode: "checkout",
+    runtimeMode: "full-access",
+  };
+  service.saveDefaults(nextDefaults);
+  store.saveProject({ ...project, t3: {} });
+  expect(service.options(item.id).autoStart).toBe(true);
+  const latestItem = store.get(item.id);
+  assert(latestItem);
+  await service.implement(item.id, {
+    revision: latestItem.revision,
+    previousAttemptId: overridden?.id,
+  });
+  expect(store.latestImplementation(item.id, "/profile")).toMatchObject({
+    model: nextDefaults.model,
+    workspaceMode: nextDefaults.workspaceMode,
+    runtimeMode: nextDefaults.runtimeMode,
+  });
 });
 
 it("deduplicates concurrent launches and explicit new-thread requests", async () => {
@@ -892,6 +913,12 @@ it("bootstraps over WebSocket and recovers a lost reply from the authoritative t
     expect(command.bootstrap.createThread.worktreePath).toBeNull();
   }
   expect(checkoutCommands).toHaveLength(6);
+  await client.launch(connected, { ...entry, id: "automatic-thread", autoStarted: true });
+  const automaticCommands = await fetch(`${endpoint}/test/commands`).then((response) =>
+    response.json(),
+  );
+  expect(automaticCommands.at(-1).message.text).toContain(entry.prompt);
+  expect(automaticCommands.at(-1).message.text).toContain("does not authorize publishing");
 });
 
 it("redacts external errors and reports unsupported API responses", async () => {
@@ -911,11 +938,13 @@ it("persists private settings and handoffs, and exposes only sanitized connectio
   expect(statSync(join(root, "settings.json")).mode & 0o777).toBe(0o600);
   expect(new SettingsStore(defaults).t3Connection()).toEqual(connection);
   expect(settings.t3Defaults()).toEqual({
+    autoStart: false,
     model: connection.defaultModel,
     workspaceMode: "worktree",
     runtimeMode: "approval-required",
   });
   const implementationDefaults: T3ImplementationSettings = {
+    autoStart: false,
     model: { instanceId: "custom", model: "custom-model" },
     workspaceMode: "checkout",
     runtimeMode: "auto-accept-edits",

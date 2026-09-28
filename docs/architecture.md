@@ -53,6 +53,8 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 
 **Implementation.** Resolve a commitment to a discovered repository, reuse or create its T3 project, and submit a thread/worktree bootstrap command. Persist the task snapshot and command identities before dispatch so retries preserve the original handoff. T3 owns execution and approvals; submission does not complete the commitment.
 
+Successful capture refinement invokes the same serialized handoff after saving its result when auto-start is enabled. Project overrides use nullish precedence over global settings, with missing values defaulting to false. Eligibility is checked against the saved revision, readiness, prompt, clarifications, and available repository before dispatch. Auto-start failures are persisted separately from refinement errors. Submitted implementations are reused; pending retries preserve their thread identity. Automatic handoff messages explicitly limit authorization to implementation, excluding publishing and other shared-system changes.
+
 ## Storage
 
 | Data | Default location |
@@ -83,7 +85,7 @@ Local storage does not mean local model processing. Requests can send:
 
 Model requests, including project discovery, use the configured endpoint and credentials with `store: false`; provider retention policies still apply. Keys stay on the server.
 
-Explicit implementation handoffs send the saved task and linked context to T3 Code's separately configured endpoint. T3 uses its own provider credentials and retention settings. The backend stores pairing-derived session credentials and exposes only connection metadata to the browser.
+Manual and opted-in automatic implementation handoffs send the saved prompt to T3 Code's separately configured endpoint. T3 uses its own provider credentials and retention settings. The backend stores pairing-derived session credentials and exposes only connection metadata to the browser.
 
 Research tools are read-only and exclude symlinks, paths outside configured roots, common credential files, and generated directories. Normal source files can still contain secrets. Configure only trusted roots.
 

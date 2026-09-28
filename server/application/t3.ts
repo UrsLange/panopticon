@@ -68,6 +68,7 @@ export function createT3({
   const status = (): T3Status => {
     const connection = settings.t3Connection();
     return {
+      autoStart: settings.t3Defaults().autoStart ?? false,
       configured: !!connection,
       endpoint: connection?.endpoint ?? "",
       serverVersion: connection?.serverVersion ?? "",
@@ -93,20 +94,49 @@ export function createT3({
     if (!item) throw new ApplicationError("not-found", "Item not found");
     const latest = records.latestImplementation(itemId, getProfile().root);
     const available = repositories();
+    const suggestedRepositoryId = item.noProject
+      ? null
+      : item.repositoryId
+        ? (available.find((repo) => repo.id === item.repositoryId)?.id ?? null)
+        : resolveImplementationRepository(item, available, getProfile().documents());
+    const project = records.projects(getProfile().root).find((p) => p.id === suggestedRepositoryId);
     return {
+      autoStart: project?.t3?.autoStart ?? settings.t3Defaults().autoStart ?? false,
       configured: status().configured,
       repositories: available,
-      suggestedRepositoryId: item.noProject
-        ? null
-        : item.repositoryId
-          ? (available.find((repo) => repo.id === item.repositoryId)?.id ?? null)
-          : resolveImplementationRepository(item, available, getProfile().documents()),
+      suggestedRepositoryId,
       latest: summary(latest),
     };
+  };
+  const autoStartEligible = (itemId: string, revision: number) => {
+    const item = records.get(itemId);
+    if (
+      !item ||
+      item.revision !== revision ||
+      item.kind !== "commitment" ||
+      item.execution !== "implementation" ||
+      !["open", "in_progress", "in_review", "waiting"].includes(item.status) ||
+      item.processing !== "ready" ||
+      item.processingError ||
+      item.clarifications.some((entry) => !entry.resolved) ||
+      !item.prompt.trim() ||
+      item.noProject
+    )
+      return false;
+    const resolved = options(itemId);
+    if (!resolved.autoStart || !resolved.suggestedRepositoryId) return false;
+    const previous = records.latestImplementation(itemId, getProfile().root);
+    return (
+      !previous ||
+      (previous.state === "pending" &&
+        previous.prompt === item.prompt &&
+        previous.repositoryId === resolved.suggestedRepositoryId)
+    );
   };
   const implement = async (
     itemId: string,
     input: { revision: number; repositoryId?: string; previousAttemptId?: string },
+    automatic = false,
   ) => {
     const currentItem = records.get(itemId);
     if (currentItem?.noProject)
@@ -187,6 +217,8 @@ export function createT3({
       assertRevision(records.get(itemId), input.revision);
       if (getProfile().root !== profile.root)
         throw new ApplicationError("conflict", "The profile changed. Reload before implementing.");
+      if (automatic && !autoStartEligible(itemId, input.revision)) return null;
+      if (automatic) entry.autoStarted = true;
       records.saveImplementation(entry);
     }
     try {
@@ -202,7 +234,7 @@ export function createT3({
         getProfile().root === entry.profileRoot &&
         !["done", "archived"].includes(current.status)
       )
-        records.update(itemId, { status: "in_progress" }, current.revision);
+        records.update(itemId, { status: "in_progress", autoStartError: null }, current.revision);
       return summary(entry);
     } catch (error) {
       entry.error =
@@ -333,11 +365,35 @@ export function createT3({
   return {
     status,
     defaults: () => settings.t3Defaults(),
+    saveAutoStart: (autoStart: boolean) => {
+      settings.saveT3Defaults({ ...settings.t3Defaults(), autoStart });
+      return status();
+    },
     saveDefaults: (defaults: T3ImplementationSettings) => {
       settings.saveT3Defaults(defaults);
       return settings.t3Defaults();
     },
     options,
+    autoStart: (itemId: string, revision: number) =>
+      exclusive(async () => {
+        if (!autoStartEligible(itemId, revision)) return;
+        try {
+          await implement(itemId, { revision }, true);
+        } catch (error) {
+          const current = records.get(itemId);
+          if (current?.revision === revision)
+            records.update(
+              itemId,
+              {
+                autoStartError:
+                  error instanceof ApplicationError
+                    ? error.message
+                    : "T3 Code auto-start failed. Check T3 settings and try Implement manually.",
+              },
+              revision,
+            );
+        }
+      }),
     completionReviews,
     reviewCompletion: (
       itemId: string,

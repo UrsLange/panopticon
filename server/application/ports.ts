@@ -18,6 +18,7 @@ export type ItemChanges = Partial<ItemFields> &
       Item,
       | "processing"
       | "processingError"
+      | "autoStartError"
       | "rationale"
       | "sourcePaths"
       | "references"

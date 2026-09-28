@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const t3ImplementationSchema = z.object({
+  autoStart: z.boolean().optional(),
   model: z.object({
     instanceId: z.string().trim().min(1).max(200),
     model: z.string().trim().min(1).max(200),
@@ -38,6 +39,7 @@ export type T3Connection = {
   defaultModel: T3Model;
 };
 export type T3Status = {
+  autoStart?: boolean;
   configured: boolean;
   endpoint: string;
   serverVersion: string;
@@ -58,6 +60,7 @@ export type ImplementationProgress = {
   localMerge?: LocalMerge;
 };
 export type Implementation = {
+  autoStarted?: boolean;
   id: string;
   itemId: string;
   revision: number;
@@ -101,6 +104,7 @@ export type ImplementationSummary = Pick<
   | "workspaceMode"
 > & { url: string; taskChanged: boolean };
 export type ImplementationOptions = {
+  autoStart?: boolean;
   configured: boolean;
   repositories: { id: string; name: string; path: string }[];
   suggestedRepositoryId: string | null;

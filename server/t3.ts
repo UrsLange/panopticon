@@ -479,7 +479,9 @@ export function createT3Client(request = fetch): T3Client {
         message: {
           messageId: `${entry.id}-message`,
           role: "user",
-          text: entry.prompt,
+          text: entry.autoStarted
+            ? `${entry.prompt}\n\nPanopticon auto-start authorizes starting this implementation only. It does not authorize publishing, pushing, opening pull requests, or other shared-system changes. Ask for explicit approval before those actions.`
+            : entry.prompt,
           attachments: [],
         },
         modelSelection: entry.model,
