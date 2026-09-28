@@ -44,7 +44,9 @@ export async function searchSessionEvidence(
       "--format",
       "json",
       ...(workspace ? ["--workspace", workspace] : []),
-      ...(since ? ["--since", since] : []),
+      ...(since
+        ? ["--since", /^\d{4}-\d{2}-\d{2}$/.test(since) ? `${since}T00:00:00Z` : since]
+        : []),
     ],
     { timeout: 30000, maxBuffer: 1024 * 1024, signal },
   );
