@@ -136,3 +136,15 @@ it("uses scoped CTX queries, exposes event evidence and rejects command-shaped i
     f.call("search_history", { query: "missing", project: null, since: null }),
   ).rejects.toThrow("CTX unavailable");
 });
+
+it.each(["yesterday", "2026-02-30", "2026-09-28 EOB"])(
+  "rejects an invalid history time filter %s before invoking CTX",
+  async (since) => {
+    const f = fixture();
+    const calls = vi.mocked(searchSessionEvidence).mock.calls.length;
+    await expect(
+      f.call("search_history", { query: "onboarding", project: null, since }),
+    ).rejects.toMatchObject({ name: "ZodError" });
+    expect(searchSessionEvidence).toHaveBeenCalledTimes(calls);
+  },
+);

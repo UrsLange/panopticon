@@ -353,6 +353,38 @@ it.each(["empty", "unavailable"])(
   },
 );
 
+it("retries invalid history filters without marking history unavailable", async () => {
+  vi.mocked(searchSessionEvidence).mockResolvedValueOnce({
+    results: [],
+    moreAvailable: false,
+    coverage: "Existing CTX index only.",
+  });
+  const searches = vi.mocked(searchSessionEvidence).mock.calls.length;
+  const model = await provider((request, index) => {
+    if (index === 0)
+      return [
+        call(
+          "search_history",
+          { query: "onboarding", project: null, since: "yesterday" },
+          "invalid",
+        ),
+      ];
+    if (index === 1) {
+      expect(JSON.stringify(request.input)).toContain("Invalid tool arguments");
+      return [
+        call("search_history", { query: "onboarding", project: null, since: null }, "corrected"),
+      ];
+    }
+    return [message({ ...interpretation, sources: [] })];
+  });
+  const assistant = createAssistant("test-key", "test", model.url, () => createResearch([]));
+  expect(await assistant?.interpret("Review onboarding", context)).toEqual({
+    ...interpretation,
+    sources: [],
+  });
+  expect(searchSessionEvidence).toHaveBeenCalledTimes(searches + 1);
+});
+
 it("preserves specific clarification questions when unavailable history leaves a material gap", async () => {
   vi.mocked(searchSessionEvidence).mockRejectedValueOnce(new Error("CTX is unavailable"));
   const clarified = {

@@ -178,11 +178,13 @@ export function createResearch(scopes: ResearchScope[]): Research {
       ),
       tool(
         "search_history",
-        "Search CTX indexed agent history. Project is an optional supplied project scope ID; null searches across projects. Since is an optional date or duration such as 30d. Search is incomplete and historical; inspect relevant events with read_history before relying on them.",
+        "Search CTX indexed agent history. Project is an optional supplied project scope ID; null searches across projects. Set since to null by default. Only restrict history when the user explicitly requests a historical time window, using a YYYY-MM-DD date, RFC3339 timestamp, or day duration such as 30d. Never use a task deadline or today's date as since. Search is incomplete and historical; inspect relevant events with read_history before relying on them.",
         z.object({
           query: z.string().trim().min(1).max(2000),
           project: z.string().nullable(),
-          since: z.string().max(40).nullable(),
+          since: z
+            .union([z.iso.date(), z.iso.datetime({ offset: true }), z.string().regex(/^\d+d$/)])
+            .nullable(),
         }),
         async ({ query, project, since }, signal) => {
           const scope =
