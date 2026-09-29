@@ -24,17 +24,17 @@ export function captureRefinement(
     ]),
   );
   const saved = new Set<string>();
-  const created = new Set<string>();
   const linked = (entry: Item) =>
     store
       .list()
       .filter((child) => child.parentId === entry.id || child.id === entry.parentId)
-      .map(({ id, original, title, kind, status, parentId }) => ({
+      .map(({ id, original, title, kind, status, processing, parentId }) => ({
         id,
         original,
         title,
         kind,
         status,
+        processing,
         parentId,
       }));
   const referenceEvidence = (entry: Item) => {
@@ -184,7 +184,6 @@ export function captureRefinement(
         if (existing) return existing;
         const child = store.capture(text, item.id);
         owned.set(child.id, child);
-        created.add(child.id);
         return child;
       },
     ),
@@ -332,9 +331,10 @@ export function captureRefinement(
     ),
   ];
   function finish() {
-    for (const id of [item.id, ...created]) {
+    for (const id of owned.keys()) {
       const entry = current(id);
-      if (!saved.has(id)) throw new Error("Refinement ended without saving every outcome.");
+      if (!saved.has(id) && (id === item.id || entry.processing === "pending"))
+        throw new Error("Refinement ended without saving every outcome.");
       if (
         !referencesOnly &&
         entry.kind === "note" &&

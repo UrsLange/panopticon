@@ -375,3 +375,20 @@ it("rejects completion until every new outcome is saved and profile notes are ha
   await f.captures.close();
   expect(f.store.get(item.id)?.processing).toBe("ready");
 });
+
+it("requires unfinished linked outcomes from an earlier attempt to be saved on retry", async () => {
+  const f = setup();
+  const item = f.store.capture("Discuss rollout; ask Anna about onboarding");
+  const child = f.store.capture("ask Anna about onboarding", item.id);
+  vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+    expect(context.linkedCaptures).toContainEqual(
+      expect.objectContaining({ id: child.id, processing: "pending" }),
+    );
+    await call(tools, "save_refinement", outcome(item.id));
+    await expect(call(tools, "complete_refinement", {})).rejects.toThrow("saving every outcome");
+    await call(tools, "save_refinement", outcome(child.id));
+    await call(tools, "complete_refinement", {});
+  });
+  await f.captures.retry(item.id, { resetReferences: false, revision: item.revision });
+  expect(f.store.list().every((entry) => entry.processing === "ready")).toBe(true);
+});

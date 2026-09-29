@@ -17,7 +17,10 @@ export type AssistantContext = {
 export type RefinementContext = {
   today: string;
   capture: Item;
-  linkedCaptures: Pick<Item, "id" | "original" | "title" | "kind" | "status" | "parentId">[];
+  linkedCaptures: Pick<
+    Item,
+    "id" | "original" | "title" | "kind" | "status" | "processing" | "parentId"
+  >[];
   referencesOnly: boolean;
 };
 
