@@ -135,6 +135,15 @@ it.each([
   ).rejects.toMatchObject({ message, cause: error });
 });
 
+it("allows 120 seconds for each refinement request", async () => {
+  const client = new OpenAI({ apiKey: "test-key", timeout: 45000 });
+  const request = vi.spyOn(client.responses, "create").mockRejectedValueOnce(new Error("Stopped"));
+  await expect(
+    refineCapture(client, "test", "", "Input", context, { scopes: [], tools: [] }, []),
+  ).rejects.toThrow("Stopped");
+  expect(request).toHaveBeenCalledWith(expect.any(Object), { timeout: 120000 });
+});
+
 it("retains profile, project, CTX and capture evidence across tool turns", async () => {
   const root = mkdtempSync(join(tmpdir(), "pa-refinement-"));
   const profile = join(root, "profile"),

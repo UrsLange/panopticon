@@ -34,24 +34,27 @@ export async function refineCapture(
   const signal = new AbortController().signal;
   while (true) {
     const response = await client.responses
-      .create({
-        model,
-        store: false,
-        include: ["reasoning.encrypted_content"],
-        instructions: `${instructions}\n${prompts.research}`,
-        input,
-        tools: [
-          { type: "web_search" },
-          ...tools.map(({ name, description, parameters }) => ({
-            type: "function" as const,
-            name,
-            description,
-            parameters,
-            strict: true,
-          })),
-        ],
-        parallel_tool_calls: false,
-      })
+      .create(
+        {
+          model,
+          store: false,
+          include: ["reasoning.encrypted_content"],
+          instructions: `${instructions}\n${prompts.research}`,
+          input,
+          tools: [
+            { type: "web_search" },
+            ...tools.map(({ name, description, parameters }) => ({
+              type: "function" as const,
+              name,
+              description,
+              parameters,
+              strict: true,
+            })),
+          ],
+          parallel_tool_calls: false,
+        },
+        { timeout: 120000 },
+      )
       .catch((error: unknown) => {
         if (error instanceof OpenAI.APIError) {
           const message =
