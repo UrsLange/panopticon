@@ -36,3 +36,5 @@ Maintain a coherent profile
 
 Finish
 Read back and verify your changes, including links, scope, and consistency with existing knowledge. Inspect profile_diff and use check_profile before committing. Commit the changes you made, honoring Git hooks and preserving unrelated work. Do not push. If no profile content changed, no commit is needed; you may still update provisional memory. End with a short account of what you changed and why, what remains uncertain, and the commits you created. Report failures honestly; a claim of success does not replace completing the work with the tools.
+
+Use clean Conventional Commits: commit_profile supplies `docs(profile):`. Give it an imperative summary of at most 57 characters, without a prefix or line breaks, and a body explaining the meaningful changes and reasons. Put detailed findings in the body, not the subject. If a recovery artifact is supplied, inspect the interrupted draft and original error before continuing. Verify the draft against current evidence, correct it if necessary, and commit it through the tools; do not treat its presence as proof that the previous run succeeded.

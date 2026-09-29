@@ -1,17 +1,27 @@
 import { basename } from "node:path";
 import OpenAI from "openai";
+import { stringify } from "yaml";
 import { z } from "zod";
 import type { Connection } from "./application/connection.js";
 import { ExplorationError, type ProjectExploration } from "./application/exploration.js";
 import { metadata } from "./application/project-documents.js";
 import { Profile } from "./profile.js";
 import { runProfileAgent } from "./profile-learning-agent.js";
-import { runProfileEditing } from "./profile-learning-workspace.js";
+import { profileCommitMessage, runProfileEditing } from "./profile-learning-workspace.js";
 import { prompts } from "./prompts.js";
 import { createResearch } from "./research-tools.js";
 
 export async function exploreProject(
-  { repository, profileRoot, document, model, onProgress, validateSource }: ProjectExploration,
+  {
+    repository,
+    fingerprint,
+    reviewedAt,
+    profileRoot,
+    document,
+    model,
+    onProgress,
+    validateSource,
+  }: ProjectExploration,
   connection: Connection,
 ) {
   onProgress?.({ phase: "connecting", model });
@@ -39,6 +49,7 @@ export async function exploreProject(
       metadata(current).data.repository_name !== previous.repository_name
     )
       throw new Error("Preserve the project's discovery identity in the profile.");
+    return current;
   };
   const completion = z.object({ sources: z.array(z.string()).min(1) });
   try {
@@ -58,15 +69,43 @@ export async function exploreProject(
         },
       },
       async (workspace, profileTools) => {
+        let commitMessage: z.infer<typeof profileCommitMessage> | undefined;
+        const byName = Object.fromEntries(profileTools.map((tool) => [tool.name, tool]));
+        const stamp = async () => {
+          await validateSource();
+          const current = verifyIdentity();
+          const data = {
+            ...metadata(current).data,
+            repository_fingerprint: fingerprint,
+            availability: "available",
+            updated_at: profile.pendingPaths().length
+              ? reviewedAt
+              : metadata(current).data.updated_at,
+          };
+          const content = `---\n${stringify(data)}---\n${metadata(current).body}`;
+          if (content !== current.content)
+            await byName.write_file.execute({ path: current.path, content });
+        };
         const tools = profileTools.map((tool) => ({
           ...tool,
+          description:
+            tool.name === "commit_profile"
+              ? "Check profile edits and prepare a short Conventional Commit summary and detailed body. complete_project_review validates evidence and commits the edits and repository metadata together."
+              : tool.description,
           async execute(input: unknown) {
             if (tool.name === "commit_profile") {
               await validateSource();
               verifyIdentity();
+              await byName.check_profile.execute({});
+              commitMessage = profileCommitMessage.parse(input);
+              return {
+                prepared: true,
+                next: "Call complete_project_review to verify evidence and commit the edits with repository metadata.",
+              };
             }
             if (["write_file", "edit_file", "move_file", "delete_file"].includes(tool.name)) {
               completed = false;
+              commitMessage = undefined;
               onProgress?.({ phase: "updating" });
             }
             return tool.execute(input);
@@ -99,7 +138,7 @@ export async function exploreProject(
             {
               name: "complete_project_review",
               description:
-                "Finish the repository review after committing profile edits, or verifying that existing knowledge is accurate. Supply retrieved source IDs supporting the findings.",
+                "Validate supporting repository evidence and commit prepared profile edits together with repository metadata. If existing knowledge is accurate, record the reviewed fingerprint. Supply retrieved source IDs supporting the findings.",
               parameters: z.toJSONSchema(completion),
               async execute(input) {
                 const evidence = completion.parse(input).sources;
@@ -107,8 +146,16 @@ export async function exploreProject(
                   throw new Error(
                     "Read repository evidence and cite retrieved sources before completing the review.",
                   );
+                if (profile.pendingPaths().length && !commitMessage)
+                  throw new Error("Prepare the profile commit before completing the review.");
+                await stamp();
                 if (profile.pendingPaths().length)
-                  throw new Error("Commit profile edits before completing the review.");
+                  await byName.commit_profile.execute(
+                    commitMessage ?? {
+                      summary: "record project review",
+                      body: `Reviewed ${metadata(document).data.repository_name} against repository evidence. Existing knowledge remains accurate. Recorded the reviewed repository fingerprint and availability.`,
+                    },
+                  );
                 await validateSource();
                 verifyIdentity();
                 completed = true;
@@ -127,6 +174,8 @@ export async function exploreProject(
         onProgress?.({ phase: "validating" });
         return result;
       },
+      () => {},
+      `project:${metadata(document).data.repository_id}`,
     );
   } catch (error) {
     if (error instanceof ExplorationError) throw error;

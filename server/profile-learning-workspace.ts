@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -24,6 +25,16 @@ import type {
   ProfileLearningTool,
 } from "./application/profile-learning-model.js";
 import type { Profile } from "./profile.js";
+
+export const profileCommitMessage = z.object({
+  summary: z
+    .string()
+    .trim()
+    .min(1)
+    .max(57)
+    .regex(/^(?!docs\(profile\):)[^\r\n]+$/i),
+  body: z.string().trim().min(1),
+});
 
 export function runProfileLearning(
   profile: Profile,
@@ -55,6 +66,7 @@ export function runProfileLearning(
           profileRoot: workspace.profileRoot,
           activityPath: workspace.artifactPaths["activity.json"],
           provisionalMemoryPath: workspace.artifactPaths["provisional-memory.md"],
+          recoveryPath: workspace.artifactPaths["recovery.json"],
         },
         tools,
       ),
@@ -69,18 +81,25 @@ export function runProfileEditing(
   suppliedArtifacts: Record<string, { content: string; writable?: boolean }>,
   agent: ProfileEditingAgent,
   guard: () => void = () => {},
+  recoveryKey = "daily-learning",
 ) {
   return profile.runAgent(async () => {
     const root = realpathSync(profile.root);
+    const files = (directory = root): string[] =>
+      readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+        if (entry.name.startsWith(".") || entry.isSymbolicLink()) return [];
+        const file = join(directory, entry.name);
+        return entry.isDirectory()
+          ? files(file)
+          : entry.name.endsWith(".md")
+            ? [relative(root, file)]
+            : [];
+      });
     const expected = new Map(
-      profile.documents().map((doc) => [doc.path, doc.content as string | null]),
+      files().map((path) => [path, readFileSync(join(root, path), "utf8") as string | null]),
     );
-    for (const path of expected.keys()) profile.checkWritable(path);
     const originalPaths = new Set(expected.keys());
-    const artifacts = mkdtempSync(join(tmpdir(), "pa-profile-editing-"));
-    const artifactPaths = Object.fromEntries(
-      Object.keys(suppliedArtifacts).map((name) => [name, join(artifacts, name)]),
-    );
+    const original = new Map(expected);
     const git = (...args: string[]) =>
       execFileSync("git", ["--literal-pathspecs", "-C", root, ...args], {
         encoding: "utf8",
@@ -103,6 +122,81 @@ export function runProfileEditing(
       }
       return { file, local };
     };
+    const recoveryDirectory = git(
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "pa-profile-recovery",
+    );
+    const recoveryFile = join(
+      recoveryDirectory,
+      `${createHash("sha256").update(recoveryKey).digest("hex")}.json`,
+    );
+    const recoverySchema = z.object({
+      error: z.string().nullable(),
+      entries: z.record(
+        z.string(),
+        z.object({ before: z.string().nullable(), after: z.string().nullable() }),
+      ),
+    });
+    const recovery = existsSync(recoveryFile)
+      ? recoverySchema.parse(JSON.parse(readFileSync(recoveryFile, "utf8")))
+      : { error: null, entries: {} };
+    const persistRecovery = () => {
+      if (!Object.keys(recovery.entries).length) {
+        if (existsSync(recoveryFile)) unlinkSync(recoveryFile);
+        return;
+      }
+      mkdirSync(recoveryDirectory, { recursive: true });
+      const temporary = `${recoveryFile}.tmp`;
+      writeFileSync(temporary, JSON.stringify(recovery), { mode: 0o600 });
+      renameSync(temporary, recoveryFile);
+    };
+    const recordedContent = (revision: string, path: string) =>
+      execFileSync("git", ["--literal-pathspecs", "-C", root, "show", `${revision}:${path}`], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    for (const [path, entry] of Object.entries(recovery.entries)) {
+      const { file } = profilePath(path);
+      const actual = existsSync(file) ? readFileSync(file, "utf8") : null;
+      const committed = git("ls-tree", "HEAD", "--", path) ? recordedContent("HEAD", path) : null;
+      if (committed === entry.after && actual === entry.after) {
+        delete recovery.entries[path];
+        continue;
+      }
+      if (committed !== entry.before || (actual !== entry.after && actual !== entry.before))
+        throw new ProfileCommitError(
+          `Recovered profile draft changed outside the agent: ${path}. Review it before retrying.`,
+        );
+      if (git("diff", "--cached", "--", path)) {
+        const staged = git("ls-files", "--stage", "--", path) ? recordedContent("", path) : null;
+        if (staged !== entry.before && staged !== entry.after)
+          throw new ProfileCommitError(
+            `Recovered profile draft has external staged edits: ${path}. Review it before retrying.`,
+          );
+      }
+      profile.resumeWrites([[path, entry.before]]);
+      original.set(path, entry.before);
+      expected.set(path, actual);
+      entry.after = actual;
+    }
+    persistRecovery();
+    const artifacts = mkdtempSync(join(tmpdir(), "pa-profile-editing-"));
+    const artifactPaths = Object.fromEntries(
+      Object.keys(suppliedArtifacts).map((name) => [name, join(artifacts, name)]),
+    );
+    if (Object.keys(recovery.entries).length) {
+      suppliedArtifacts = {
+        ...suppliedArtifacts,
+        "recovery.json": { content: JSON.stringify(recovery) },
+      };
+      artifactPaths["recovery.json"] = join(artifacts, "recovery.json");
+    }
+    const recordWrite = (path: string, after: string | null) => {
+      recovery.entries[path] = { before: original.get(path) ?? null, after };
+      persistRecovery();
+    };
     const locate = (path: string, write = false) => {
       const artifact = Object.entries(artifactPaths).find(([, file]) => file === path);
       if (artifact) {
@@ -112,16 +206,6 @@ export function runProfileEditing(
       }
       return profilePath(path).file;
     };
-    const files = (directory = root): string[] =>
-      readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-        if (entry.name.startsWith(".") || entry.isSymbolicLink()) return [];
-        const file = join(directory, entry.name);
-        return entry.isDirectory()
-          ? files(file)
-          : entry.name.endsWith(".md")
-            ? [relative(root, file)]
-            : [];
-      });
     const verifyObserved = () => {
       guard();
       for (const [path, content] of expected) {
@@ -131,7 +215,6 @@ export function runProfileEditing(
             `Profile changed outside the editing session: ${path}. Review the changes before retrying.`,
           );
       }
-      for (const path of files()) profile.checkWritable(path);
     };
     const prepare = (path: string) => {
       const { file, local } = profilePath(path);
@@ -150,6 +233,7 @@ export function runProfileEditing(
       }
       const { file, local } = prepare(path);
       mkdirSync(dirname(file), { recursive: true });
+      recordWrite(local, content);
       writeFileSync(file, content);
       expected.set(local, content);
     };
@@ -239,6 +323,8 @@ export function runProfileEditing(
           if (existsSync(target.file)) throw new Error("The destination already exists.");
           const content = readFileSync(source.file, "utf8");
           mkdirSync(dirname(target.file), { recursive: true });
+          recordWrite(source.local, null);
+          recordWrite(target.local, content);
           renameSync(source.file, target.file);
           expected.set(source.local, null);
           expected.set(target.local, content);
@@ -251,6 +337,7 @@ export function runProfileEditing(
         z.object({ path: z.string() }),
         ({ path }) => {
           const target = prepare(path);
+          recordWrite(target.local, null);
           unlinkSync(target.file);
           expected.set(target.local, null);
           return { deleted: path };
@@ -279,12 +366,15 @@ export function runProfileEditing(
       ),
       tool(
         "commit_profile",
-        "Verify and commit your current profile edits locally using existing Git identity and hooks. Supply the description after docs(profile):. No push; unrelated changes are preserved.",
-        z.object({ summary: z.string().trim().min(1) }),
-        ({ summary }) => {
+        "Verify and commit your current profile edits locally using existing Git identity and hooks. Supply a short imperative summary without a prefix (at most 57 characters), and put the meaningful changes and reasons in body. No push; unrelated changes are preserved.",
+        profileCommitMessage,
+        ({ summary, body }) => {
           verify();
-          profile.commit(summary);
-          for (const path of expected.keys()) profile.checkWritable(path);
+          profile.commit(summary, body);
+          for (const [path, content] of expected) original.set(path, content);
+          recovery.entries = {};
+          recovery.error = null;
+          persistRecovery();
           return { commit: git("rev-parse", "HEAD") };
         },
       ),
@@ -304,6 +394,10 @@ export function runProfileEditing(
           Object.entries(artifactPaths).map(([name, file]) => [name, readFileSync(file, "utf8")]),
         ),
       };
+    } catch (error) {
+      recovery.error ??= (error as Error).message;
+      persistRecovery();
+      throw error;
     } finally {
       rmSync(artifacts, { recursive: true, force: true });
     }

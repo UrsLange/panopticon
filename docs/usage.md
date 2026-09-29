@@ -64,7 +64,7 @@ The model receives the note and clarification answers as an artifact, inspects e
 
 After a verified, committed note update, the note is marked **Added to profile** and leaves Inbox. Its content is available in **Your context**. Archiving a pending note dismisses the note workflow; daily learning separately considers recorded activity.
 
-Profile updates use local `docs(profile): ...` commits and never push. Uncommitted edits in a target file block updates; unrelated changes remain untouched. If a commit fails, files may already be saved. Resolve the Git problem and review and commit those changes before retrying.
+Profile updates use local `docs(profile): ...` commits and never push. Uncommitted edits in a target file block updates; unrelated changes remain untouched. If a commit fails, files may already be saved. Resolve the Git problem, then retry: recorded agent drafts can be reviewed and committed by the model. Manually modified drafts require your review. Subjects stay within 72 characters, with detailed changes in the commit body.
 
 ## Edit personal context
 

@@ -188,12 +188,41 @@ export class Profile {
       .map(([path]) => path);
   }
 
-  commit(summary: string) {
+  resumeWrites(entries: [string, string | null][]) {
+    for (const [path, before] of entries) this.writes?.set(path, before);
+  }
+
+  commit(summary: string, body = "") {
     const paths = this.pendingPaths();
     if (!paths.length) return;
     try {
       this.git(["add", "--all", "--", ...paths]);
-      this.git(["commit", "--only", "-m", `docs(profile): ${summary}`, "--", ...paths]);
+      const description = summary.replace(/^(?:docs\(profile\):\s*)+/i, "").trim();
+      const firstLine = description.split(/\r?\n/)[0];
+      const subject =
+        firstLine.length > 57
+          ? firstLine
+              .slice(0, 57)
+              .replace(/\s+\S*$/, "")
+              .trimEnd()
+          : firstLine;
+      const detail = [
+        description !== subject ? description : "",
+        body.trim(),
+        `Updated profile documents:\n${paths.map((path) => `- ${path}`).join("\n")}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      this.git([
+        "commit",
+        "--only",
+        "-m",
+        `docs(profile): ${subject || "update knowledge"}`,
+        "-m",
+        detail,
+        "--",
+        ...paths,
+      ]);
       this.writes?.clear();
     } catch (error) {
       const stderr = (error as { stderr?: Buffer | string }).stderr?.toString().trim();

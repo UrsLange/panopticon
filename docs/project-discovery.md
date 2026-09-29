@@ -41,7 +41,7 @@ Pipeline checks use GitHub's remote default branch, regardless of the locally ch
 
 Saving roots authorizes source inspection and profile-document updates. No roots are selected automatically. Use only trusted repositories.
 
-Settings shows progress, accepted results, unavailable repositories, and failures. **Diagnostics** includes attempt times, model, latest model response ID, files read, and failure category. Retry an individual project or all failed projects. Automatic scans run daily at 8 a.m.; [install the background schedule](operations.md#project-schedule) for checks without manually starting the app.
+Settings shows progress, accepted results, unavailable repositories, and failures. **Diagnostics** includes attempt times, model, latest model response ID, files read, failure category, and the original failure retained across retries until success. Retry an individual project or all failed projects. Automatic scans run daily at 8 a.m.; [install the background schedule](operations.md#project-schedule) for checks without manually starting the app.
 
 ## Selection and change detection
 
@@ -61,9 +61,9 @@ Repository tools provide file listing, content search and read-only access. They
 
 The model maintains knowledge directly instead of returning a summary for insertion. It can reorganize the previous project-summary section and supporting concepts while preserving personal knowledge and discovery identity. Renamed project documents are located by repository ID. The prompt requires evidence-based claims, useful relative source references, and preservation of unrelated context.
 
-Before committing, tools check profile structure, external edits, repository identity and source freshness. The completion tool requires retrieved supporting evidence and no outstanding profile edits. Successful changes create local `docs(profile): ...` commits. The scanner records the accepted fingerprint and availability afterward. Registration is committed separately, so a failed first review can leave a valid placeholder.
+Before committing, tools check profile structure, external edits, repository identity and source freshness. The model prepares a commit message; the completion tool validates retrieved supporting evidence and commits the profile changes together with the accepted fingerprint and availability. Commit subjects use `docs(profile):` and stay within 72 characters; detailed changes and reasons go in the body. Registration is committed separately, so a failed first review can leave a valid placeholder.
 
-Failed reviews retain the last accepted fingerprint. Automatic retries wait 15 minutes. Direct edits or commits may already exist when a later step fails; review saved changes and resolve uncommitted edits before retrying. Structural checks do not verify model accuracy.
+Failed reviews retain the last accepted fingerprint. Automatic retries wait 15 minutes. Uncommitted agent edits are recorded in a task-specific recovery journal inside the profile Git directory. A retry receives the draft and original error, and can verify, repair and commit it. Recovery checks both the working file and staged content against the recorded draft and committed baseline; manual changes require review. Dirty unrelated documents are preserved and do not prevent edits to clean documents. Structural checks do not verify model accuracy.
 
 Scans are serialized. Manual requests join active work, and roots or profiles cannot change during a scan. An editing session holds the profile write lock; competing app writes must wait or retry. External filesystem edits are detected before further writes or commits.
 

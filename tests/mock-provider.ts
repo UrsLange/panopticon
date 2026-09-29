@@ -74,7 +74,13 @@ export function mockProvider() {
           };
         if (step === 4) call = { name: "check_profile", args: {} };
         if (step === 5)
-          call = { name: "commit_profile", args: { summary: "refresh project knowledge" } };
+          call = {
+            name: "commit_profile",
+            args: {
+              summary: "refresh project knowledge",
+              body: "Update the relevant profile knowledge using verified evidence.",
+            },
+          };
         if (step === 6)
           call = { name: "complete_project_review", args: { sources: ["repository/README.md"] } };
       } else {
@@ -109,7 +115,13 @@ export function mockProvider() {
                 },
               };
         if (step === 5)
-          call = { name: "commit_profile", args: { summary: "incorporate profile note" } };
+          call = {
+            name: "commit_profile",
+            args: {
+              summary: "incorporate profile note",
+              body: "Update the relevant profile knowledge using verified evidence.",
+            },
+          };
         if (step === 6) call = { name: "complete_note", args: { paths: [path] } };
       }
       response.end(
@@ -242,7 +254,13 @@ export function mockProvider() {
           if (step === 5) call = { name: "profile_diff", args: {} };
           if (step === 6) call = { name: "check_profile", args: {} };
           if (step === 7)
-            call = { name: "commit_profile", args: { summary: "consolidate daily activity" } };
+            call = {
+              name: "commit_profile",
+              args: {
+                summary: "consolidate daily activity",
+                body: "Update the relevant profile knowledge using verified evidence.",
+              },
+            };
           if (step === 8) summary = "Recorded the team's partner enablement responsibility.";
         }
       }

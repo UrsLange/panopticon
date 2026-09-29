@@ -507,7 +507,10 @@ it("follows a project document renamed by the editing agent", async () => {
       const commit = tools.find((tool) => tool.name === "commit_profile");
       if (!move || !commit) throw new Error("Missing editing tools");
       await move.execute({ from: request.document.path, to: "projects/onboarding.md" });
-      await commit.execute({ summary: "organize project knowledge" });
+      await commit.execute({
+        summary: "organize project knowledge",
+        body: "Update the relevant profile knowledge using verified evidence.",
+      });
       return "Moved project knowledge.";
     });
   });
@@ -527,4 +530,31 @@ it("follows a project document renamed by the editing agent", async () => {
     outcome: "unchanged",
     error: null,
   });
+});
+
+it("retains the original failure and response across repeated failed retries and restarts", async () => {
+  const { settings } = fixture();
+  const first = createProjectScanner(settings, async ({ onProgress }) => {
+    onProgress?.({ responseId: "original-response" });
+    throw new ExplorationError({
+      category: "provider",
+      statusCode: 503,
+      message: "Original provider failure",
+    });
+  });
+  await first.run();
+  const original = first.status().projects[0].firstFailure;
+  expect(original).toMatchObject({
+    responseId: "original-response",
+    diagnostic: { statusCode: 503 },
+  });
+  const retry = createProjectScanner(settings, async () => {
+    throw new Error("Later interruption");
+  });
+  await retry.run();
+  await retry.run();
+  expect(retry.status().projects[0].firstFailure).toEqual(original);
+  const success = createProjectScanner(settings, explore);
+  await success.run();
+  expect(success.status().projects[0].firstFailure).toBeUndefined();
 });

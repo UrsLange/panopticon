@@ -1,12 +1,16 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import type { ProjectExploration } from "../server/application/exploration.js";
 import { end, start } from "../server/application/project-documents.js";
+import { config } from "../server/config.js";
 import { Profile } from "../server/profile.js";
 import { exploreProject } from "../server/project-exploration.js";
+import { createProjectScanner } from "../server/projects.js";
+import { SettingsStore } from "../server/settings.js";
 
 const connection = {
   apiKey: "discovery-key",
@@ -74,7 +78,7 @@ function fixture(previous = "Old summary") {
       document.path,
       content.replace(
         "custom: keep",
-        "custom: keep\nrepository_id: test-project\nrepository_name: repository\nproject_discovery: true",
+        `custom: keep\nrepository_id: ${createHash("sha256").update(repository).digest("hex").slice(0, 24)}\nrepository_name: repository\nproject_discovery: true`,
       ),
       document.hash,
     ),
@@ -83,6 +87,8 @@ function fixture(previous = "Old summary") {
   assert(current);
   const request: ProjectExploration = {
     repository,
+    fingerprint: "reviewed-fingerprint",
+    reviewedAt: "2026-09-29T06:00:00Z",
     profileRoot: profile.root,
     document: current,
     model: connection.model,
@@ -115,7 +121,13 @@ function successfulReview(request: ProjectExploration, reorganization = false) {
         }),
       ];
     if (index === 3) return [call("profile_diff", {})];
-    if (index === 4) return [call("commit_profile", { summary: "refresh project knowledge" })];
+    if (index === 4)
+      return [
+        call("commit_profile", {
+          summary: "refresh project knowledge",
+          body: "Update the relevant profile knowledge using verified evidence.",
+        }),
+      ];
     if (index === 5)
       return [call("complete_project_review", { sources: ["repository/README.md"] })];
     return [message("Updated project knowledge.")];
@@ -155,7 +167,7 @@ it("researches a repository and directly edits and commits profile knowledge", a
   expect(progress).toHaveBeenLastCalledWith({ phase: "validating" });
 });
 
-it("permits a verified no-op without making a commit", async () => {
+it("records metadata once when repository review confirms unchanged knowledge", async () => {
   const { request, profile } = fixture();
   const head = execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" });
   provider((_input, index) =>
@@ -166,8 +178,11 @@ it("permits a verified no-op without making a commit", async () => {
         : [message("Existing knowledge remains accurate.")],
   );
   await exploreProject(request, connection);
-  expect(execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" })).toBe(
-    head,
+  expect(
+    execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" }),
+  ).not.toBe(head);
+  expect(profile.documents().find((doc) => doc.path === request.document.path)?.content).toContain(
+    "repository_fingerprint: reviewed-fingerprint",
   );
 });
 
@@ -325,4 +340,59 @@ it("rejects incomplete provider responses", async () => {
     Response.json({ id: "resp_incomplete", object: "response", status: "incomplete", output: [] }),
   );
   await expect(exploreProject(request, connection)).rejects.toThrow("did not complete");
+});
+
+it("commits project knowledge and scanner metadata together without a second commit", async () => {
+  const { root, request, profile } = fixture();
+  execFileSync("git", ["init", "-q", request.repository]);
+  profile.change("refresh navigation", () => profile.reconcileIndex());
+  const before = execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  const settings = new SettingsStore({
+    ...config,
+    dataDir: join(root, "data"),
+    profileDir: profile.root,
+  });
+  settings.saveProjectRoots([root]);
+  provider(successfulReview(request));
+  const scanner = createProjectScanner(settings, (input) => exploreProject(input, connection));
+  await scanner.run();
+  expect(scanner.status().error).toBeNull();
+  expect(
+    execFileSync("git", ["-C", profile.root, "rev-list", "--count", `${before}..HEAD`], {
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("1");
+  const content = profile.documents().find((doc) => doc.path === request.document.path)?.content;
+  expect(content).toContain("Team onboarding");
+  expect(content).toContain("repository_fingerprint:");
+  expect(content).toContain("updated_at:");
+  const after = execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  });
+  await scanner.run();
+  expect(execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" })).toBe(
+    after,
+  );
+});
+
+it("does not commit or advance the fingerprint when a prepared review never completes", async () => {
+  const { request, profile } = fixture();
+  const before = execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  });
+  const review = successfulReview(request);
+  provider((input, index) =>
+    index === 5 ? [message("Stopped before completion")] : review(input, index),
+  );
+  await expect(exploreProject(request, connection)).rejects.toMatchObject({
+    diagnostic: { category: "incomplete" },
+  });
+  expect(execFileSync("git", ["-C", profile.root, "rev-parse", "HEAD"], { encoding: "utf8" })).toBe(
+    before,
+  );
+  expect(readFileSync(join(profile.root, request.document.path), "utf8")).not.toContain(
+    "repository_fingerprint: reviewed-fingerprint",
+  );
 });

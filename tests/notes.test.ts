@@ -65,7 +65,10 @@ function setup() {
         path: document.path,
         content: `${current.content}\n${note.capture.body}\n`,
       });
-      await call("commit_profile", { summary: "incorporate note" });
+      await call("commit_profile", {
+        summary: "incorporate note",
+        body: "Update the relevant profile knowledge using verified evidence.",
+      });
       await call("complete_note", { paths: [document.path] });
       return "Added the preference.";
     }),

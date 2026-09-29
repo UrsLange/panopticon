@@ -75,6 +75,7 @@ export function profileAdapter(profile: Profile): ProfileAccess {
             },
           ]),
         guard,
+        `note:${item.id}`,
       );
       return { summary: result.summary, decision: paths ? "apply" : "review", paths: paths ?? [] };
     },

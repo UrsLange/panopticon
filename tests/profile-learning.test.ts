@@ -129,7 +129,10 @@ it("lets the agent inspect artifacts, edit and commit the profile, and maintain 
       diff: expect.stringContaining("upcoming partner launch"),
     });
     await call(tools, "check_profile");
-    await call(tools, "commit_profile", { summary: "record partner enablement context" });
+    await call(tools, "commit_profile", {
+      summary: "record partner enablement context",
+      body: "Update the relevant profile knowledge using verified evidence.",
+    });
     return "Recorded partner enablement responsibility and likely upcoming launch context.";
   });
   await f.learning.run(true);
@@ -301,7 +304,10 @@ it("honors failing commit hooks, preserves saved work, and blocks a no-op retry 
       path: f.document.path,
       content: `${f.document.content}\nI own onboarding.\n`,
     });
-    await call(tools, "commit_profile", { summary: "record responsibility" });
+    await call(tools, "commit_profile", {
+      summary: "record responsibility",
+      body: "Update the relevant profile knowledge using verified evidence.",
+    });
     return "Updated.";
   });
   const head = f.git("rev-parse", "HEAD");
@@ -342,7 +348,10 @@ it("lets the agent repair drafts, reorganize documents, and commit only its own 
       path: "index.md",
       content: `${index}\n- [Partners](team/partners.md)\n`,
     });
-    await call(tools, "commit_profile", { summary: "organize team context" });
+    await call(tools, "commit_profile", {
+      summary: "organize team context",
+      body: "Update the relevant profile knowledge using verified evidence.",
+    });
     return "Created team context.";
   });
   await f.learning.run();

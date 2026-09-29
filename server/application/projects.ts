@@ -26,6 +26,7 @@ export type ProjectStatus = {
   responseId?: string;
   filesRead?: number;
   diagnostic?: ExplorationDiagnostic;
+  firstFailure?: { at: string; diagnostic: ExplorationDiagnostic; responseId?: string };
 };
 export type ScanStatus = {
   running: boolean;
@@ -264,6 +265,8 @@ export class ProjectScanner {
         if (old.data.repository_fingerprint !== snapshot.fingerprint) {
           await this.io.explore({
             repository: path,
+            fingerprint: snapshot.fingerprint,
+            reviewedAt: this.now().toISOString(),
             profileRoot: profile.root,
             document: before,
             model: this.settings.connection().model,
@@ -297,7 +300,12 @@ export class ProjectScanner {
           ...metadata(current).data,
           repository_fingerprint: snapshot.fingerprint,
           availability: "available",
-          updated_at: knowledgeChanged ? this.now().toISOString() : old.data.updated_at,
+          updated_at:
+            metadata(current).data.repository_fingerprint === snapshot.fingerprint
+              ? metadata(current).data.updated_at
+              : knowledgeChanged
+                ? this.now().toISOString()
+                : old.data.updated_at,
         };
         const content = `---\n${stringify(data)}---\n${metadata(current).body}`;
         profile.apply(current, content, () => {
@@ -306,6 +314,7 @@ export class ProjectScanner {
         project.outcome = knowledgeChanged ? "updated" : "unchanged";
         project.lastSuccess = this.now().toISOString();
         project.previousError = null;
+        project.firstFailure = undefined;
       } catch (error) {
         project.error =
           error instanceof Error &&
@@ -324,6 +333,11 @@ export class ProjectScanner {
                   (project as ProjectStatus).phase === "validating" ? "validation" : "review",
                 message: project.error,
               };
+        project.firstFailure ??= {
+          at: this.now().toISOString(),
+          diagnostic: project.diagnostic,
+          responseId: project.responseId,
+        };
         problems.push(project.name);
       } finally {
         project.phase = "done";

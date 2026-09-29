@@ -8,6 +8,7 @@ export type ProfileLearningWorkspace = {
   profileRoot: string;
   activityPath: string;
   provisionalMemoryPath: string;
+  recoveryPath?: string;
 };
 export type ProfileLearningTool = {
   name: string;

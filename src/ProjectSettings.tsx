@@ -481,6 +481,17 @@ export function ProjectSettings({
                               <dd>{project.responseId || "Not recorded"}</dd>
                               <dt>Files read</dt>
                               <dd>{project.filesRead ?? "Not recorded"}</dd>
+                              {project.firstFailure && (
+                                <>
+                                  <dt>Original failure</dt>
+                                  <dd>
+                                    {date(project.firstFailure.at)}:{" "}
+                                    {project.firstFailure.diagnostic.message}
+                                  </dd>
+                                  <dt>Original model response</dt>
+                                  <dd>{project.firstFailure.responseId || "Not recorded"}</dd>
+                                </>
+                              )}
                               {project.diagnostic && (
                                 <>
                                   <dt>Failure category</dt>
