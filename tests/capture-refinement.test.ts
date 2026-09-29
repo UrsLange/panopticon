@@ -356,3 +356,22 @@ it("does not absorb a concurrent manual edit into the agent's writable snapshot 
   await f.captures.close();
   expect(f.store.get(item.id)?.prompt).toBe("The user's corrected knowledge");
 });
+
+it("rejects completion until every new outcome is saved and profile notes are handled", async () => {
+  const f = setup();
+  vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+    await expect(call(tools, "complete_refinement", {})).rejects.toThrow("saving every outcome");
+    const child = (await call(tools, "create_linked_capture", {
+      text: "Anna owns onboarding",
+    })) as { id: string };
+    await call(tools, "save_refinement", outcome(context.capture.id));
+    await expect(call(tools, "complete_refinement", {})).rejects.toThrow("saving every outcome");
+    await call(tools, "save_refinement", outcome(child.id, { kind: "note" }));
+    await expect(call(tools, "complete_refinement", {})).rejects.toThrow("not incorporated");
+    await call(tools, "incorporate_note", { id: child.id });
+    expect(await call(tools, "complete_refinement", {})).toEqual({ completed: true });
+  });
+  const item = f.captures.capture("Anna owns onboarding; discuss the rollout with her");
+  await f.captures.close();
+  expect(f.store.get(item.id)?.processing).toBe("ready");
+});

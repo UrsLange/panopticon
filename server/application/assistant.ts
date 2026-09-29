@@ -35,6 +35,7 @@ export interface Assistant {
 
 export type RefinementTool = {
   name: string;
+  readOnly?: boolean;
   description: string;
   parameters: Record<string, unknown>;
   execute(input: unknown, signal: AbortSignal): Promise<{ data: unknown; sources: string[] }>;

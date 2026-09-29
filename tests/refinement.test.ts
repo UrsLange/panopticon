@@ -104,7 +104,13 @@ function saveTool() {
     parameters: { type: "object", properties: {}, additionalProperties: false },
     execute,
   };
-  return { tool, execute };
+  const complete: RefinementTool = {
+    name: "complete_refinement",
+    description: "Finish refinement",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    execute: async () => ({ data: { completed: true }, sources: [] }),
+  };
+  return { tool, execute, tools: [tool, complete] };
 }
 
 it.each([
@@ -187,7 +193,7 @@ it("retains profile, project, CTX and capture evidence across tool turns", async
     if (index === 4) return [call("search_captures", {}, "captures")];
     if (index === 5)
       return [call("save_refinement", { ...interpretation, sources: evidence }, "save")];
-    return [message("Saved")];
+    return [call("complete_refinement", {}, "complete")];
   });
   const assistant = createAssistant("test-key", "test", model.url, () =>
     createResearch([
@@ -196,7 +202,7 @@ it("retains profile, project, CTX and capture evidence across tool turns", async
     ]),
   );
   assert(assistant);
-  await assistant.interpret("Review onboarding", context, [captureTool, saved.tool]);
+  await assistant.interpret("Review onboarding", context, [captureTool, ...saved.tools]);
   expect(saved.execute).toHaveBeenCalledWith(
     expect.objectContaining({ sources: evidence }),
     expect.any(AbortSignal),
@@ -228,11 +234,13 @@ it("supplies the original capture and previous answers without a separate ration
   };
   const model = await provider(() => [message("No save")]);
   const assistant = createAssistant("test-key", "test", model.url);
-  await assistant?.interpret(
-    "Plan the demo",
-    { ...context, capture: { ...context.capture, ...previous } },
-    [],
-  );
+  await expect(
+    assistant?.interpret(
+      "Plan the demo",
+      { ...context, capture: { ...context.capture, ...previous } },
+      [],
+    ),
+  ).rejects.toThrow("complete_refinement");
   expect(JSON.parse(model.requests[0].input[0].content ?? "")).toMatchObject({
     capture: "Plan the demo",
     context: { capture: previous },
@@ -258,10 +266,10 @@ it.each(["empty", "unavailable"])(
                 "save",
               ),
             ]
-          : [message("Saved")],
+          : [call("complete_refinement", {}, "complete")],
     );
     const assistant = createAssistant("test-key", "test", model.url, () => createResearch([]));
-    await assistant?.interpret("Call Anna", context, [saved.tool]);
+    await assistant?.interpret("Call Anna", context, saved.tools);
     expect(saved.execute).toHaveBeenCalledWith(
       { sources: [], clarificationQuestions: [], prompt: "Call Anna." },
       expect.any(AbortSignal),
@@ -280,10 +288,10 @@ it("rejects invented citations as a tool error and lets the agent repair the sav
             `save${index}`,
           ),
         ]
-      : [message("Saved")],
+      : [call("complete_refinement", {}, "complete")],
   );
   await createAssistant("test-key", "test", model.url)?.interpret("A clear task", context, [
-    saved.tool,
+    ...saved.tools,
   ]);
   expect(saved.execute).toHaveBeenCalledTimes(1);
   expect(JSON.stringify(model.requests[1].input)).toContain("unsupported citation");
@@ -304,11 +312,11 @@ it("recovers a missing file path without changing the saved outcome", async () =
         ]
       : index === 2
         ? [call("save_refinement", { sources: ["rules.md"], clarificationQuestions: [] }, "save")]
-        : [message("Saved")],
+        : [call("complete_refinement", {}, "complete")],
   );
   await createAssistant("test-key", "test", model.url, () =>
     createResearch([{ id: "profile", name: "Profile", root }]),
-  )?.interpret("A task", context, [saved.tool]);
+  )?.interpret("A task", context, saved.tools);
   expect(saved.execute).toHaveBeenCalledWith(
     { sources: ["rules.md"], clarificationQuestions: [] },
     expect.any(AbortSignal),
@@ -330,10 +338,10 @@ it("retains hosted web citations across web-only and local tool turns", async ()
         ]
       : index === 1
         ? [call("save_refinement", { sources: [url] }, "save")]
-        : [message("Saved")],
+        : [call("complete_refinement", {}, "complete")],
   );
   await createAssistant("test-key", "test", model.url)?.interpret(`Review ${url}`, context, [
-    saved.tool,
+    ...saved.tools,
   ]);
   expect(saved.execute).toHaveBeenCalledWith({ sources: [url] }, expect.any(AbortSignal));
 });
@@ -346,4 +354,90 @@ it("rejects a provider that ignores a required validation tool call", async () =
   await expect(validateToolCalling("test-key", "test", model.url)).rejects.toThrow(
     "did not perform",
   );
+});
+
+it("saves and completes a simple task in one model request", async () => {
+  const saved = saveTool();
+  const model = await provider(() => [
+    call("save_refinement", { sources: [], prompt: "Buy milk." }, "save"),
+    call("complete_refinement", {}, "complete"),
+  ]);
+  await createAssistant("test-key", "test", model.url)?.interpret("Buy milk", context, saved.tools);
+  expect(saved.execute).toHaveBeenCalledTimes(1);
+  expect(model.requests).toHaveLength(1);
+  expect(model.requests[0]).toHaveProperty("parallel_tool_calls", true);
+});
+
+it("runs independent reads together and preserves barriers around ordered changes", async () => {
+  const saved = saveTool();
+  const events: string[] = [];
+  const gate = Promise.withResolvers<void>();
+  const readers: RefinementTool[] = ["first", "second", "after"].map((name) => ({
+    name,
+    readOnly: true,
+    description: name,
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    execute: async () => {
+      events.push(name);
+      if (name === "first") await gate.promise;
+      if (name === "second") gate.resolve();
+      return { data: name, sources: [name] };
+    },
+  }));
+  saved.execute.mockImplementation(async (input) => {
+    const { step } = input as { step: string };
+    events.push(`${step}:start`);
+    await Promise.resolve();
+    events.push(`${step}:end`);
+    return { data: input, sources: [] };
+  });
+  const model = await provider(() => [
+    call("first", {}, "first"),
+    call("second", {}, "second"),
+    call("save_refinement", { step: "one", sources: ["first", "second"] }, "one"),
+    call("save_refinement", { step: "two", sources: [] }, "two"),
+    call("after", {}, "after"),
+    call("complete_refinement", {}, "complete"),
+  ]);
+  await createAssistant("test-key", "test", model.url)?.interpret("A task", context, [
+    ...readers,
+    ...saved.tools,
+  ]);
+  expect(events).toEqual([
+    "first",
+    "second",
+    "one:start",
+    "one:end",
+    "two:start",
+    "two:end",
+    "after",
+  ]);
+  expect(model.requests).toHaveLength(1);
+});
+
+it("does not complete after a failed change in the same response", async () => {
+  const saved = saveTool();
+  const complete = vi.spyOn(saved.tools[1], "execute");
+  const model = await provider((_request, index) => [
+    call("save_refinement", { sources: index ? [] : ["invented.md"] }, `save${index}`),
+    call("complete_refinement", {}, `complete${index}`),
+  ]);
+  await createAssistant("test-key", "test", model.url)?.interpret("A task", context, saved.tools);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(saved.execute).toHaveBeenCalledTimes(1);
+  expect(model.requests).toHaveLength(2);
+  expect(JSON.stringify(model.requests[1].input)).toContain("preceding change failed");
+});
+
+it("requires completion to be the last call", async () => {
+  const saved = saveTool();
+  const complete = vi.spyOn(saved.tools[1], "execute");
+  const model = await provider((_request, index) =>
+    index === 0
+      ? [call("complete_refinement", {}, "early"), call("save_refinement", { sources: [] }, "save")]
+      : [call("complete_refinement", {}, "complete")],
+  );
+  await createAssistant("test-key", "test", model.url)?.interpret("A task", context, saved.tools);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(model.requests[1].input)).toContain("complete_refinement last");
 });

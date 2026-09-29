@@ -62,12 +62,14 @@ export function captureRefinement(
   const tool = <T>(
     name: string,
     description: string,
+    readOnly: boolean,
     schema: z.ZodType<T>,
     execute: (input: T) => unknown | Promise<unknown>,
     sources: (data: unknown) => string[] = () => [],
   ): RefinementTool => ({
     name,
     description,
+    readOnly,
     parameters: z.toJSONSchema(schema),
     async execute(input) {
       const data = await execute(schema.parse(input));
@@ -78,6 +80,7 @@ export function captureRefinement(
     tool(
       "search_captures",
       "Search existing captures, tasks, ideas and their refined content. Use an empty query to list captures. Follow offset for more results.",
+      true,
       z.object({ query: z.string(), offset: z.number().int().nonnegative() }),
       ({ query, offset }) => {
         const matches = store
@@ -107,6 +110,7 @@ export function captureRefinement(
     tool(
       "get_capture",
       "Read a capture's original input, refined content, saved answers and explicit selections. Includes summaries of linked outcomes. Does not reload other context or revision history.",
+      true,
       z.object({ id: z.string() }),
       ({ id }) => {
         const entry = store.get(id);
@@ -118,6 +122,7 @@ export function captureRefinement(
     tool(
       "read_capture_history",
       "Read earlier capture revisions when the current capture and saved answers are insufficient. Newest revisions first; follow nextOffset as needed.",
+      true,
       z.object({ id: z.string(), offset: z.number().int().nonnegative() }),
       ({ id, offset }) => {
         if (!store.get(id)) throw new Error("Capture not found.");
@@ -133,6 +138,7 @@ export function captureRefinement(
     tool(
       "get_reference_candidates",
       "Inspect alias and identity candidates for mentions in a capture, including Entra relationships and existing resolved references. Use candidate IDs from this tool when attaching new references to that capture. Suggested profile document paths are pointers, not their contents.",
+      true,
       z.object({ id: z.string() }),
       ({ id }) => {
         const entry = store.get(id);
@@ -151,6 +157,7 @@ export function captureRefinement(
     tool(
       "lookup_people",
       "Find people and their organizational relationships in the synced Entra directory using a name, email or focused query. Suggested profile document paths can provide additional personal context through read_file. To attach references, use get_reference_candidates for the capture.",
+      true,
       z.object({ query: z.string().min(1) }),
       ({ query }) => {
         const { people, profile } = context(query);
@@ -164,6 +171,7 @@ export function captureRefinement(
     tool(
       "create_linked_capture",
       "Split a distinct outcome from the current input. Supply an exact excerpt of the user's current input. Existing outcomes with that excerpt are returned unchanged; inspect linkedCaptures before creating more. Then save its refinement. Do not create speculative tasks or duplicate existing outcomes.",
+      false,
       z.object({ text: z.string().trim().min(1) }),
       ({ text }) => {
         const parent = current(item.id);
@@ -183,6 +191,7 @@ export function captureRefinement(
     tool(
       "save_refinement",
       "Save the useful outcome and any material clarification questions. prompt is the refined task/idea text, or a self-contained implementation prompt only when execution is implementation. Keep project association independent of execution. This does not start implementation or incorporate profile notes.",
+      false,
       refinementSchema,
       (input) => {
         const previous = current(input.id);
@@ -269,6 +278,7 @@ export function captureRefinement(
     tool(
       "incorporate_note",
       "Incorporate a saved, unambiguous knowledge note into the profile using the profile editing agent. Do not call for ideas, tasks or unresolved questions. Returns actual incorporation status; failures leave the note pending.",
+      false,
       z.object({ id: z.string() }),
       async ({ id }) => {
         const entry = current(id);
@@ -310,7 +320,32 @@ export function captureRefinement(
         };
       },
     ),
+    tool(
+      "complete_refinement",
+      "Finish the session after saving every outcome and handling any profile notes. May follow successful saves in the same response as the last tool call. No further model response is needed. Completion validates saved outcomes and concurrent edits.",
+      false,
+      z.object({}),
+      () => {
+        finish();
+        return { completed: true };
+      },
+    ),
   ];
+  function finish() {
+    for (const id of [item.id, ...created]) {
+      const entry = current(id);
+      if (!saved.has(id)) throw new Error("Refinement ended without saving every outcome.");
+      if (
+        !referencesOnly &&
+        entry.kind === "note" &&
+        entry.status !== "done" &&
+        !entry.processingError &&
+        !entry.rationale &&
+        !entry.clarifications.some((question) => !question.resolved)
+      )
+        throw new Error("The profile note was not incorporated.");
+    }
+  }
   return {
     context: {
       today,
@@ -320,20 +355,6 @@ export function captureRefinement(
     } satisfies RefinementContext,
     tools,
     latest: () => owned.get(item.id) ?? item,
-    finish() {
-      for (const id of [item.id, ...created]) {
-        const entry = current(id);
-        if (!saved.has(id)) throw new Error("Refinement ended without saving every outcome.");
-        if (
-          !referencesOnly &&
-          entry.kind === "note" &&
-          entry.status !== "done" &&
-          !entry.processingError &&
-          !entry.rationale &&
-          !entry.clarifications.some((question) => !question.resolved)
-        )
-          throw new Error("The profile note was not incorporated.");
-      }
-    },
+    finish,
   };
 }

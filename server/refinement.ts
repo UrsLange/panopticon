@@ -52,7 +52,7 @@ export async function refineCapture(
               strict: true,
             })),
           ],
-          parallel_tool_calls: false,
+          parallel_tool_calls: true,
         },
         { timeout: 120000 },
       )
@@ -92,14 +92,24 @@ export async function refineCapture(
         input.push(...responseHistory(response.output));
         continue;
       }
-      return;
+      throw new Error("Refinement ended without calling complete_refinement.");
     }
     input.push(...responseHistory(response.output));
-    for (const call of calls) {
+    let completed = false;
+    let failedChange = false;
+    const execute = async (call: (typeof calls)[number]) => {
       let output: unknown;
+      const tool = tools.find((tool) => tool.name === call.name);
       try {
-        const tool = tools.find((tool) => tool.name === call.name);
         if (!tool) throw new Error("Unknown refinement tool.");
+        if (call.name === "complete_refinement") {
+          if (call !== calls.at(-1))
+            throw new Error("Call complete_refinement last, after all other work.");
+          if (failedChange)
+            throw new Error(
+              "A preceding change failed. Inspect its result and repair it before completing.",
+            );
+        }
         const args = JSON.parse(call.arguments);
         if (call.name === "save_refinement") {
           const available = new Set(
@@ -116,18 +126,34 @@ export async function refineCapture(
         const result = await tool.execute(args, signal);
         output = result.data;
         for (const source of result.sources) sources.add(source);
+        if (call.name === "complete_refinement") completed = true;
       } catch (error) {
+        if (!tool?.readOnly) failedChange = true;
         output = {
           error: (error as Error).message,
           guidance:
             "Correct the arguments or try another source. Ask the user only about unresolved information that materially changes the outcome; a failed optional lookup is not itself a clarification question.",
         };
       }
-      input.push({
-        type: "function_call_output",
+      return {
+        type: "function_call_output" as const,
         call_id: call.call_id,
         output: JSON.stringify(output),
-      });
+      };
+    };
+    for (let index = 0; index < calls.length; ) {
+      if (tools.find((tool) => tool.name === calls[index].name)?.readOnly) {
+        const start = index;
+        while (
+          index < calls.length &&
+          tools.find((tool) => tool.name === calls[index].name)?.readOnly
+        )
+          index++;
+        input.push(...(await Promise.all(calls.slice(start, index).map(execute))));
+      } else {
+        input.push(await execute(calls[index++]));
+        if (completed) return;
+      }
     }
   }
 }

@@ -13,6 +13,7 @@ export type ResearchScope = {
 export type ResearchResult = { data: unknown; sources: string[] };
 export type ResearchTool = {
   name: string;
+  readOnly?: boolean;
   description: string;
   parameters: Record<string, unknown>;
   execute: (input: unknown, signal: AbortSignal) => Promise<ResearchResult>;
@@ -36,6 +37,7 @@ function tool<T>(
 ): ResearchTool {
   return {
     name,
+    readOnly: true,
     description,
     parameters: z.toJSONSchema(schema),
     execute: async (input, signal) => execute(schema.parse(input), signal),

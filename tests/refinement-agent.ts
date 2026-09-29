@@ -45,5 +45,8 @@ export function refinementAgent(
       assert(incorporate);
       await incorporate.execute({ id: value.id }, new AbortController().signal);
     }
+    const complete = tools.find((tool) => tool.name === "complete_refinement");
+    assert(complete);
+    await complete.execute({}, new AbortController().signal);
   };
 }

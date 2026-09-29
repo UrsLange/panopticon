@@ -213,13 +213,11 @@ export function mockProvider() {
                 ]
               : [
                   {
-                    type: "message",
-                    id: "msg_refined",
-                    role: "assistant",
-                    status: "completed",
-                    content: [
-                      { type: "output_text", text: "Refinement finished.", annotations: [] },
-                    ],
+                    type: "function_call",
+                    id: "fc_complete",
+                    call_id: "complete",
+                    name: "complete_refinement",
+                    arguments: "{}",
                   },
                 ],
           }),
