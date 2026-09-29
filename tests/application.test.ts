@@ -473,13 +473,17 @@ it("marks explicit regeneration pending and preserves the previous prompt on fai
   const latest = f.store.get(item.id);
   assert(latest);
   expect(latest.prompt).toBe("Regenerated prompt");
-  vi.mocked(f.draft).mockRejectedValueOnce(new Error("Unavailable"));
+  const error = new Error("Unavailable");
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.mocked(f.draft).mockRejectedValueOnce(error);
   await f.captures.retry(item.id, { resetReferences: false, revision: latest.revision });
   expect(f.store.get(item.id)).toMatchObject({
     prompt: "Regenerated prompt",
     processing: "pending",
-    processingError: expect.stringContaining("Interpretation failed"),
+    processingError: "Interpretation failed. Unavailable",
   });
+  expect(log).toHaveBeenCalledWith("Capture refinement failed", { itemId: item.id, error });
+  log.mockRestore();
 });
 
 it("exposes live refinement state and rejects duplicate refinement requests", async () => {

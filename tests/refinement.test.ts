@@ -3,10 +3,12 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import OpenAI from "openai";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import type { AssistantContext, RefinementTool } from "../server/application/assistant.js";
 import { createAssistant, validateToolCalling } from "../server/assistant.js";
 import { readSessionEvent, searchSessionEvidence } from "../server/ctx.js";
+import { refineCapture } from "../server/refinement.js";
 import { createResearch } from "../server/research-tools.js";
 
 vi.mock("../server/ctx.js", () => ({
@@ -106,6 +108,32 @@ function saveTool() {
   };
   return { tool, execute };
 }
+
+it.each([
+  [
+    new OpenAI.APIConnectionTimeoutError(),
+    "The model provider request timed out. Retry refinement.",
+  ],
+  [
+    new OpenAI.APIConnectionError({ message: "private connection details" }),
+    "The model provider could not be reached. Check your connection and model settings.",
+  ],
+  [
+    new OpenAI.APIError(
+      429,
+      { message: "private provider details" },
+      "private response",
+      undefined,
+    ),
+    "The model provider returned HTTP 429. Check provider availability and access, then retry.",
+  ],
+])("preserves provider failures with a safe summary", async (error, message) => {
+  const client = new OpenAI({ apiKey: "test-key" });
+  vi.spyOn(client.responses, "create").mockRejectedValueOnce(error);
+  await expect(
+    refineCapture(client, "test", "", "Input", context, { scopes: [], tools: [] }, []),
+  ).rejects.toMatchObject({ message, cause: error });
+});
 
 it("retains profile, project, CTX and capture evidence across tool turns", async () => {
   const root = mkdtempSync(join(tmpdir(), "pa-refinement-"));

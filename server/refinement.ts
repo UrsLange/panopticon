@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
 import type { ResponseInputItem, ResponseOutputItem } from "openai/resources/responses/responses";
 import {
@@ -6,6 +6,7 @@ import {
   contextSources,
   type RefinementTool,
 } from "./application/assistant.js";
+import { ApplicationError } from "./application/errors.js";
 import { prompts } from "./prompts.js";
 import type { Research } from "./research-tools.js";
 
@@ -32,24 +33,37 @@ export async function refineCapture(
   const tools = [...research.tools, ...captureTools];
   const signal = new AbortController().signal;
   while (true) {
-    const response = await client.responses.create({
-      model,
-      store: false,
-      include: ["reasoning.encrypted_content"],
-      instructions: `${instructions}\n${prompts.research}`,
-      input,
-      tools: [
-        { type: "web_search" },
-        ...tools.map(({ name, description, parameters }) => ({
-          type: "function" as const,
-          name,
-          description,
-          parameters,
-          strict: true,
-        })),
-      ],
-      parallel_tool_calls: false,
-    });
+    const response = await client.responses
+      .create({
+        model,
+        store: false,
+        include: ["reasoning.encrypted_content"],
+        instructions: `${instructions}\n${prompts.research}`,
+        input,
+        tools: [
+          { type: "web_search" },
+          ...tools.map(({ name, description, parameters }) => ({
+            type: "function" as const,
+            name,
+            description,
+            parameters,
+            strict: true,
+          })),
+        ],
+        parallel_tool_calls: false,
+      })
+      .catch((error: unknown) => {
+        if (error instanceof OpenAI.APIError) {
+          const message =
+            error instanceof OpenAI.APIConnectionTimeoutError
+              ? "The model provider request timed out. Retry refinement."
+              : error.status
+                ? `The model provider returned HTTP ${error.status}. Check provider availability and access, then retry.`
+                : "The model provider could not be reached. Check your connection and model settings.";
+          throw new ApplicationError("unavailable", message, { cause: error });
+        }
+        throw error;
+      });
     if (response.status !== "completed") throw new Error("Refinement did not complete.");
     for (const item of response.output) {
       if (item.type === "web_search_call" && item.status === "completed") {

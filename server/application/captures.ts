@@ -66,6 +66,7 @@ export function createCaptures({
         refinement.finish();
         await autoStart(id, refinement.latest().revision);
       } catch (error) {
+        console.error("Capture refinement failed", { itemId: id, error });
         const latest = refinement?.latest() ?? item;
         if (store.get(id)?.revision === latest.revision)
           store.update(
@@ -73,8 +74,8 @@ export function createCaptures({
             {
               processing: "pending",
               processingError:
-                error instanceof ApplicationError
-                  ? error.message
+                error instanceof Error
+                  ? `Interpretation failed. ${error.message}`
                   : "Interpretation failed. Check model settings, retry, or organize this item manually.",
             },
             latest.revision,
