@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { type Item, refinementSchema } from "../../shared/schema.js";
 import { resolveReferences } from "./aliases.js";
-import { type AssistantContext, contextSources, type RefinementTool } from "./assistant.js";
+import type { RefinementContext, RefinementTool } from "./assistant.js";
 import type { createContext } from "./context.js";
 import { assertRevision } from "./items.js";
 import type { CaptureStorage } from "./ports.js";
@@ -15,6 +15,7 @@ export function captureRefinement(
   resolveRepository: (item: Pick<Item, "project" | "references" | "noProject">) => string | null,
   referencesOnly: boolean,
   guardProfile: () => void,
+  today: string,
 ) {
   const owned = new Map(
     [item, ...store.list().filter((entry) => entry.parentId === item.id)].map((entry) => [
@@ -24,32 +25,30 @@ export function captureRefinement(
   );
   const saved = new Set<string>();
   const created = new Set<string>();
-  const evidence = (entry: Item): AssistantContext => {
-    const result: AssistantContext = {
-      ...context(
-        entry.body,
-        entry.clarifications.map((answer) => answer.answer).filter(Boolean),
-        entry.references,
-      ),
-      capture: entry,
-      linkedCaptures: store
-        .list()
-        .filter((child) => child.parentId === entry.id || child.id === entry.parentId),
-      referencesOnly,
-      previousRefinement: {
-        prompt: entry.prompt,
-        sourcePaths: entry.sourcePaths,
-        clarifications: entry.clarifications,
-      },
+  const linked = (entry: Item) =>
+    store
+      .list()
+      .filter((child) => child.parentId === entry.id || child.id === entry.parentId)
+      .map(({ id, original, title, kind, status, parentId }) => ({
+        id,
+        original,
+        title,
+        kind,
+        status,
+        parentId,
+      }));
+  const referenceEvidence = (entry: Item) => {
+    const { candidates, people, profile } = context(
+      entry.body,
+      entry.clarifications.map((answer) => answer.answer).filter(Boolean),
+      entry.references,
+    );
+    return {
+      candidates,
+      references: entry.references,
+      people,
+      profileDocuments: profile.documents.map(({ path }) => path),
     };
-    result.related = result.related.filter((other) => other.id !== entry.id);
-    result.commitments = {
-      ...result.commitments,
-      due: result.commitments.due.filter((other) => other.id !== entry.id),
-      suggested: result.commitments.suggested.filter((other) => other.id !== entry.id),
-      waiting: result.commitments.waiting.filter((other) => other.id !== entry.id),
-    };
-    return result;
   };
   const current = (id: string) => {
     guardProfile();
@@ -89,7 +88,17 @@ export function captureRefinement(
               .includes(query.toLowerCase()),
           );
         return {
-          items: matches.slice(offset, offset + 30),
+          items: matches
+            .slice(offset, offset + 30)
+            .map(({ id, title, kind, status, project, parentId, prompt, body }) => ({
+              id,
+              title,
+              kind,
+              status,
+              project,
+              parentId,
+              excerpt: (prompt || body).slice(0, 500),
+            })),
           nextOffset: offset + 30 < matches.length ? offset + 30 : null,
         };
       },
@@ -97,21 +106,60 @@ export function captureRefinement(
     ),
     tool(
       "get_capture",
-      "Read a capture with its original input, saved answers, revision history and current profile/people/project context. Also use this to inspect linked outcomes before splitting again.",
+      "Read a capture's original input, refined content, saved answers and explicit selections. Includes summaries of linked outcomes. Does not reload other context or revision history.",
       z.object({ id: z.string() }),
       ({ id }) => {
         const entry = store.get(id);
         if (!entry) throw new Error("Capture not found.");
-        return { ...evidence(entry), history: store.history(id) };
+        return { capture: entry, linkedCaptures: linked(entry) };
       },
-      (data) => contextSources(data as AssistantContext),
+      (data) => [(data as { capture: Item }).capture.id],
     ),
     tool(
-      "lookup_context",
-      "Look up relevant profile knowledge, people, references and related captures using a focused query.",
+      "read_capture_history",
+      "Read earlier capture revisions when the current capture and saved answers are insufficient. Newest revisions first; follow nextOffset as needed.",
+      z.object({ id: z.string(), offset: z.number().int().nonnegative() }),
+      ({ id, offset }) => {
+        if (!store.get(id)) throw new Error("Capture not found.");
+        const history = store.history(id);
+        return {
+          id,
+          history: history.slice(offset, offset + 5),
+          nextOffset: offset + 5 < history.length ? offset + 5 : null,
+        };
+      },
+      (data) => [(data as { id: string }).id],
+    ),
+    tool(
+      "get_reference_candidates",
+      "Inspect alias and identity candidates for mentions in a capture, including Entra relationships and existing resolved references. Use candidate IDs from this tool when attaching new references to that capture. Suggested profile document paths are pointers, not their contents.",
+      z.object({ id: z.string() }),
+      ({ id }) => {
+        const entry = store.get(id);
+        if (!entry) throw new Error("Capture not found.");
+        return referenceEvidence(entry);
+      },
+      (data) => {
+        const result = data as ReturnType<typeof referenceEvidence>;
+        return [
+          ...result.candidates.map((candidate) => candidate.source),
+          ...result.references.map((reference) => reference.source),
+          ...(result.people ? [result.people.source] : []),
+        ];
+      },
+    ),
+    tool(
+      "lookup_people",
+      "Find people and their organizational relationships in the synced Entra directory using a name, email or focused query. Suggested profile document paths can provide additional personal context through read_file. To attach references, use get_reference_candidates for the capture.",
       z.object({ query: z.string().min(1) }),
-      ({ query }) => context(query),
-      (data) => contextSources(data as AssistantContext),
+      ({ query }) => {
+        const { people, profile } = context(query);
+        return { people, profileDocuments: profile.documents.map(({ path }) => path) };
+      },
+      (data) => {
+        const { people } = data as { people: ReturnType<typeof context>["people"] };
+        return people ? [people.source] : [];
+      },
     ),
     tool(
       "create_linked_capture",
@@ -140,15 +188,14 @@ export function captureRefinement(
         const previous = current(input.id);
         if (previous.kind === "note" && previous.status === "done")
           throw new Error("This note is already incorporated.");
-        const available = evidence(previous);
+        const candidates = input.referenceIds.length ? referenceEvidence(previous).candidates : [];
         if (
           input.referenceIds.some(
-            (id) =>
-              !available.candidates.some((candidate) => candidate.id === id && candidate.available),
+            (id) => !candidates.some((candidate) => candidate.id === id && candidate.available),
           )
         )
           throw new Error(
-            "Choose available reference IDs from get_capture; preserve ambiguous mentions and ask only material questions.",
+            "Choose available reference IDs from get_reference_candidates for this capture; preserve ambiguous mentions and ask only material questions.",
           );
         if (input.relatedId && (input.relatedId === previous.id || !store.get(input.relatedId)))
           throw new Error("Choose an existing different capture to link.");
@@ -156,11 +203,7 @@ export function captureRefinement(
           throw new Error("Only tasks have implementation mode or deadlines.");
         if (previous.noProject && !input.noProject)
           throw new Error("Respect the user's explicit No project selection.");
-        const references = resolveReferences(
-          input.referenceIds,
-          available.candidates,
-          previous.references,
-        );
+        const references = resolveReferences(input.referenceIds, candidates, previous.references);
         const {
           id,
           sources,
@@ -214,7 +257,13 @@ export function captureRefinement(
         );
         owned.set(id, updated);
         saved.add(id);
-        return updated;
+        return {
+          id: updated.id,
+          revision: updated.revision,
+          kind: updated.kind,
+          processing: updated.processing,
+          clarifications: updated.clarifications,
+        };
       },
     ),
     tool(
@@ -250,12 +299,25 @@ export function captureRefinement(
           throw new Error("Capture changed during profile incorporation.");
         owned.set(id, updated);
         saved.add(id);
-        return updated;
+        return {
+          id: updated.id,
+          revision: updated.revision,
+          status: updated.status,
+          processing: updated.processing,
+          processingError: updated.processingError,
+          rationale: updated.rationale,
+          clarifications: updated.clarifications,
+        };
       },
     ),
   ];
   return {
-    context: evidence(item),
+    context: {
+      today,
+      capture: item,
+      linkedCaptures: linked(item),
+      referencesOnly,
+    } satisfies RefinementContext,
     tools,
     latest: () => owned.get(item.id) ?? item,
     finish() {

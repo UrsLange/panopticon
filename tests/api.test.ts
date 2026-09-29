@@ -221,9 +221,7 @@ describe("local API", () => {
   it("persists aliases, retrieves their targets, and reinterprets edited input", async () => {
     const assistant: Assistant = {
       interpret: refinementAgent(async (text, context) => {
-        expect(
-          context.profile.documents.some((doc) => doc.content.includes("Access details")),
-        ).toBe(true);
+        expect(context.profileDocuments).toContain(project.path);
         return {
           title: text,
           kind: "idea",

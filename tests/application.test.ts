@@ -1,5 +1,9 @@
 import { assert, expect, it, vi } from "vitest";
-import type { Assistant, AssistantContext } from "../server/application/assistant.js";
+import type {
+  Assistant,
+  AssistantContext,
+  RefinementContext,
+} from "../server/application/assistant.js";
 import { createCaptures } from "../server/application/captures.js";
 import { createConversation } from "../server/application/conversation.js";
 import { resolveImplementationRepository } from "../server/application/implementation-repository.js";
@@ -72,7 +76,9 @@ function fixture() {
     incorporate,
   };
   let discovery = false;
-  const draft = vi.fn<(text: string, context: AssistantContext) => Promise<Draft>>(async () => ({
+  const draft = vi.fn<
+    (text: string, context: AssistantContext | RefinementContext) => Promise<Draft>
+  >(async () => ({
     title: "A note",
     kind: "note",
     project: "",
@@ -378,10 +384,8 @@ it("regenerates the full interpretation after input edits but preserves prompt-o
     processing: "ready",
   });
   expect(f.draft).toHaveBeenLastCalledWith("Updated input", expect.anything());
-  expect(vi.mocked(f.draft).mock.lastCall?.[1]).toMatchObject({
-    related: [],
-    commitments: { due: [], suggested: [], waiting: [] },
-  });
+  expect(vi.mocked(f.draft).mock.lastCall?.[1]).not.toHaveProperty("related");
+  expect(vi.mocked(f.draft).mock.lastCall?.[1]).not.toHaveProperty("commitments");
   vi.mocked(f.draft).mockClear();
   f.captures.edit(item.id, { prompt: "My reviewed prompt" }, updated.revision);
   await f.captures.close();
@@ -556,7 +560,7 @@ it("retains interview answers across partial rounds and failed refinements", asy
   expect(f.draft).toHaveBeenLastCalledWith(
     item.body,
     expect.objectContaining({
-      previousRefinement: expect.objectContaining({
+      capture: expect.objectContaining({
         prompt: "Plan the demo.",
         clarifications: expect.arrayContaining([expect.objectContaining({ answer: "Portal" })]),
       }),

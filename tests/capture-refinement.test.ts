@@ -171,7 +171,7 @@ it("splits tasks and knowledge into linked outcomes and reuses them on retry", a
 it("retains saved answers and useful partial work until material questions are resolved", async () => {
   const f = setup();
   vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
-    const answer = context.previousRefinement?.clarifications.find((entry) => entry.answer)?.answer;
+    const answer = context.capture.clarifications.find((entry) => entry.answer)?.answer;
     await call(
       tools,
       "save_refinement",
@@ -232,6 +232,10 @@ it("searches captures and retrieves original input, answers and history", async 
   vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
     found = await call(tools, "search_captures", { query: "pilot", offset: 0 });
     read = await call(tools, "get_capture", { id: previous.id });
+    expect(read).not.toHaveProperty("history");
+    expect(await call(tools, "read_capture_history", { id: previous.id, offset: 0 })).toMatchObject(
+      { history: [{ item: { prompt: "" } }] },
+    );
     await call(
       tools,
       "save_refinement",
@@ -240,24 +244,39 @@ it("searches captures and retrieves original input, answers and history", async 
   });
   const item = f.captures.capture("Discuss rollout");
   await f.captures.close();
-  expect(found).toMatchObject({ items: [{ id: previous.id, prompt: "Keep the pilot small" }] });
+  expect(found).toMatchObject({ items: [{ id: previous.id, excerpt: "Keep the pilot small" }] });
   expect(read).toMatchObject({
     capture: { original: "Earlier rollout decision" },
-    history: [{ item: { prompt: "" } }],
   });
   expect(f.store.get(item.id)?.sourcePaths).toEqual([previous.id]);
 });
 
-it("keeps context failures retryable without losing the original capture", async () => {
+it("refines a self-contained capture without loading profile or people context", async () => {
   const f = setup();
   f.context.mockImplementation(() => {
     throw new Error("Profile unavailable");
   });
-  const item = f.captures.capture("Ask Anna about the rollout");
+  vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+    expect(Object.keys(context).sort()).toEqual([
+      "capture",
+      "linkedCaptures",
+      "referencesOnly",
+      "today",
+    ]);
+    await call(
+      tools,
+      "save_refinement",
+      outcome(context.capture.id, { project: "", prompt: "Buy milk." }),
+    );
+  });
+  const item = f.captures.capture("Buy milk");
   await f.captures.close();
-  expect(f.store.get(item.id)).toMatchObject({ original: item.original, processing: "pending" });
-  expect(f.store.get(item.id)?.processingError).toBeTruthy();
-  expect(f.assistant.interpret).not.toHaveBeenCalled();
+  expect(f.store.get(item.id)).toMatchObject({
+    original: item.original,
+    processing: "ready",
+    processingError: null,
+  });
+  expect(f.context).not.toHaveBeenCalled();
 });
 
 it("saves material questions returned by profile incorporation for the next refinement", async () => {
@@ -282,6 +301,39 @@ it("saves material questions returned by profile incorporation for the next refi
     processingError: null,
     clarifications: [{ question: "Which team owns the rollout?", answer: "", resolved: false }],
   });
+});
+
+it("retrieves focused people context without repeating profile contents or commitments", async () => {
+  const f = setup();
+  const base = f.context();
+  f.context.mockClear();
+  f.context.mockReturnValue({
+    ...base,
+    profile: {
+      directory: [],
+      documents: [{ path: "team.md", content: "Large private profile content" }],
+    },
+  });
+  vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+    expect(f.context).not.toHaveBeenCalled();
+    expect(await call(tools, "lookup_people", { query: "Anna" })).toEqual({
+      people: null,
+      profileDocuments: ["team.md"],
+    });
+    const references = await call(tools, "get_reference_candidates", { id: context.capture.id });
+    expect(references).toEqual({
+      candidates: [],
+      references: [],
+      people: null,
+      profileDocuments: ["team.md"],
+    });
+    const saved = await call(tools, "save_refinement", outcome(context.capture.id));
+    expect(saved).not.toHaveProperty("prompt");
+    expect(saved).not.toHaveProperty("body");
+  });
+  f.captures.capture("Ask Anna about the rollout");
+  await f.captures.close();
+  expect(f.context).toHaveBeenCalledTimes(2);
 });
 
 it("does not absorb a concurrent manual edit into the agent's writable snapshot during incorporation", async () => {

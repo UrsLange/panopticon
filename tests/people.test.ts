@@ -559,7 +559,8 @@ it("includes selected people for captures and conversation follow-ups, and recor
     skipped: 0,
   }));
   await sync.run();
-  const contexts: AssistantContext[] = [];
+  const contexts: (Pick<AssistantContext, "people"> & { profile?: AssistantContext["profile"] })[] =
+    [];
   const assistant: Assistant = {
     interpret: refinementAgent(async (_text, context) => {
       contexts.push(context);
@@ -615,7 +616,7 @@ it("includes selected people for captures and conversation follow-ups, and recor
   });
   expect(contexts[3].people?.totalMatches).toBe(1);
   expect(contexts[3].people?.candidates[0].email).toBe(anna.email);
-  expect(contexts[3].profile.documents).toEqual([]);
+  expect(contexts[3].profile?.documents).toEqual([]);
 });
 
 it("clarifies ambiguous people through existing review and persists a corrected identity with fresh relationships", async () => {
@@ -629,7 +630,7 @@ it("clarifies ambiguous people through existing review and persists a corrected 
     skipped: 0,
   }));
   await sync.run();
-  const contexts: AssistantContext[] = [];
+  const contexts: Pick<AssistantContext, "people">[] = [];
   const assistant: Assistant = {
     interpret: refinementAgent(async (_text, context) => {
       contexts.push(context);

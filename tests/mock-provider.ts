@@ -170,7 +170,27 @@ export function mockProvider() {
       const results = input.input.filter(
         (entry: { type?: string }) => entry.type === "function_call_output",
       );
-      if (results.length) {
+      if (!results.length) {
+        const { context } = JSON.parse(input.input[0].content);
+        response.end(
+          JSON.stringify({
+            id: "resp_references",
+            object: "response",
+            status: "completed",
+            output: [
+              {
+                type: "function_call",
+                id: "fc_references",
+                call_id: "references",
+                name: "get_reference_candidates",
+                arguments: JSON.stringify({ id: context.capture.id }),
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if (calls.at(-1)?.name !== "get_reference_candidates") {
         const last = JSON.parse(results.at(-1).output);
         const incorporate =
           calls.at(-1)?.name === "save_refinement" &&
@@ -363,8 +383,13 @@ export function mockProvider() {
             needsClarification: false,
             clarificationQuestions: [],
             updateProfile: explicitNote,
-            referenceIds: payload.context.candidates
-              .filter((alias: { available: boolean }) => alias.available)
+            referenceIds: JSON.parse(
+              input.input.find(
+                (entry: { type?: string; call_id?: string }) =>
+                  entry.type === "function_call_output" && entry.call_id === "references",
+              ).output,
+            )
+              .candidates.filter((alias: { available: boolean }) => alias.available)
               .map((alias: { id: string }) => alias.id),
           }
         : { answer: "Connection works.", sources: [] };
@@ -372,7 +397,7 @@ export function mockProvider() {
       input.text.format.name === "capture_interpretation" &&
       payload.capture === "Plan the demo with Benjamin"
     ) {
-      const answers = payload.context.previousRefinement?.clarifications ?? [];
+      const answers = payload.context.capture.clarifications;
       const project = answers.find(
         (entry: { question: string; answer: string }) =>
           entry.question === "Which project is this demo for?" && entry.answer,

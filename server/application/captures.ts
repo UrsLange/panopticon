@@ -61,6 +61,7 @@ export function createCaptures({
             if (getProfileRoot() !== profileRoot)
               throw new Error("Profile changed during refinement.");
           },
+          today(),
         );
         await assistant.interpret(item.body, refinement.context, refinement.tools);
         refinement.finish();

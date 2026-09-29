@@ -1,11 +1,7 @@
 import OpenAI from "openai";
 import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
 import type { ResponseInputItem, ResponseOutputItem } from "openai/resources/responses/responses";
-import {
-  type AssistantContext,
-  contextSources,
-  type RefinementTool,
-} from "./application/assistant.js";
+import type { RefinementContext, RefinementTool } from "./application/assistant.js";
 import { ApplicationError } from "./application/errors.js";
 import { prompts } from "./prompts.js";
 import type { Research } from "./research-tools.js";
@@ -22,14 +18,19 @@ export async function refineCapture(
   model: string,
   instructions: string,
   capture: string,
-  context: AssistantContext,
+  context: RefinementContext,
   research: Research,
   captureTools: RefinementTool[],
 ) {
   const input: ResponseInputItem[] = [
     { role: "user", content: JSON.stringify({ capture, context, scopes: research.scopes }) },
   ];
-  const sources = new Set(contextSources(context));
+  const sources = new Set([
+    context.capture.id,
+    ...context.capture.sourcePaths,
+    ...context.capture.references.map((reference) => reference.source),
+    ...context.linkedCaptures.map((entry) => entry.id),
+  ]);
   const tools = [...research.tools, ...captureTools];
   const signal = new AbortController().signal;
   while (true) {

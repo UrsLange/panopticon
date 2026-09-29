@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import OpenAI from "openai";
 import { afterEach, assert, expect, it, vi } from "vitest";
-import type { AssistantContext, RefinementTool } from "../server/application/assistant.js";
+import type { RefinementContext, RefinementTool } from "../server/application/assistant.js";
+import { capturedItem } from "../server/application/items.js";
 import { createAssistant, validateToolCalling } from "../server/assistant.js";
 import { readSessionEvent, searchSessionEvidence } from "../server/ctx.js";
 import { refineCapture } from "../server/refinement.js";
@@ -20,14 +21,11 @@ vi.mock("../server/ctx.js", () => ({
   ),
 }));
 
-const context: AssistantContext = {
+const context: RefinementContext = {
   today: "2026-09-19",
-  candidates: [],
-  references: [],
-  people: null,
-  profile: { directory: [], documents: [{ path: "unused.md", content: "Unrelated preference" }] },
-  related: [],
-  commitments: { date: "2026-09-19", due: [], suggested: [], waiting: [] },
+  capture: capturedItem("Review onboarding", "capture", "2026-09-19T12:00:00.000Z"),
+  linkedCaptures: [],
+  referencesOnly: false,
 };
 const interpretation = {
   title: "Review onboarding",
@@ -230,10 +228,14 @@ it("supplies the original capture and previous answers without a separate ration
   };
   const model = await provider(() => [message("No save")]);
   const assistant = createAssistant("test-key", "test", model.url);
-  await assistant?.interpret("Plan the demo", { ...context, previousRefinement: previous }, []);
+  await assistant?.interpret(
+    "Plan the demo",
+    { ...context, capture: { ...context.capture, ...previous } },
+    [],
+  );
   expect(JSON.parse(model.requests[0].input[0].content ?? "")).toMatchObject({
     capture: "Plan the demo",
-    context: { previousRefinement: previous },
+    context: { capture: previous },
   });
 });
 

@@ -1,13 +1,26 @@
 import { assert } from "vitest";
-import type { Assistant, AssistantContext } from "../server/application/assistant.js";
+import type {
+  Assistant,
+  AssistantContext,
+  RefinementContext,
+} from "../server/application/assistant.js";
 import type { Refinement } from "../shared/schema.js";
 
 export type Draft = Partial<Refinement>;
+type ReferenceEvidence = Pick<AssistantContext, "candidates" | "people"> & {
+  profileDocuments: string[];
+};
 export function refinementAgent(
-  draft: (text: string, context: AssistantContext) => Promise<Draft>,
+  draft: (text: string, context: RefinementContext & ReferenceEvidence) => Promise<Draft>,
 ): Assistant["interpret"] {
   return async (text, context, tools) => {
-    const result = await draft(text, context);
+    const references = tools.find((tool) => tool.name === "get_reference_candidates");
+    assert(references);
+    const { data } = await references.execute(
+      { id: context.capture.id },
+      new AbortController().signal,
+    );
+    const result = await draft(text, { ...context, ...(data as ReferenceEvidence) });
     const save = tools.find((tool) => tool.name === "save_refinement");
     assert(save);
     const value = {
