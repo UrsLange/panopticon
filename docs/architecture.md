@@ -39,7 +39,9 @@ Application services do not import Fastify, SQLite, filesystem/Git operations, p
 
 ## Main workflows
 
-**Capture.** Persist original text and supply it with saved answers, prior refinement and linked outcomes. The model reads ctx history, profile knowledge, captures and project files, then uses tools to save refinements, split linked outcomes and incorporate scoped knowledge notes. Ordinary tasks and implementation tasks have separate execution modes independent of project membership. Tool boundaries validate references, citation provenance, ownership and revisions without deriving replacement content. Failed processing leaves the capture available for retry.
+**Capture.** Persist original text and supply the current capture with saved answers, prior refinement, explicit selections and summaries of linked outcomes. Start with this small input and the available profile/project scopes. The model chooses whether to read CTX history, profile knowledge, Entra people, captures or project files, then uses tools to save refinements, split linked outcomes and incorporate scoped knowledge notes. Searches return concise matches; detailed captures and revision history are separate reads. Ordinary tasks and implementation tasks have separate execution modes independent of project membership. Tool boundaries validate references, citation provenance, ownership and revisions without deriving replacement content. Independent reads can run together; changes execute in order. The model ends through `complete_refinement` after all outcomes are saved and notes handled, without another model request. Failed processing leaves the capture available for retry.
+
+The backend emits JSON log lines with events prefixed `capture_refinement.`. Each run has a run ID, capture ID and model, with start/finish records for model requests and local tool calls. Records include durations, request/output character counts, tool names, success/failure, provider timeout/status information and provider-reported token usage when available. A final record summarizes the run, including failures. `usageRequests` identifies how many requests supplied token usage; totals cover only those requests and are null when none supplied it. Hosted web calls are counted separately, with their time included in the model request. These performance records omit capture text, tool arguments/results, credentials and provider error bodies. They go to backend standard output alongside existing service logs.
 
 **Profile note.** Serialize incorporation of clear knowledge notes or explicitly submitted notes. Give the model a read-only note artifact, including clarification answers and capture date, and the profile location. It uses the shared editing tools to inspect, update, check and commit knowledge directly. The completion tool records the concepts containing the incorporated note, including a verified no-op. Missing information leaves the note pending with the model’s clarification. Revision guards run before writes and commits; failed updates remain pending.
 
@@ -76,12 +78,12 @@ Switching profiles retains captures. People snapshots are isolated by profile an
 
 Local storage does not mean local model processing. Requests can send:
 
-- Capture text, core and relevant profile documents, related items, and current commitments.
-- Additional profile files, discovered-project files, and CTX evidence retrieved during capture refinement.
+- Capture text, saved answers, previous refined content, explicit selections, linked-outcome summaries and available profile/project scopes.
+- Profile files, Entra people and relationships, captures and revision history, discovered-project files, and CTX evidence selected through tools during capture refinement.
 - Project task artifacts, repository evidence and profile documents selected by the project agent, including personal notes and metadata when read.
 - The note artifact, including clarification answers and capture date, and profile documents selected by the note agent.
 - Profile documents, the activity artifact, and provisional memory as the daily learning agent reads them with its tools. The model receives file locations first and chooses its reads; the application does not truncate the pending activity or impose call-count budgets. Activity starts being journaled with this version; older unscoped records are not backfilled.
-- Recent conversation messages and selected people candidates. Manual CTX search results require explicit sharing in Conversation.
+- Recent conversation messages, selected profile documents, related items, current commitments and selected people candidates for Conversation. Manual CTX search results require explicit sharing in Conversation.
 
 Model requests, including project discovery, use the configured endpoint and credentials with `store: false`; provider retention policies still apply. Keys stay on the server.
 

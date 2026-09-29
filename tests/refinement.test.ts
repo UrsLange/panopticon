@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import OpenAI from "openai";
-import { afterEach, assert, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import type { RefinementContext, RefinementTool } from "../server/application/assistant.js";
 import { capturedItem } from "../server/application/items.js";
 import { createAssistant, validateToolCalling } from "../server/assistant.js";
@@ -65,11 +65,18 @@ type ModelRequest = {
   max_tool_calls?: number;
 };
 const cleanup: (() => Promise<void>)[] = [];
+beforeEach(() => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+});
 afterEach(async () => {
   vi.useRealTimers();
   for (const close of cleanup.splice(0)) await close();
+  vi.restoreAllMocks();
 });
-async function provider(respond: (request: ModelRequest, index: number) => unknown[]) {
+async function provider(
+  respond: (request: ModelRequest, index: number) => unknown[],
+  usage?: { input_tokens: number; output_tokens: number },
+) {
   const requests: ModelRequest[] = [];
   const server = createServer(async (request, response) => {
     let body = "";
@@ -82,6 +89,7 @@ async function provider(respond: (request: ModelRequest, index: number) => unkno
         id: `resp_${requests.length}`,
         object: "response",
         status: "completed",
+        usage,
         output: respond(input, requests.length - 1),
       }),
     );
@@ -443,4 +451,82 @@ it("requires completion to be the last call", async () => {
   await createAssistant("test-key", "test", model.url)?.interpret("A task", context, saved.tools);
   expect(complete).toHaveBeenCalledTimes(1);
   expect(JSON.stringify(model.requests[1].input)).toContain("complete_refinement last");
+});
+
+it("logs request and tool timings, usage and failures without logging private content", async () => {
+  const saved = saveTool();
+  saved.execute.mockRejectedValueOnce(new Error("private tool failure"));
+  const model = await provider(
+    (_request, index) => [
+      call("save_refinement", { sources: [], prompt: "private tool argument" }, `save${index}`),
+      ...(index ? [call("complete_refinement", {}, "complete")] : []),
+    ],
+    { input_tokens: 100, output_tokens: 25 },
+  );
+  await createAssistant("test-key", "test", model.url)?.interpret(
+    "private capture",
+    context,
+    saved.tools,
+  );
+  const logs = vi.mocked(console.info).mock.calls.map(([line]) => JSON.parse(line));
+  expect(new Set(logs.map((event) => event.runId)).size).toBe(1);
+  expect(logs.every((event) => event.itemId === context.capture.id)).toBe(true);
+  expect(logs.filter((event) => event.event === "capture_refinement.request_started")).toHaveLength(
+    2,
+  );
+  expect(logs.filter((event) => event.event === "capture_refinement.request_finished")).toEqual([
+    expect.objectContaining({
+      request: 1,
+      durationMs: expect.any(Number),
+      usage: { inputTokens: 100, outputTokens: 25, cachedInputTokens: null, reasoningTokens: null },
+    }),
+    expect.objectContaining({ request: 2, durationMs: expect.any(Number) }),
+  ]);
+  expect(logs).toContainEqual(
+    expect.objectContaining({
+      event: "capture_refinement.tool_finished",
+      tool: "save_refinement",
+      status: "failed",
+      durationMs: expect.any(Number),
+    }),
+  );
+  expect(logs.at(-1)).toMatchObject({
+    event: "capture_refinement.finished",
+    status: "completed",
+    requests: 2,
+    toolCalls: 3,
+    toolFailures: 1,
+    usageRequests: 2,
+    inputTokens: 200,
+    outputTokens: 50,
+  });
+  expect(JSON.stringify(logs)).not.toContain("private");
+  expect(JSON.stringify(logs)).not.toContain("test-key");
+});
+
+it("logs provider timeouts and reports missing usage without inventing zero token counts", async () => {
+  const client = new OpenAI({ apiKey: "test-key" });
+  vi.spyOn(client.responses, "create").mockRejectedValueOnce(
+    new OpenAI.APIConnectionTimeoutError(),
+  );
+  await expect(
+    refineCapture(client, "test", "", "Input", context, { scopes: [], tools: [] }, []),
+  ).rejects.toThrow("timed out");
+  const logs = vi.mocked(console.info).mock.calls.map(([line]) => JSON.parse(line));
+  expect(logs).toContainEqual(
+    expect.objectContaining({
+      event: "capture_refinement.request_finished",
+      status: "failed",
+      timedOut: true,
+      durationMs: expect.any(Number),
+    }),
+  );
+  expect(logs.at(-1)).toMatchObject({
+    status: "failed",
+    requests: 1,
+    toolCalls: 0,
+    usageRequests: 0,
+    inputTokens: null,
+    outputTokens: null,
+  });
 });
