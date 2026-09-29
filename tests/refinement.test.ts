@@ -371,7 +371,10 @@ it("saves and completes a simple task in one model request", async () => {
 it("runs independent reads together and preserves barriers around ordered changes", async () => {
   const saved = saveTool();
   const events: string[] = [];
-  const gate = Promise.withResolvers<void>();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const readers: RefinementTool[] = ["first", "second", "after"].map((name) => ({
     name,
     readOnly: true,
@@ -379,8 +382,8 @@ it("runs independent reads together and preserves barriers around ordered change
     parameters: { type: "object", properties: {}, additionalProperties: false },
     execute: async () => {
       events.push(name);
-      if (name === "first") await gate.promise;
-      if (name === "second") gate.resolve();
+      if (name === "first") await gate;
+      if (name === "second") release();
       return { data: name, sources: [name] };
     },
   }));
