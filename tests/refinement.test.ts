@@ -22,6 +22,7 @@ vi.mock("../server/ctx.js", () => ({
 }));
 
 const context: RefinementContext = {
+  preferences: [],
   today: "2026-09-19",
   capture: capturedItem("Review onboarding", "capture", "2026-09-19T12:00:00.000Z"),
   linkedCaptures: [],

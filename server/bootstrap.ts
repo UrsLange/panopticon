@@ -32,7 +32,7 @@ import { profileAdapter } from "./profile-adapter.js";
 import { createProjectWorkspaceIO } from "./project-repositories.js";
 import { createProjectScanner } from "./projects.js";
 import { repositoryInsights } from "./repository-insights.js";
-import { createResearch } from "./research-tools.js";
+import { createRefinementResearch } from "./research-tools.js";
 import { SettingsStore, settingsModels } from "./settings.js";
 import { Store } from "./store.js";
 import { createT3Client, implementationWorkspace, readLocalMerge } from "./t3.js";
@@ -62,8 +62,9 @@ export function createApplication(options: AppOptions = {}) {
     if (options.assistant !== undefined) return options.assistant;
     if (!settings.modelReady) return null;
     const connection = settings.credentials();
-    return createAssistant(connection.apiKey ?? "", connection.model, connection.baseURL, () =>
-      createResearch([
+    return createAssistant(connection.apiKey ?? "", connection.model, connection.baseURL, () => {
+      const documents = profileNotes.documents();
+      return createRefinementResearch([
         { id: "profile", name: "Personal profile", root: profileNotes.root },
         ...scanner
           .status()
@@ -77,10 +78,12 @@ export function createApplication(options: AppOptions = {}) {
             id: `project:${project.id}`,
             name: project.name,
             root: project.path,
+            description:
+              documents.find((document) => document.path === project.document)?.description ?? "",
             ...(project.document ? { profileDocument: project.document } : {}),
           })),
-      ]),
-    );
+      ]);
+    });
   };
   const now = options.now ?? (() => new Date());
   const today = () => dayInTimezone(now(), options.timezone ?? settings.timezone);
@@ -115,6 +118,11 @@ export function createApplication(options: AppOptions = {}) {
     context,
     notes,
     today,
+    preferences: () =>
+      profileNotes
+        .documents()
+        .filter((document) => ["Profile", "Working rules"].includes(document.type))
+        .map(({ path, content }) => ({ path, content })),
     resolveRepository: (item) =>
       resolveImplementationRepository(item, repositories(), profileNotes.documents()),
     autoStart: (id, revision) => t3.autoStart(id, revision),

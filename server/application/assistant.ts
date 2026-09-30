@@ -16,6 +16,7 @@ export type AssistantContext = {
 
 export type RefinementContext = {
   today: string;
+  preferences: ProfileContext["documents"];
   capture: Item;
   linkedCaptures: Pick<
     Item,

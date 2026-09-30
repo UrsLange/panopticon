@@ -16,6 +16,7 @@ export function captureRefinement(
   referencesOnly: boolean,
   guardProfile: () => void,
   today: string,
+  preferences: RefinementContext["preferences"],
 ) {
   const owned = new Map(
     [item, ...store.list().filter((entry) => entry.parentId === item.id)].map((entry) => [
@@ -189,7 +190,7 @@ export function captureRefinement(
     ),
     tool(
       "save_refinement",
-      "Save the useful outcome and any material clarification questions. prompt is the refined task/idea text, or a self-contained implementation prompt only when execution is implementation. Keep project association independent of execution. This does not start implementation or incorporate profile notes.",
+      "Save what the user means and any material clarification questions. prompt is a clear task or idea description, or a concise statement of the intended result for an implementation agent in the identified project. Do not investigate or prescribe implementation details. This does not start implementation or incorporate profile notes.",
       false,
       refinementSchema,
       (input) => {
@@ -349,6 +350,7 @@ export function captureRefinement(
   return {
     context: {
       today,
+      preferences,
       capture: item,
       linkedCaptures: linked(item),
       referencesOnly,

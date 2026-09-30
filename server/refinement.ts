@@ -27,6 +27,7 @@ export async function refineCapture(
     { role: "user", content: JSON.stringify({ capture, context, scopes: research.scopes }) },
   ];
   const sources = new Set([
+    ...context.preferences.map((document) => document.path),
     context.capture.id,
     ...context.capture.sourcePaths,
     ...context.capture.references.map((reference) => reference.source),

@@ -8,6 +8,7 @@ export type ResearchScope = {
   id: string;
   name: string;
   root: string;
+  description?: string;
   profileDocument?: string;
 };
 export type ResearchResult = { data: unknown; sources: string[] };
@@ -28,6 +29,29 @@ const excluded =
 const pageSize = 12000;
 const offset = z.number().int().min(0);
 const location = { scope: z.string(), path: z.string().max(4096) };
+
+export function createRefinementResearch(scopes: ResearchScope[]): Research {
+  const history = createResearch(scopes);
+  const profile = createResearch(scopes.filter((scope) => scope.id === "profile"));
+  return {
+    scopes: history.scopes,
+    tools: [
+      ...profile.tools
+        .filter((tool) => !["search_history", "read_history"].includes(tool.name))
+        .map((tool) => ({
+          ...tool,
+          parameters: {
+            ...tool.parameters,
+            properties: {
+              ...(tool.parameters.properties as object),
+              scope: { type: "string", enum: ["profile"] },
+            },
+          },
+        })),
+      ...history.tools.filter((tool) => ["search_history", "read_history"].includes(tool.name)),
+    ],
+  };
+}
 
 function tool<T>(
   name: string,

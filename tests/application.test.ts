@@ -108,6 +108,7 @@ function fixture() {
   });
   const contextQuery = vi.fn(() => context);
   const captures = createCaptures({
+    preferences: () => [],
     store,
     getProfileRoot: () => profile.root,
     getAssistant: () => assistant,

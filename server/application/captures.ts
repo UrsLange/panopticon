@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import type { Capture, Item, ItemFields } from "../../shared/schema.js";
 import { retainReferences } from "./aliases.js";
-import type { Assistant } from "./assistant.js";
+import type { Assistant, RefinementContext } from "./assistant.js";
 import { captureRefinement } from "./capture-refinement.js";
 import type { createContext } from "./context.js";
 import { ApplicationError } from "./errors.js";
@@ -16,6 +16,7 @@ export function createCaptures({
   context,
   notes,
   today,
+  preferences,
   resolveRepository,
   autoStart,
 }: {
@@ -25,6 +26,7 @@ export function createCaptures({
   context: ReturnType<typeof createContext>;
   notes: ReturnType<typeof createProfileUpdates>;
   today: () => string;
+  preferences: () => RefinementContext["preferences"];
   resolveRepository(item: Pick<Item, "project" | "references" | "noProject">): string | null;
   autoStart(itemId: string, revision: number): Promise<unknown>;
 }) {
@@ -62,6 +64,7 @@ export function createCaptures({
               throw new Error("Profile changed during refinement.");
           },
           today(),
+          preferences(),
         );
         await assistant.interpret(item.body, refinement.context, refinement.tools);
         refinement.finish();

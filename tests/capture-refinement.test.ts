@@ -48,6 +48,7 @@ function setup() {
     discoveryRunning: () => false,
   });
   const captures = createCaptures({
+    preferences: () => [],
     store,
     getAssistant: () => assistant,
     getProfileRoot: () => profile.root,
@@ -260,6 +261,7 @@ it("refines a self-contained capture without loading profile or people context",
     expect(Object.keys(context).sort()).toEqual([
       "capture",
       "linkedCaptures",
+      "preferences",
       "referencesOnly",
       "today",
     ]);

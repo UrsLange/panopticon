@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { assert, expect, it, vi } from "vitest";
 import { readSessionEvent, searchSessionEvidence } from "../server/ctx.js";
-import { createResearch } from "../server/research-tools.js";
+import { createRefinementResearch, createResearch } from "../server/research-tools.js";
 
 vi.mock("../server/ctx.js", () => ({
   readSessionEvent: vi.fn(async () => "Historical evidence"),
@@ -28,6 +28,36 @@ function fixture() {
   };
   return { root, profile, project, research, signal, call };
 }
+
+it("limits refinement file access to the profile while retaining project history", async () => {
+  const f = fixture();
+  const research = createRefinementResearch([
+    { id: "profile", name: "Profile", root: f.profile },
+    { id: "project:one", name: "One", root: f.project, description: "Customer portal" },
+  ]);
+  expect(research.scopes[1]).toMatchObject({ description: "Customer portal" });
+  const read = research.tools.find((tool) => tool.name === "read_file");
+  assert(read);
+  await expect(
+    read.execute({ scope: "project:one", path: "README.md", offset: 0 }, f.signal),
+  ).rejects.toThrow("scope");
+  writeFileSync(join(f.profile, "rules.md"), "Prefer concise messages.");
+  expect(
+    await read.execute({ scope: "profile", path: "rules.md", offset: 0 }, f.signal),
+  ).toMatchObject({ sources: ["rules.md"] });
+  const history = research.tools.find((tool) => tool.name === "search_history");
+  assert(history);
+  await history.execute(
+    { project: "project:one", query: "previous decision", since: null },
+    f.signal,
+  );
+  expect(searchSessionEvidence).toHaveBeenLastCalledWith(
+    "previous decision",
+    f.project,
+    undefined,
+    f.signal,
+  );
+});
 
 it("discovers nested context, searches across scopes and continues full file reads", async () => {
   const f = fixture();
