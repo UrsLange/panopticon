@@ -10,6 +10,7 @@ import { capturedItem } from "../server/application/items.js";
 import { createAssistant, validateToolCalling } from "../server/assistant.js";
 import { readSessionEvent, searchSessionEvidence } from "../server/ctx.js";
 import { type RefinementMetrics, refineCapture } from "../server/refinement.js";
+import { refinementLog } from "../server/refinement-log.js";
 import { createResearch } from "../server/research-tools.js";
 import { Store } from "../server/store.js";
 
@@ -68,6 +69,7 @@ type ModelRequest = {
 };
 const cleanup: (() => Promise<void>)[] = [];
 beforeEach(() => {
+  vi.spyOn(refinementLog, "debug").mockImplementation(() => {});
   vi.spyOn(console, "info").mockImplementation(() => {});
 });
 afterEach(async () => {
@@ -223,7 +225,9 @@ it("records CTX cost, cited evidence and self-assessment without another model r
   });
   const rows = store.db.prepare("SELECT metrics FROM refinement_runs ORDER BY rowid").all();
   expect(rows.map((row) => JSON.parse(String(row.metrics)))).toEqual(records);
-  expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toContain(assessment.explanation);
+  expect(JSON.stringify(vi.mocked(refinementLog.debug).mock.calls)).not.toContain(
+    assessment.explanation,
+  );
 });
 
 it("records failed optional CTX lookups and no-CTX refinements", async () => {
@@ -746,7 +750,8 @@ it("logs request and tool timings, usage and failures without logging private co
     context,
     saved.tools,
   );
-  const logs = vi.mocked(console.info).mock.calls.map(([line]) => JSON.parse(line));
+  const logs = vi.mocked(refinementLog.debug).mock.calls.map(([record]) => record);
+  expect(console.info).not.toHaveBeenCalled();
   expect(new Set(logs.map((event) => event.runId)).size).toBe(1);
   expect(logs.every((event) => event.itemId === context.capture.id)).toBe(true);
   expect(logs.filter((event) => event.event === "capture_refinement.request_started")).toHaveLength(
@@ -790,7 +795,7 @@ it("logs provider timeouts and reports missing usage without inventing zero toke
   await expect(
     refineCapture(client, "test", "", "Input", context, { scopes: [], tools: [] }, []),
   ).rejects.toThrow("timed out");
-  const logs = vi.mocked(console.info).mock.calls.map(([line]) => JSON.parse(line));
+  const logs = vi.mocked(refinementLog.debug).mock.calls.map(([record]) => record);
   expect(logs).toContainEqual(
     expect.objectContaining({
       event: "capture_refinement.request_finished",

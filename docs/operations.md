@@ -71,6 +71,12 @@ Stop older instances before upgrading. Install locked dependencies with `mise ru
 
 ### Refinement and CTX measurements
 
+Detailed refinement traces are DEBUG-level JSON lines in `refinement.debug.jsonl` under `PA_DATA_DIR` (default `~/.local/share/personal-assistant`). They append across backend restarts and are no longer printed by `mise run dev`. Operational errors still appear in the console. To follow the traces explicitly:
+
+```sh
+tail -f ~/.local/share/personal-assistant/refinement.debug.jsonl
+```
+
 Run summaries are saved in the application's `assistant.sqlite` database. Inspect recent runs without needing to preserve terminal output:
 
 ```sh

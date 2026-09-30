@@ -10,6 +10,7 @@ import {
 } from "./application/assistant.js";
 import { ApplicationError } from "./application/errors.js";
 import { prompts } from "./prompts.js";
+import { refinementLog } from "./refinement-log.js";
 import type { Research } from "./research-tools.js";
 
 export type RefinementMetrics = {
@@ -124,18 +125,16 @@ export async function refineCapture(
     usageRequests = 0;
   let outcome = "failed";
   const log = (event: string, details: Record<string, unknown>) =>
-    console.info(
-      JSON.stringify({
-        event: `capture_refinement.${event}`,
-        timestamp: new Date().toISOString(),
-        runId,
-        sessionId,
-        resumed: !!session,
-        itemId: context.capture.id,
-        model,
-        ...details,
-      }),
-    );
+    refinementLog.debug({
+      event: `capture_refinement.${event}`,
+      timestamp: new Date().toISOString(),
+      runId,
+      sessionId,
+      resumed: !!session,
+      itemId: context.capture.id,
+      model,
+      ...details,
+    });
   try {
     while (true) {
       const request = {
