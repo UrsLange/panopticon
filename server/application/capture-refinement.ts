@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type Item, refinementSchema } from "../../shared/schema.js";
+import { type EntityReference, type Item, refinementSchema } from "../../shared/schema.js";
 import { resolveReferences } from "./aliases.js";
 import { ctxAssessmentSchema, type RefinementContext, type RefinementTool } from "./assistant.js";
 import type { createContext } from "./context.js";
@@ -25,6 +25,12 @@ export function captureRefinement(
     ]),
   );
   const saved = new Set<string>();
+  const referenceId = (reference: EntityReference) =>
+    `${reference.kind}:${reference.start}:${reference.end}:${reference.target}`;
+  const referenceSnapshots = new Map<
+    string,
+    Pick<ReturnType<typeof context>, "candidates" | "people"> & { profileDocuments: string[] }
+  >();
   const linked = (entry: Item) =>
     store
       .list()
@@ -39,16 +45,23 @@ export function captureRefinement(
         parentId,
       }));
   const referenceEvidence = (entry: Item) => {
-    const { candidates, people, profile } = context(
-      entry.body,
-      entry.clarifications.map((answer) => answer.answer).filter(Boolean),
-      entry.references,
-    );
+    let snapshot = referenceSnapshots.get(entry.id);
+    if (!snapshot) {
+      const { candidates, people, profile } = context(
+        entry.body,
+        entry.clarifications.map((answer) => answer.answer).filter(Boolean),
+        entry.references,
+      );
+      snapshot = {
+        candidates: candidates.map((candidate) => ({ ...candidate, id: referenceId(candidate) })),
+        people,
+        profileDocuments: profile.documents.map(({ path }) => path),
+      };
+      referenceSnapshots.set(entry.id, snapshot);
+    }
     return {
-      candidates,
+      ...snapshot,
       references: entry.references,
-      people,
-      profileDocuments: profile.documents.map(({ path }) => path),
     };
   };
   const current = (id: string) => {
@@ -197,9 +210,11 @@ export function captureRefinement(
         const previous = current(input.id);
         if (previous.kind === "note" && previous.status === "done")
           throw new Error("This note is already incorporated.");
-        const candidates = input.referenceIds.length ? referenceEvidence(previous).candidates : [];
+        const retainedIds = new Set(previous.references.map(referenceId));
+        const newIds = input.referenceIds.filter((id) => !retainedIds.has(id));
+        const candidates = newIds.length ? referenceEvidence(previous).candidates : [];
         if (
-          input.referenceIds.some(
+          newIds.some(
             (id) => !candidates.some((candidate) => candidate.id === id && candidate.available),
           )
         )
@@ -212,7 +227,7 @@ export function captureRefinement(
           throw new Error("Only tasks have implementation mode or deadlines.");
         if (previous.noProject && !input.noProject)
           throw new Error("Respect the user's explicit No project selection.");
-        const references = resolveReferences(input.referenceIds, candidates, previous.references);
+        const references = resolveReferences(newIds, candidates, previous.references);
         const {
           id,
           sources,
@@ -271,6 +286,7 @@ export function captureRefinement(
           revision: updated.revision,
           kind: updated.kind,
           processing: updated.processing,
+          references: updated.references,
           clarifications: updated.clarifications,
         };
       },

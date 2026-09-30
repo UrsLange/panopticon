@@ -1,4 +1,5 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
+import type { ReferenceCandidate } from "../server/application/aliases.js";
 import type {
   Assistant,
   AssistantContext,
@@ -8,7 +9,7 @@ import { createCaptures } from "../server/application/captures.js";
 import type { ProfileNotes } from "../server/application/ports.js";
 import { createProfileUpdates } from "../server/application/profile-updates.js";
 import { Store } from "../server/store.js";
-import type { Refinement } from "../shared/schema.js";
+import type { EntityReference, Refinement } from "../shared/schema.js";
 
 const stores: Store[] = [];
 afterEach(() => {
@@ -29,7 +30,9 @@ function setup() {
     consolidateProfile: vi.fn(),
     ask: vi.fn(),
   };
-  const context = vi.fn(
+  const context = vi.fn<
+    (query?: string, history?: string[], references?: EntityReference[]) => AssistantContext
+  >(
     (): AssistantContext => ({
       today: "2026-09-28",
       candidates: [],
@@ -83,6 +86,103 @@ function outcome(id: string, changes: Partial<Refinement> = {}): Refinement {
     ...changes,
   };
 }
+
+it("keeps reference selections stable across saves, repeated lookups and clarification rounds", async () => {
+  const f = setup();
+  const evidence = f.context();
+  f.context.mockClear();
+  const candidates: ReferenceCandidate[] = [
+    {
+      id: "0",
+      start: 4,
+      end: 8,
+      mention: "Anna",
+      kind: "person",
+      target: "anna@example.com",
+      label: "Anna",
+      source: "people",
+      match: "exact",
+      available: true,
+    },
+    {
+      id: "1",
+      start: 13,
+      end: 16,
+      mention: "Bob",
+      kind: "person",
+      target: "bob@example.com",
+      label: "Bob",
+      source: "people",
+      match: "exact",
+      available: true,
+    },
+    {
+      id: "2",
+      start: 4,
+      end: 8,
+      mention: "Anna",
+      kind: "person",
+      target: "other-anna@example.com",
+      label: "Other Anna",
+      source: "people",
+      match: "given-name",
+      available: true,
+    },
+  ];
+  f.context.mockImplementation((_query, _answers, retained = []) => ({
+    ...evidence,
+    candidates: candidates
+      .filter((candidate) => !retained.some((reference) => reference.start === candidate.start))
+      .map((candidate, index) => ({ ...candidate, id: String(index) })),
+  }));
+  let selected: string[] = [];
+  vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+    const first = (await call(tools, "get_reference_candidates", { id: context.capture.id })) as {
+      candidates: ReferenceCandidate[];
+    };
+    selected = first.candidates.slice(0, 2).map((candidate) => candidate.id);
+    await call(
+      tools,
+      "save_refinement",
+      outcome(context.capture.id, { referenceIds: [selected[0]] }),
+    );
+    const second = (await call(tools, "get_reference_candidates", {
+      id: context.capture.id,
+    })) as typeof first;
+    expect(second.candidates).toEqual(first.candidates);
+    await expect(
+      call(
+        tools,
+        "save_refinement",
+        outcome(context.capture.id, { referenceIds: [first.candidates[2].id] }),
+      ),
+    ).rejects.toThrow("Conflicting references");
+    await expect(
+      call(tools, "save_refinement", outcome(context.capture.id, { referenceIds: ["invented"] })),
+    ).rejects.toThrow("available reference IDs");
+    const result = await call(
+      tools,
+      "save_refinement",
+      outcome(context.capture.id, { referenceIds: selected, clarificationQuestions: ["When?"] }),
+    );
+    expect(result).toMatchObject({
+      references: [
+        expect.objectContaining({ target: "anna@example.com" }),
+        expect.objectContaining({ target: "bob@example.com" }),
+      ],
+    });
+  });
+  const item = f.captures.capture("Ask Anna and Bob");
+  await f.captures.close();
+  expect(f.context).toHaveBeenCalledTimes(1);
+  expect(f.store.get(item.id)?.references).toHaveLength(2);
+  vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+    await call(tools, "save_refinement", outcome(context.capture.id, { referenceIds: selected }));
+  });
+  await f.captures.retry(item.id, { resetReferences: false });
+  expect(f.store.get(item.id)?.references).toHaveLength(2);
+  expect(f.context).toHaveBeenCalledTimes(1);
+});
 
 it("keeps questions in the same session through partial answers and failures, then discards it", async () => {
   const f = setup();
