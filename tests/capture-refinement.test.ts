@@ -405,6 +405,25 @@ it("does not absorb a concurrent manual edit into the agent's writable snapshot 
   expect(f.store.get(item.id)?.prompt).toBe("The user's corrected knowledge");
 });
 
+it.each([undefined, "unnecessary", { value: "unnecessary" }])(
+  "does not let malformed diagnostics block completion: %j",
+  async (ctxAssessment) => {
+    const f = setup();
+    vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+      await expect(call(tools, "complete_refinement", { ctxAssessment })).rejects.toThrow(
+        "saving every outcome",
+      );
+      await call(tools, "save_refinement", outcome(context.capture.id));
+      expect(await call(tools, "complete_refinement", { ctxAssessment })).toEqual({
+        completed: true,
+      });
+    });
+    const item = f.captures.capture("Buy milk");
+    await f.captures.close();
+    expect(f.store.get(item.id)?.processing).toBe("ready");
+  },
+);
+
 it("rejects completion until every new outcome is saved and profile notes are handled", async () => {
   const f = setup();
   vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {

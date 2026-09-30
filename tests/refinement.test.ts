@@ -123,6 +123,30 @@ function saveTool() {
   return { tool, execute, tools: [tool, complete] };
 }
 
+it.each([{}, { ctxAssessment: "unnecessary" }, { ctxAssessment: { value: "unnecessary" } }])(
+  "finishes without a diagnostic repair request: %j",
+  async (args) => {
+    const model = await provider(() => [
+      call("save_refinement", { sources: [] }, "save"),
+      call("complete_refinement", args, "complete"),
+    ]);
+    const record = vi.fn<(metrics: RefinementMetrics) => void>();
+    await createAssistant("key", "model", model.url, undefined, record)?.interpret(
+      "Buy milk",
+      context,
+      saveTool().tools,
+    );
+    expect(model.requests).toHaveLength(1);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "completed",
+        toolFailures: 0,
+        ctx: expect.objectContaining({ assessment: null }),
+      }),
+    );
+  },
+);
+
 it("records CTX cost, cited evidence and self-assessment without another model request", async () => {
   const assessment = {
     value: "helpful",

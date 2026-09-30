@@ -56,9 +56,14 @@ export type RefinementContinuation = {
   save(state: string): void;
 };
 
-export const ctxAssessmentSchema = z
+const assessmentSchema = z
   .object({
     value: z.enum(["essential", "helpful", "unnecessary", "harmful"]),
     explanation: z.string(),
   })
   .nullable();
+
+export const ctxAssessmentSchema = z.preprocess(
+  (value) => assessmentSchema.safeParse(value).data ?? null,
+  assessmentSchema,
+);
