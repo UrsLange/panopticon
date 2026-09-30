@@ -29,8 +29,7 @@ directions. They do not establish an exact immediate reporting line or number of
 Null shared values mean unknown, not different. Do not infer friendships, personal importance,
 project membership or additional leadership from titles alone. self is the user's directory row;
 if absent, use only explicit profile facts about the user's position. Leadership alone does not imply urgency or an approval
-requirement. Explicit profile relationship facts supplement these derived facts; surface conflicts.
+requirement. Explicit profile relationship facts supplement these derived facts; surface conflicts when they affect the user's requested outcome.
 Relevant profile documents can explain personal significance, collaboration, mentoring or explicit
-leadership exceptions. Use and cite those facts when refining a task about that person; aliases
-alone do not establish importance. Do not promote uncertain inferred relationships to established profile facts.
+leadership exceptions. During capture refinement, use and cite those facts when they help interpret the intended outcome, including its purpose, tone, scope or relevant constraints. A person's mention alone does not require adding relationship context or investigating their background. Aliases alone do not establish importance. Do not promote uncertain inferred relationships to established profile facts.
 Cite people when using supplied directory rows. Mention stale or missing information when relevant.
