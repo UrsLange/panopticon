@@ -601,6 +601,56 @@ it("saves and completes a simple task in one model request", async () => {
   expect(model.requests[0]).toHaveProperty("parallel_tool_calls", true);
 });
 
+it("saves and completes in one tool call without a confirmation request", async () => {
+  const saved = saveTool();
+  const model = await provider(() => [
+    call(
+      "save_refinement",
+      { sources: [], prompt: "Buy milk.", complete: true, ctxAssessment: "unnecessary" },
+      "save",
+    ),
+  ]);
+  const record = vi.fn<(metrics: RefinementMetrics) => void>();
+  const checkpoint = vi.fn();
+  await createAssistant("key", "model", model.url, undefined, record)?.interpret(
+    "Buy milk",
+    context,
+    saved.tools,
+    { state: null, save: checkpoint },
+  );
+  expect(model.requests).toHaveLength(1);
+  expect(saved.execute).toHaveBeenCalledTimes(1);
+  expect(record).toHaveBeenCalledWith(
+    expect.objectContaining({
+      requests: 1,
+      toolCalls: 1,
+      toolFailures: 0,
+      status: "completed",
+      ctx: expect.objectContaining({ assessment: null }),
+    }),
+  );
+  const history = JSON.parse(checkpoint.mock.calls[0][0]).input;
+  expect(history.at(-1)).toMatchObject({ type: "function_call_output", call_id: "save" });
+});
+
+it("requires a completing save to be last and rejects completion after a failed change", async () => {
+  const saved = saveTool();
+  const model = await provider((_request, index) =>
+    index === 0
+      ? [
+          call("save_refinement", { complete: true, sources: [] }, "early"),
+          call("save_refinement", { complete: false, sources: ["invented.md"] }, "invalid"),
+          call("save_refinement", { complete: true, sources: [] }, "final"),
+        ]
+      : [call("save_refinement", { complete: true, sources: [] }, "fixed")],
+  );
+  await createAssistant("key", "model", model.url)?.interpret("Buy milk", context, saved.tools);
+  expect(model.requests).toHaveLength(2);
+  expect(saved.execute).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(model.requests[1].input)).toContain("last call");
+  expect(JSON.stringify(model.requests[1].input)).toContain("preceding change failed");
+});
+
 it("runs independent reads together and preserves barriers around ordered changes", async () => {
   const saved = saveTool();
   const events: string[] = [];

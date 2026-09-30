@@ -203,9 +203,9 @@ export function captureRefinement(
     ),
     tool(
       "save_refinement",
-      "Save what the user means and any material clarification questions. prompt is a clear task or idea description, or a concise statement of the intended result for an implementation agent in the identified project. Do not investigate or prescribe implementation details. This does not start implementation or incorporate profile notes.",
+      "Save what the user means and any material clarification questions. Set complete to true on the final save to finish in this call; all other outcomes must be saved and profile notes handled. Use complete false only when more outcome work or note incorporation remains. prompt expresses intent, not implementation details. This does not start implementation or incorporate profile notes. ctxAssessment is diagnostic; use null when CTX was not used.",
       false,
-      refinementSchema,
+      refinementSchema.extend({ complete: z.boolean(), ctxAssessment: ctxAssessmentSchema }),
       (input) => {
         const previous = current(input.id);
         if (previous.kind === "note" && previous.status === "done")
@@ -234,7 +234,7 @@ export function captureRefinement(
           referenceIds: _referenceIds,
           clarificationQuestions,
           ...fields
-        } = input;
+        } = refinementSchema.parse(input);
         const updated = store.update(
           id,
           {
@@ -281,7 +281,9 @@ export function captureRefinement(
         );
         owned.set(id, updated);
         saved.add(id);
+        if (input.complete) finish();
         return {
+          completed: input.complete,
           id: updated.id,
           revision: updated.revision,
           kind: updated.kind,

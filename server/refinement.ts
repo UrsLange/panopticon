@@ -248,15 +248,20 @@ export async function refineCapture(
         log("tool_started", { request: requests, toolCall, tool: tool?.name ?? "unknown" });
         try {
           if (!tool) throw new Error("Unknown refinement tool.");
-          if (call.name === "complete_refinement") {
+          const args = JSON.parse(call.arguments);
+          const completing =
+            call.name === "complete_refinement" ||
+            (call.name === "save_refinement" && args.complete === true);
+          if (completing) {
             if (call !== calls.at(-1))
-              throw new Error("Call complete_refinement last, after all other work.");
+              throw new Error(
+                "Call complete_refinement last, or make the final save with complete true the last call.",
+              );
             if (failedChange)
               throw new Error(
                 "A preceding change failed. Inspect its result and repair it before completing.",
               );
           }
-          const args = JSON.parse(call.arguments);
           if (call.name === "save_refinement") {
             const available = new Set(
               [...sources].map((source) => URL.parse(source)?.href ?? source),
@@ -278,7 +283,7 @@ export async function refineCapture(
           if (call.name === "save_refinement")
             for (const source of args.sources)
               if (ctxSources.has(source)) citedCtxSources.add(source);
-          if (call.name === "complete_refinement") {
+          if (completing) {
             ctx.assessment = ctxAssessmentSchema.parse(args.ctxAssessment);
             completed = true;
           }

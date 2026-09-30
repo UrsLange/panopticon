@@ -68,8 +68,13 @@ async function call(tools: RefinementTool[], name: string, input: unknown) {
   assert(tool);
   return (await tool.execute(input, new AbortController().signal)).data;
 }
-function outcome(id: string, changes: Partial<Refinement> = {}): Refinement {
+function outcome(
+  id: string,
+  changes: Partial<Refinement> & { complete?: boolean } = {},
+): Refinement & { complete: boolean; ctxAssessment: null } {
   return {
+    complete: false,
+    ctxAssessment: null,
     id,
     title: "Discuss rollout",
     kind: "commitment",
@@ -549,6 +554,34 @@ it("rejects completion until every new outcome is saved and profile notes are ha
   const item = f.captures.capture("Anna owns onboarding; discuss the rollout with her");
   await f.captures.close();
   expect(f.store.get(item.id)?.processing).toBe("ready");
+});
+
+it("allows a final save to complete questions but enforces linked outcomes and profile incorporation", async () => {
+  const f = setup();
+  vi.mocked(f.assistant.interpret).mockImplementation(async (_text, context, tools) => {
+    const child = (await call(tools, "create_linked_capture", {
+      text: "Anna owns onboarding",
+    })) as { id: string };
+    const finalSave = outcome(context.capture.id, {
+      complete: true,
+      clarificationQuestions: ["When?"],
+    });
+    await expect(call(tools, "save_refinement", finalSave)).rejects.toThrow("saving every outcome");
+    await call(tools, "save_refinement", outcome(child.id, { kind: "note" }));
+    await expect(call(tools, "save_refinement", finalSave)).rejects.toThrow("not incorporated");
+    await call(tools, "incorporate_note", { id: child.id });
+    expect(
+      await call(tools, "save_refinement", { ...finalSave, ctxAssessment: "malformed diagnostic" }),
+    ).toMatchObject({ completed: true, processing: "review" });
+  });
+  const item = f.captures.capture("Anna owns onboarding; discuss the rollout");
+  await f.captures.close();
+  expect(f.store.get(item.id)).toMatchObject({
+    processing: "review",
+    processingError: null,
+    clarifications: [expect.objectContaining({ question: "When?" })],
+  });
+  expect(f.incorporate).toHaveBeenCalledTimes(1);
 });
 
 it("requires unfinished linked outcomes from an earlier attempt to be saved on retry", async () => {

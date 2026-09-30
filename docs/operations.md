@@ -88,7 +88,7 @@ SELECT createdAt, itemId,
 FROM refinement_runs ORDER BY createdAt DESC LIMIT 20;'
 ```
 
-Review whether history resolved an actual ambiguity, and compare elapsed time and request counts for similar captures. The model's assessment and citations are clues, not proof that CTX improved the result. Search/read duration excludes the model time spent deciding, interpreting and replaying history; parallel tool durations can overlap. Runs with and without CTX are not randomized or necessarily comparable. These records contain local diagnostic explanations and should be treated as private app data.
+Review whether history resolved an actual ambiguity, and compare elapsed time and request counts for similar captures. The model's assessment and citations are clues, not proof that CTX improved the result. A null assessment can mean unused CTX or missing/malformed diagnostic output; use the recorded lookup counts to distinguish them. Invalid diagnostics do not block saved outcomes. Search/read duration excludes the model time spent deciding, interpreting and replaying history; parallel tool durations can overlap. Runs with and without CTX are not randomized or necessarily comparable. These records contain local diagnostic explanations and should be treated as private app data.
 
 ### Common issues
 

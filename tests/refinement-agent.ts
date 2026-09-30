@@ -39,12 +39,16 @@ export function refinementAgent(
       clarificationQuestions: [],
       ...result,
     };
-    await save.execute(value, new AbortController().signal);
-    if (value.kind === "note" && !value.clarificationQuestions.length && !context.referencesOnly) {
-      const incorporate = tools.find((tool) => tool.name === "incorporate_note");
-      assert(incorporate);
-      await incorporate.execute({ id: value.id }, new AbortController().signal);
-    }
+    const needsIncorporation =
+      value.kind === "note" && !value.clarificationQuestions.length && !context.referencesOnly;
+    await save.execute(
+      { ...value, complete: !needsIncorporation, ctxAssessment: null },
+      new AbortController().signal,
+    );
+    if (!needsIncorporation) return;
+    const incorporate = tools.find((tool) => tool.name === "incorporate_note");
+    assert(incorporate);
+    await incorporate.execute({ id: value.id }, new AbortController().signal);
     const complete = tools.find((tool) => tool.name === "complete_refinement");
     assert(complete);
     await complete.execute({ ctxAssessment: null }, new AbortController().signal);

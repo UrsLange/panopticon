@@ -438,6 +438,8 @@ export function mockProvider() {
                 arguments: JSON.stringify({
                   ...(output as object),
                   id: payload.context.capture.id,
+                  complete: !(explicitNote || implicitNote),
+                  ctxAssessment: null,
                   execution: payload.capture.startsWith("Implement ") ? "implementation" : "manual",
                   noProject: payload.context.capture.noProject,
                 }),
