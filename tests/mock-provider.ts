@@ -220,7 +220,7 @@ export function mockProvider() {
                     id: "fc_complete",
                     call_id: "complete",
                     name: "complete_refinement",
-                    arguments: "{}",
+                    arguments: JSON.stringify({ ctxAssessment: null }),
                   },
                 ],
           }),

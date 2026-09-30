@@ -69,6 +69,29 @@ Stop older instances before upgrading. Install locked dependencies with `mise ru
 
 ## Troubleshooting
 
+### Refinement and CTX measurements
+
+Run summaries are saved in the application's `assistant.sqlite` database. Inspect recent runs without needing to preserve terminal output:
+
+```sh
+sqlite3 -readonly -header -column ~/.local/share/personal-assistant/assistant.sqlite '
+SELECT createdAt, itemId,
+  json_extract(metrics, "$.durationMs") AS elapsed_ms,
+  json_extract(metrics, "$.requests") AS model_requests,
+  json_extract(metrics, "$.resumed") AS resumed,
+  json_extract(metrics, "$.ctx.searches") AS ctx_searches,
+  json_extract(metrics, "$.ctx.reads") AS ctx_reads,
+  json_extract(metrics, "$.ctx.durationMs") AS ctx_tool_ms,
+  json_extract(metrics, "$.ctx.citedSources") AS ctx_citations,
+  json_extract(metrics, "$.ctx.assessment.value") AS ctx_assessment,
+  json_extract(metrics, "$.ctx.assessment.explanation") AS ctx_explanation
+FROM refinement_runs ORDER BY createdAt DESC LIMIT 20;'
+```
+
+Review whether history resolved an actual ambiguity, and compare elapsed time and request counts for similar captures. The model's assessment and citations are clues, not proof that CTX improved the result. Search/read duration excludes the model time spent deciding, interpreting and replaying history; parallel tool durations can overlap. Runs with and without CTX are not randomized or necessarily comparable. These records contain local diagnostic explanations and should be treated as private app data.
+
+### Common issues
+
 **Model connection fails.** Check the endpoint, key, model permissions, network/VPN, and Responses API/tool/structured-output support. Previous working settings are preserved after failed validation.
 
 **Capture processing fails.** The original capture is retained. Restore the provider connection and retry. Review clarification requests before allowing profile incorporation.

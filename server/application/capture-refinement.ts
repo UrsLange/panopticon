@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { type Item, refinementSchema } from "../../shared/schema.js";
 import { resolveReferences } from "./aliases.js";
-import type { RefinementContext, RefinementTool } from "./assistant.js";
+import { ctxAssessmentSchema, type RefinementContext, type RefinementTool } from "./assistant.js";
 import type { createContext } from "./context.js";
 import { assertRevision } from "./items.js";
 import type { CaptureStorage } from "./ports.js";
@@ -324,7 +324,7 @@ export function captureRefinement(
       "complete_refinement",
       "Finish the session after saving every outcome and handling any profile notes. May follow successful saves in the same response as the last tool call. No further model response is needed. Completion validates saved outcomes and concurrent edits.",
       false,
-      z.object({}),
+      z.object({ ctxAssessment: ctxAssessmentSchema }),
       () => {
         finish();
         return { completed: true };

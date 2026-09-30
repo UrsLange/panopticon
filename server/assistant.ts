@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Assistant } from "./application/assistant.js";
 import { consolidateProfile, runProfileAgent } from "./profile-learning-agent.js";
 import { prompts } from "./prompts.js";
-import { refineCapture, responseHistory } from "./refinement.js";
+import { type RefinementMetrics, refineCapture, responseHistory } from "./refinement.js";
 import type { Research } from "./research-tools.js";
 
 const replySchema = z.object({ answer: z.string(), sources: z.array(z.string()) });
@@ -76,6 +76,7 @@ export function createAssistant(
   model: string,
   baseURL: string,
   research: () => Research = () => ({ scopes: [], tools: [] }),
+  record?: (metrics: RefinementMetrics) => void,
 ): Assistant | null {
   if (!apiKey || !model) return null;
   const client = new OpenAI({
@@ -97,6 +98,7 @@ export function createAssistant(
         research(),
         tools,
         continuation,
+        record,
       );
     },
     updateProfile: (workspace, tools) =>

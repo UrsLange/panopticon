@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { PeopleContext } from "../../shared/people.js";
 import type { AssistantReply, EntityReference, Item } from "../../shared/schema.js";
 import type { ReferenceCandidate } from "./aliases.js";
@@ -54,3 +55,10 @@ export type RefinementContinuation = {
   state: string | null;
   save(state: string): void;
 };
+
+export const ctxAssessmentSchema = z
+  .object({
+    value: z.enum(["essential", "helpful", "unnecessary", "harmful"]),
+    explanation: z.string(),
+  })
+  .nullable();

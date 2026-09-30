@@ -20,6 +20,7 @@ import type {
   ProfileLearningState,
 } from "./application/profile-learning-model.js";
 import type { GitHubCacheEntry } from "./github-api.js";
+import type { RefinementMetrics } from "./refinement.js";
 
 const personPattern = (value: string) =>
   new RegExp(
@@ -32,6 +33,14 @@ const personPattern = (value: string) =>
 
 export class Store {
   readonly db: DatabaseSync;
+
+  recordRefinementRun(profileRoot: string, metrics: RefinementMetrics) {
+    this.db
+      .prepare(
+        "INSERT INTO refinement_runs (runId, profileRoot, itemId, createdAt, metrics) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(metrics.runId, profileRoot, metrics.itemId, metrics.timestamp, JSON.stringify(metrics));
+  }
 
   refinementSession(profileRoot: string, itemId: string): string | null {
     const row = this.db
@@ -84,6 +93,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS refinement_sessions (
         profileRoot TEXT NOT NULL, itemId TEXT NOT NULL REFERENCES items(id), state TEXT NOT NULL,
         PRIMARY KEY (profileRoot, itemId)
+      );
+      CREATE TABLE IF NOT EXISTS refinement_runs (
+        runId TEXT PRIMARY KEY, profileRoot TEXT NOT NULL, itemId TEXT NOT NULL,
+        createdAt TEXT NOT NULL, metrics TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS implementations (
         id TEXT PRIMARY KEY, itemId TEXT NOT NULL REFERENCES items(id),

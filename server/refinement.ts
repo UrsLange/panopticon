@@ -2,14 +2,46 @@ import { createHash, randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
 import type { ResponseInputItem, ResponseOutputItem } from "openai/resources/responses/responses";
-import type {
-  RefinementContext,
-  RefinementContinuation,
-  RefinementTool,
+import {
+  ctxAssessmentSchema,
+  type RefinementContext,
+  type RefinementContinuation,
+  type RefinementTool,
 } from "./application/assistant.js";
 import { ApplicationError } from "./application/errors.js";
 import { prompts } from "./prompts.js";
 import type { Research } from "./research-tools.js";
+
+export type RefinementMetrics = {
+  runId: string;
+  sessionId: string;
+  itemId: string;
+  model: string;
+  resumed: boolean;
+  timestamp: string;
+  status: string;
+  durationMs: number;
+  modelDurationMs: number;
+  requests: number;
+  toolCalls: number;
+  toolFailures: number;
+  webSearchCalls: number;
+  usageRequests: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  ctx: {
+    searches: number;
+    reads: number;
+    failures: number;
+    durationMs: number;
+    requestRounds: number;
+    evidenceSources: number;
+    citedSources: number;
+    priorEvidence: boolean;
+    priorLookup: boolean;
+    assessment: ReturnType<typeof ctxAssessmentSchema.parse>;
+  };
+};
 
 export function responseHistory(output: ResponseOutputItem[]) {
   // Some providers return null for an absent namespace but reject it when replayed.
@@ -27,6 +59,7 @@ export async function refineCapture(
   research: Research,
   captureTools: RefinementTool[],
   continuation?: RefinementContinuation,
+  record?: (metrics: RefinementMetrics) => void,
 ) {
   const tools = [...research.tools, ...captureTools];
   const compatibility = createHash("sha256")
@@ -46,6 +79,8 @@ export async function refineCapture(
         sessionId: string;
         input: ResponseInputItem[];
         sources: string[];
+        ctxSources: string[];
+        ctxUsed: boolean;
       })
     : null;
   const session = previous?.compatibility === compatibility ? previous : null;
@@ -65,6 +100,21 @@ export async function refineCapture(
   const signal = new AbortController().signal;
   const runId = randomUUID();
   const started = performance.now();
+  const ctxSources = new Set(session?.ctxSources ?? []);
+  const citedCtxSources = new Set<string>();
+  let modelDurationMs = 0;
+  const ctx: RefinementMetrics["ctx"] = {
+    searches: 0,
+    reads: 0,
+    failures: 0,
+    durationMs: 0,
+    requestRounds: 0,
+    evidenceSources: 0,
+    citedSources: 0,
+    priorEvidence: ctxSources.size > 0,
+    priorLookup: session?.ctxUsed ?? false,
+    assessment: null,
+  };
   let requests = 0,
     toolCalls = 0,
     toolFailures = 0,
@@ -115,6 +165,7 @@ export async function refineCapture(
       const response = await client.responses
         .create(request, { timeout: 120000 })
         .catch((error: unknown) => {
+          modelDurationMs += performance.now() - requestStarted;
           log("request_finished", {
             request: requests,
             durationMs: Math.round(performance.now() - requestStarted),
@@ -133,6 +184,7 @@ export async function refineCapture(
           }
           throw error;
         });
+      modelDurationMs += performance.now() - requestStarted;
       const usage = response.usage;
       if (usage) {
         inputTokens += usage.input_tokens;
@@ -169,6 +221,8 @@ export async function refineCapture(
           }
       }
       const calls = response.output.filter((item) => item.type === "function_call");
+      if (calls.some((call) => ["search_history", "read_history"].includes(call.name)))
+        ctx.requestRounds++;
       if (!calls.length) {
         if (
           response.output.some((item) => item.type === "web_search_call") &&
@@ -188,6 +242,9 @@ export async function refineCapture(
         const toolStarted = performance.now();
         const toolCall = ++toolCalls;
         let status = "completed";
+        const historyCall = ["search_history", "read_history"].includes(call.name);
+        if (call.name === "search_history") ctx.searches++;
+        if (call.name === "read_history") ctx.reads++;
         log("tool_started", { request: requests, toolCall, tool: tool?.name ?? "unknown" });
         try {
           if (!tool) throw new Error("Unknown refinement tool.");
@@ -217,10 +274,18 @@ export async function refineCapture(
           const result = await tool.execute(args, signal);
           output = result.data;
           for (const source of result.sources) sources.add(source);
-          if (call.name === "complete_refinement") completed = true;
+          if (historyCall) for (const source of result.sources) ctxSources.add(source);
+          if (call.name === "save_refinement")
+            for (const source of args.sources)
+              if (ctxSources.has(source)) citedCtxSources.add(source);
+          if (call.name === "complete_refinement") {
+            ctx.assessment = ctxAssessmentSchema.parse(args.ctxAssessment);
+            completed = true;
+          }
         } catch (error) {
           status = "failed";
           toolFailures++;
+          if (historyCall) ctx.failures++;
           if (!tool?.readOnly) failedChange = true;
           output = {
             error: (error as Error).message,
@@ -229,6 +294,7 @@ export async function refineCapture(
           };
         }
         const serialized = JSON.stringify(output);
+        if (historyCall) ctx.durationMs += performance.now() - toolStarted;
         log("tool_finished", {
           request: requests,
           toolCall,
@@ -256,7 +322,14 @@ export async function refineCapture(
           input.push(await execute(calls[index++]));
           if (completed) {
             continuation?.save(
-              JSON.stringify({ compatibility, sessionId, input, sources: [...sources] }),
+              JSON.stringify({
+                compatibility,
+                sessionId,
+                input,
+                sources: [...sources],
+                ctxSources: [...ctxSources],
+                ctxUsed: ctx.priorLookup || ctx.searches + ctx.reads > 0,
+              }),
             );
             outcome = "completed";
             return;
@@ -265,9 +338,19 @@ export async function refineCapture(
       }
     }
   } finally {
-    log("finished", {
+    ctx.durationMs = Math.round(ctx.durationMs);
+    ctx.evidenceSources = ctxSources.size;
+    ctx.citedSources = citedCtxSources.size;
+    const metrics: RefinementMetrics = {
+      runId,
+      sessionId,
+      itemId: context.capture.id,
+      model,
+      resumed: !!session,
+      timestamp: new Date().toISOString(),
       status: outcome,
       durationMs: Math.round(performance.now() - started),
+      modelDurationMs: Math.round(modelDurationMs),
       requests,
       toolCalls,
       toolFailures,
@@ -275,6 +358,13 @@ export async function refineCapture(
       usageRequests,
       inputTokens: usageRequests ? inputTokens : null,
       outputTokens: usageRequests ? outputTokens : null,
-    });
+      ctx,
+    };
+    log("finished", { ...metrics, ctx: { ...ctx, assessment: ctx.assessment?.value ?? null } });
+    try {
+      record?.(metrics);
+    } catch {
+      console.error("Could not persist refinement performance metrics", { runId });
+    }
   }
 }

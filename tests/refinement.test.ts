@@ -9,8 +9,9 @@ import type { RefinementContext, RefinementTool } from "../server/application/as
 import { capturedItem } from "../server/application/items.js";
 import { createAssistant, validateToolCalling } from "../server/assistant.js";
 import { readSessionEvent, searchSessionEvidence } from "../server/ctx.js";
-import { refineCapture } from "../server/refinement.js";
+import { type RefinementMetrics, refineCapture } from "../server/refinement.js";
 import { createResearch } from "../server/research-tools.js";
+import { Store } from "../server/store.js";
 
 vi.mock("../server/ctx.js", () => ({
   searchSessionEvidence: vi.fn(async () => ({
@@ -122,6 +123,133 @@ function saveTool() {
   return { tool, execute, tools: [tool, complete] };
 }
 
+it("records CTX cost, cited evidence and self-assessment without another model request", async () => {
+  const assessment = {
+    value: "helpful",
+    explanation: "Established that onboarding refers to the invitation flow.",
+  };
+  const model = await provider(
+    (_request, index) => {
+      if (index === 0)
+        return [
+          call("search_history", { query: "prior decision", project: null, since: null }, "search"),
+        ];
+      if (index === 1) return [call("read_history", { eventId: "abcdef12", offset: 0 }, "read")];
+      return [
+        call("save_refinement", { sources: ["ctx:abcdef12"] }, `save-${index}`),
+        call("complete_refinement", { ctxAssessment: assessment }, `complete-${index}`),
+      ];
+    },
+    { input_tokens: 100, output_tokens: 20 },
+  );
+  const store = new Store(":memory:");
+  cleanup.push(async () => store.db.close());
+  const records: RefinementMetrics[] = [];
+  const assistant = createAssistant(
+    "key",
+    "model",
+    model.url,
+    () => createResearch([]),
+    (metrics) => {
+      records.push(metrics);
+      store.recordRefinementRun("/profile", metrics);
+    },
+  );
+  assert(assistant);
+  let state: string | null = null;
+  const continuation = () => ({
+    state,
+    save: (value: string) => {
+      state = value;
+    },
+  });
+  await assistant.interpret("Continue the earlier plan", context, saveTool().tools, continuation());
+  expect(records[0]).toMatchObject({
+    requests: 3,
+    inputTokens: 300,
+    outputTokens: 60,
+    ctx: {
+      searches: 1,
+      reads: 1,
+      failures: 0,
+      requestRounds: 2,
+      evidenceSources: 1,
+      citedSources: 1,
+      priorLookup: false,
+      assessment,
+    },
+  });
+  expect(records[0].modelDurationMs).toBeGreaterThanOrEqual(0);
+  expect(records[0].ctx.durationMs).toBeGreaterThanOrEqual(0);
+  await assistant.interpret("Continue the earlier plan", context, saveTool().tools, continuation());
+  expect(records[1]).toMatchObject({
+    requests: 1,
+    resumed: true,
+    sessionId: records[0].sessionId,
+    ctx: {
+      searches: 0,
+      reads: 0,
+      requestRounds: 0,
+      evidenceSources: 1,
+      citedSources: 1,
+      priorLookup: true,
+      priorEvidence: true,
+      assessment,
+    },
+  });
+  const rows = store.db.prepare("SELECT metrics FROM refinement_runs ORDER BY rowid").all();
+  expect(rows.map((row) => JSON.parse(String(row.metrics)))).toEqual(records);
+  expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toContain(assessment.explanation);
+});
+
+it("records failed optional CTX lookups and no-CTX refinements", async () => {
+  vi.mocked(searchSessionEvidence).mockRejectedValueOnce(new Error("CTX unavailable"));
+  const model = await provider((_request, index) =>
+    index === 0
+      ? [call("search_history", { query: "prior decision", project: null, since: null }, "search")]
+      : [
+          call("save_refinement", { sources: [] }, `save-${index}`),
+          call(
+            "complete_refinement",
+            {
+              ctxAssessment:
+                index === 1
+                  ? { value: "unnecessary", explanation: "The capture was self-contained." }
+                  : null,
+            },
+            `complete-${index}`,
+          ),
+        ],
+  );
+  const record = vi.fn<(metrics: RefinementMetrics) => void>();
+  const assistant = createAssistant("key", "model", model.url, () => createResearch([]), record);
+  assert(assistant);
+  await assistant.interpret("Buy milk", context, saveTool().tools);
+  expect(record.mock.calls[0][0]).toMatchObject({
+    status: "completed",
+    toolFailures: 1,
+    ctx: {
+      searches: 1,
+      reads: 0,
+      failures: 1,
+      citedSources: 0,
+      assessment: { value: "unnecessary" },
+    },
+  });
+  await assistant.interpret("Buy milk", context, saveTool().tools);
+  expect(record.mock.calls[1][0]).toMatchObject({
+    requests: 1,
+    ctx: {
+      searches: 0,
+      reads: 0,
+      failures: 0,
+      requestRounds: 0,
+      priorLookup: false,
+      assessment: null,
+    },
+  });
+});
+
 it("resumes the full conversation and source evidence with a new assistant instance", async () => {
   const f = await provider((_request, index) =>
     index === 0
@@ -140,7 +268,7 @@ it("resumes the full conversation and source evidence with a new assistant insta
             { ...interpretation, sources: index < 3 ? ["rules.md"] : [] },
             `save-${index}`,
           ),
-          call("complete_refinement", {}, `complete-${index}`),
+          call("complete_refinement", { ctxAssessment: null }, `complete-${index}`),
         ],
   );
   const root = mkdtempSync(join(tmpdir(), "pa-continuation-"));
@@ -274,7 +402,7 @@ it("retains profile, project, CTX and capture evidence across tool turns", async
     if (index === 4) return [call("search_captures", {}, "captures")];
     if (index === 5)
       return [call("save_refinement", { ...interpretation, sources: evidence }, "save")];
-    return [call("complete_refinement", {}, "complete")];
+    return [call("complete_refinement", { ctxAssessment: null }, "complete")];
   });
   const assistant = createAssistant("test-key", "test", model.url, () =>
     createResearch([
@@ -347,7 +475,7 @@ it.each(["empty", "unavailable"])(
                 "save",
               ),
             ]
-          : [call("complete_refinement", {}, "complete")],
+          : [call("complete_refinement", { ctxAssessment: null }, "complete")],
     );
     const assistant = createAssistant("test-key", "test", model.url, () => createResearch([]));
     await assistant?.interpret("Call Anna", context, saved.tools);
@@ -369,7 +497,7 @@ it("rejects invented citations as a tool error and lets the agent repair the sav
             `save${index}`,
           ),
         ]
-      : [call("complete_refinement", {}, "complete")],
+      : [call("complete_refinement", { ctxAssessment: null }, "complete")],
   );
   await createAssistant("test-key", "test", model.url)?.interpret("A clear task", context, [
     ...saved.tools,
@@ -393,7 +521,7 @@ it("recovers a missing file path without changing the saved outcome", async () =
         ]
       : index === 2
         ? [call("save_refinement", { sources: ["rules.md"], clarificationQuestions: [] }, "save")]
-        : [call("complete_refinement", {}, "complete")],
+        : [call("complete_refinement", { ctxAssessment: null }, "complete")],
   );
   await createAssistant("test-key", "test", model.url, () =>
     createResearch([{ id: "profile", name: "Profile", root }]),
@@ -419,7 +547,7 @@ it("retains hosted web citations across web-only and local tool turns", async ()
         ]
       : index === 1
         ? [call("save_refinement", { sources: [url] }, "save")]
-        : [call("complete_refinement", {}, "complete")],
+        : [call("complete_refinement", { ctxAssessment: null }, "complete")],
   );
   await createAssistant("test-key", "test", model.url)?.interpret(`Review ${url}`, context, [
     ...saved.tools,
@@ -441,7 +569,7 @@ it("saves and completes a simple task in one model request", async () => {
   const saved = saveTool();
   const model = await provider(() => [
     call("save_refinement", { sources: [], prompt: "Buy milk." }, "save"),
-    call("complete_refinement", {}, "complete"),
+    call("complete_refinement", { ctxAssessment: null }, "complete"),
   ]);
   await createAssistant("test-key", "test", model.url)?.interpret("Buy milk", context, saved.tools);
   expect(saved.execute).toHaveBeenCalledTimes(1);
@@ -481,7 +609,7 @@ it("runs independent reads together and preserves barriers around ordered change
     call("save_refinement", { step: "one", sources: ["first", "second"] }, "one"),
     call("save_refinement", { step: "two", sources: [] }, "two"),
     call("after", {}, "after"),
-    call("complete_refinement", {}, "complete"),
+    call("complete_refinement", { ctxAssessment: null }, "complete"),
   ]);
   await createAssistant("test-key", "test", model.url)?.interpret("A task", context, [
     ...readers,
@@ -504,7 +632,7 @@ it("does not complete after a failed change in the same response", async () => {
   const complete = vi.spyOn(saved.tools[1], "execute");
   const model = await provider((_request, index) => [
     call("save_refinement", { sources: index ? [] : ["invented.md"] }, `save${index}`),
-    call("complete_refinement", {}, `complete${index}`),
+    call("complete_refinement", { ctxAssessment: null }, `complete${index}`),
   ]);
   await createAssistant("test-key", "test", model.url)?.interpret("A task", context, saved.tools);
   expect(complete).toHaveBeenCalledTimes(1);
@@ -518,8 +646,11 @@ it("requires completion to be the last call", async () => {
   const complete = vi.spyOn(saved.tools[1], "execute");
   const model = await provider((_request, index) =>
     index === 0
-      ? [call("complete_refinement", {}, "early"), call("save_refinement", { sources: [] }, "save")]
-      : [call("complete_refinement", {}, "complete")],
+      ? [
+          call("complete_refinement", { ctxAssessment: null }, "early"),
+          call("save_refinement", { sources: [] }, "save"),
+        ]
+      : [call("complete_refinement", { ctxAssessment: null }, "complete")],
   );
   await createAssistant("test-key", "test", model.url)?.interpret("A task", context, saved.tools);
   expect(complete).toHaveBeenCalledTimes(1);
@@ -532,7 +663,7 @@ it("logs request and tool timings, usage and failures without logging private co
   const model = await provider(
     (_request, index) => [
       call("save_refinement", { sources: [], prompt: "private tool argument" }, `save${index}`),
-      ...(index ? [call("complete_refinement", {}, "complete")] : []),
+      ...(index ? [call("complete_refinement", { ctxAssessment: null }, "complete")] : []),
     ],
     { input_tokens: 100, output_tokens: 25 },
   );

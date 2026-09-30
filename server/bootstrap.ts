@@ -62,28 +62,35 @@ export function createApplication(options: AppOptions = {}) {
     if (options.assistant !== undefined) return options.assistant;
     if (!settings.modelReady) return null;
     const connection = settings.credentials();
-    return createAssistant(connection.apiKey ?? "", connection.model, connection.baseURL, () => {
-      const documents = profileNotes.documents();
-      return createRefinementResearch([
-        { id: "profile", name: "Personal profile", root: profileNotes.root },
-        ...scanner
-          .status()
-          .projects.filter(
-            (project) =>
-              project.availability === "available" &&
-              settings.projectRoots.includes(project.root) &&
-              resolve(project.root, project.name) === resolve(project.path),
-          )
-          .map((project) => ({
-            id: `project:${project.id}`,
-            name: project.name,
-            root: project.path,
-            description:
-              documents.find((document) => document.path === project.document)?.description ?? "",
-            ...(project.document ? { profileDocument: project.document } : {}),
-          })),
-      ]);
-    });
+    const profileRoot = profileNotes.root;
+    return createAssistant(
+      connection.apiKey ?? "",
+      connection.model,
+      connection.baseURL,
+      () => {
+        const documents = profileNotes.documents();
+        return createRefinementResearch([
+          { id: "profile", name: "Personal profile", root: profileNotes.root },
+          ...scanner
+            .status()
+            .projects.filter(
+              (project) =>
+                project.availability === "available" &&
+                settings.projectRoots.includes(project.root) &&
+                resolve(project.root, project.name) === resolve(project.path),
+            )
+            .map((project) => ({
+              id: `project:${project.id}`,
+              name: project.name,
+              root: project.path,
+              description:
+                documents.find((document) => document.path === project.document)?.description ?? "",
+              ...(project.document ? { profileDocument: project.document } : {}),
+            })),
+        ]);
+      },
+      (metrics) => store.recordRefinementRun(profileRoot, metrics),
+    );
   };
   const now = options.now ?? (() => new Date());
   const today = () => dayInTimezone(now(), options.timezone ?? settings.timezone);

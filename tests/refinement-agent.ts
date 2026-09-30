@@ -47,6 +47,6 @@ export function refinementAgent(
     }
     const complete = tools.find((tool) => tool.name === "complete_refinement");
     assert(complete);
-    await complete.execute({}, new AbortController().signal);
+    await complete.execute({ ctxAssessment: null }, new AbortController().signal);
   };
 }
