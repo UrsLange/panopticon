@@ -122,6 +122,78 @@ function saveTool() {
   return { tool, execute, tools: [tool, complete] };
 }
 
+it("resumes the full conversation and source evidence with a new assistant instance", async () => {
+  const f = await provider((_request, index) =>
+    index === 0
+      ? [
+          {
+            type: "reasoning",
+            id: "rs_original",
+            summary: [],
+            encrypted_content: "retained-reasoning",
+          },
+          call("read_file", { scope: "profile", path: "rules.md", offset: 0 }, "read"),
+        ]
+      : [
+          call(
+            "save_refinement",
+            { ...interpretation, sources: index < 3 ? ["rules.md"] : [] },
+            `save-${index}`,
+          ),
+          call("complete_refinement", {}, `complete-${index}`),
+        ],
+  );
+  const root = mkdtempSync(join(tmpdir(), "pa-continuation-"));
+  writeFileSync(join(root, "rules.md"), "Prefer short agendas.");
+  const research = () => createResearch([{ id: "profile", name: "Profile", root }]);
+  const save = saveTool();
+  let state: string | null = null;
+  const continuation = () => ({
+    state,
+    save: (value: string) => {
+      state = value;
+    },
+  });
+  await createAssistant("key", "model", f.url, research)?.interpret(
+    "Prepare a demo",
+    context,
+    save.tools,
+    continuation(),
+  );
+  assert(state);
+  const answered = {
+    ...context,
+    capture: {
+      ...context.capture,
+      clarifications: [
+        { id: "q", question: "Which audience?", answer: "Team leads", resolved: false },
+      ],
+    },
+  };
+  await createAssistant("key", "model", f.url, research)?.interpret(
+    "Prepare a demo",
+    answered,
+    save.tools,
+    continuation(),
+  );
+  const resumed = f.requests[2].input;
+  expect(resumed.filter((entry) => entry.role === "user")).toHaveLength(2);
+  expect(resumed).toContainEqual(
+    expect.objectContaining({ type: "reasoning", encrypted_content: "retained-reasoning" }),
+  );
+  expect(JSON.stringify(resumed)).toContain("Prefer short agendas.");
+  expect(JSON.stringify(resumed.at(-1))).toContain("Team leads");
+  expect(save.execute).toHaveBeenCalledTimes(2);
+  await createAssistant("key", "different-model", f.url, research)?.interpret(
+    "Prepare a demo",
+    answered,
+    save.tools,
+    continuation(),
+  );
+  expect(f.requests[3].input.filter((entry) => entry.role === "user")).toHaveLength(1);
+  expect(JSON.stringify(f.requests[3].input)).not.toContain("retained-reasoning");
+});
+
 it.each([
   [
     new OpenAI.APIConnectionTimeoutError(),

@@ -34,6 +34,8 @@ export interface CaptureRecords {
 }
 
 export interface CaptureStorage extends CaptureRecords, ProfileActivityWriter {
+  refinementSession(profileRoot: string, itemId: string): string | null;
+  saveRefinementSession(profileRoot: string, itemId: string, state: string | null): void;
   capture(text: string, parentId?: string | null): Item;
   list(): Item[];
   today(date: string): Today;

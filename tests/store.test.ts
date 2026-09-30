@@ -16,6 +16,20 @@ afterEach(() => {
   for (const db of stores.splice(0)) db.db.close();
 });
 
+it("retains clarification sessions across restarts and isolates profiles", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "pa-session-")), "assistant.sqlite");
+  const first = new Store(path);
+  const item = first.capture("Prepare the demo");
+  first.saveRefinementSession("/profile", item.id, "conversation history");
+  first.db.close();
+  const reopened = new Store(path);
+  stores.push(reopened);
+  expect(reopened.refinementSession("/profile", item.id)).toBe("conversation history");
+  expect(reopened.refinementSession("/other", item.id)).toBeNull();
+  reopened.saveRefinementSession("/profile", item.id, null);
+  expect(reopened.refinementSession("/profile", item.id)).toBeNull();
+});
+
 it("persists GitHub validators, response data, and retry deadlines across database restarts", () => {
   const path = join(mkdtempSync(join(tmpdir(), "pa-github-cache-")), "assistant.sqlite");
   const original = new Store(path);

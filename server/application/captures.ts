@@ -66,8 +66,23 @@ export function createCaptures({
           today(),
           preferences(),
         );
-        await assistant.interpret(item.body, refinement.context, refinement.tools);
+        let checkpoint: string | null = null;
+        await assistant.interpret(item.body, refinement.context, refinement.tools, {
+          state: store.refinementSession(profileRoot, id),
+          save: (state) => {
+            checkpoint = state;
+          },
+        });
         refinement.finish();
+        for (const outcome of refinement.outcomes())
+          store.saveRefinementSession(
+            profileRoot,
+            outcome.id,
+            outcome.status !== "done" &&
+              outcome.clarifications.some((question) => !question.resolved)
+              ? checkpoint
+              : null,
+          );
         await autoStart(id, refinement.latest().revision);
       } catch (error) {
         console.error("Capture refinement failed", { itemId: id, error });
@@ -126,9 +141,9 @@ export function createCaptures({
           "invalid",
           "Choose Task or Idea before marking this capture as refined.",
         );
-      return captureState(
-        store.update(id, { processing: "ready", processingError: null }, revision),
-      );
+      const updated = store.update(id, { processing: "ready", processingError: null }, revision);
+      store.saveRefinementSession(getProfileRoot(), id, null);
+      return captureState(updated);
     },
     answer(id: string, input: { revision: number; answers: { id: string; answer: string }[] }) {
       const item = store.get(id);
@@ -191,6 +206,7 @@ export function createCaptures({
           { references: [], repositoryId: null, processing: "pending", processingError: null },
           input.revision,
         );
+        store.saveRefinementSession(getProfileRoot(), id, null);
       } else if (
         !processing.has(item.id) &&
         (item.processing !== "pending" || item.processingError)
@@ -262,6 +278,7 @@ export function createCaptures({
       const changes = Object.fromEntries(
         Object.entries(fields).filter(([key, value]) => value !== current[key as keyof ItemFields]),
       );
+      if (Object.keys(changes).length) store.saveRefinementSession(getProfileRoot(), id, null);
       if (Object.keys(changes).length)
         store.recordProfileActivity(getProfileRoot(), "edit", {
           itemId: id,

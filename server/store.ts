@@ -33,6 +33,26 @@ const personPattern = (value: string) =>
 export class Store {
   readonly db: DatabaseSync;
 
+  refinementSession(profileRoot: string, itemId: string): string | null {
+    const row = this.db
+      .prepare("SELECT state FROM refinement_sessions WHERE profileRoot = ? AND itemId = ?")
+      .get(profileRoot, itemId);
+    return row ? String(row.state) : null;
+  }
+
+  saveRefinementSession(profileRoot: string, itemId: string, state: string | null) {
+    if (state === null)
+      this.db
+        .prepare("DELETE FROM refinement_sessions WHERE profileRoot = ? AND itemId = ?")
+        .run(profileRoot, itemId);
+    else
+      this.db
+        .prepare(
+          "INSERT INTO refinement_sessions (profileRoot, itemId, state) VALUES (?, ?, ?) ON CONFLICT(profileRoot, itemId) DO UPDATE SET state = excluded.state",
+        )
+        .run(profileRoot, itemId, state);
+  }
+
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     if (path !== ":memory:") {
@@ -61,6 +81,10 @@ export class Store {
         rationale TEXT NOT NULL, sourcePaths TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS items_deadlines ON items(status, kind, dueDate);
+      CREATE TABLE IF NOT EXISTS refinement_sessions (
+        profileRoot TEXT NOT NULL, itemId TEXT NOT NULL REFERENCES items(id), state TEXT NOT NULL,
+        PRIMARY KEY (profileRoot, itemId)
+      );
       CREATE TABLE IF NOT EXISTS implementations (
         id TEXT PRIMARY KEY, itemId TEXT NOT NULL REFERENCES items(id),
         profileRoot TEXT NOT NULL, snapshot TEXT NOT NULL

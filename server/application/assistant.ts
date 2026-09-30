@@ -26,7 +26,12 @@ export type RefinementContext = {
 };
 
 export interface Assistant {
-  interpret(text: string, context: RefinementContext, tools: RefinementTool[]): Promise<void>;
+  interpret(
+    text: string,
+    context: RefinementContext,
+    tools: RefinementTool[],
+    continuation?: RefinementContinuation,
+  ): Promise<void>;
   updateProfile: ProfileEditingAgent;
   consolidateProfile: ProfileLearningAgent;
   ask(
@@ -43,4 +48,9 @@ export type RefinementTool = {
   description: string;
   parameters: Record<string, unknown>;
   execute(input: unknown, signal: AbortSignal): Promise<{ data: unknown; sources: string[] }>;
+};
+
+export type RefinementContinuation = {
+  state: string | null;
+  save(state: string): void;
 };

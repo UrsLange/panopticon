@@ -34,6 +34,8 @@ function deferred<T>() {
 function fixture() {
   const items = new Map<string, Item>();
   const store: CaptureStorage = {
+    refinementSession: () => null,
+    saveRefinementSession: vi.fn(),
     recordProfileActivity: vi.fn(),
     get: (id) => items.get(id),
     update(id, changes, revision) {

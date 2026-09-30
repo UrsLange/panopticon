@@ -1,8 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
 import type { ResponseInputItem, ResponseOutputItem } from "openai/resources/responses/responses";
-import type { RefinementContext, RefinementTool } from "./application/assistant.js";
+import type {
+  RefinementContext,
+  RefinementContinuation,
+  RefinementTool,
+} from "./application/assistant.js";
 import { ApplicationError } from "./application/errors.js";
 import { prompts } from "./prompts.js";
 import type { Research } from "./research-tools.js";
@@ -22,18 +26,42 @@ export async function refineCapture(
   context: RefinementContext,
   research: Research,
   captureTools: RefinementTool[],
+  continuation?: RefinementContinuation,
 ) {
+  const tools = [...research.tools, ...captureTools];
+  const compatibility = createHash("sha256")
+    .update(
+      JSON.stringify({
+        model,
+        endpoint: client.baseURL,
+        instructions,
+        research: prompts.research,
+        tools: tools.map(({ name, parameters }) => ({ name, parameters })),
+      }),
+    )
+    .digest("hex");
+  const previous = continuation?.state
+    ? (JSON.parse(continuation.state) as {
+        compatibility: string;
+        sessionId: string;
+        input: ResponseInputItem[];
+        sources: string[];
+      })
+    : null;
+  const session = previous?.compatibility === compatibility ? previous : null;
+  const sessionId = session?.sessionId ?? randomUUID();
   const input: ResponseInputItem[] = [
+    ...(session?.input ?? []),
     { role: "user", content: JSON.stringify({ capture, context, scopes: research.scopes }) },
   ];
   const sources = new Set([
+    ...(session?.sources ?? []),
     ...context.preferences.map((document) => document.path),
     context.capture.id,
     ...context.capture.sourcePaths,
     ...context.capture.references.map((reference) => reference.source),
     ...context.linkedCaptures.map((entry) => entry.id),
   ]);
-  const tools = [...research.tools, ...captureTools];
   const signal = new AbortController().signal;
   const runId = randomUUID();
   const started = performance.now();
@@ -51,6 +79,8 @@ export async function refineCapture(
         event: `capture_refinement.${event}`,
         timestamp: new Date().toISOString(),
         runId,
+        sessionId,
+        resumed: !!session,
         itemId: context.capture.id,
         model,
         ...details,
@@ -225,6 +255,9 @@ export async function refineCapture(
         } else {
           input.push(await execute(calls[index++]));
           if (completed) {
+            continuation?.save(
+              JSON.stringify({ compatibility, sessionId, input, sources: [...sources] }),
+            );
             outcome = "completed";
             return;
           }

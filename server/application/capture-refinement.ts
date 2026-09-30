@@ -357,6 +357,7 @@ export function captureRefinement(
     } satisfies RefinementContext,
     tools,
     latest: () => owned.get(item.id) ?? item,
+    outcomes: () => [...owned.values()],
     finish,
   };
 }

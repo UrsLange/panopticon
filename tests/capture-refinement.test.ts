@@ -84,6 +84,52 @@ function outcome(id: string, changes: Partial<Refinement> = {}): Refinement {
   };
 }
 
+it("keeps questions in the same session through partial answers and failures, then discards it", async () => {
+  const f = setup();
+  const states: (string | null | undefined)[] = [];
+  vi.mocked(f.assistant.interpret).mockImplementation(
+    async (_text, context, tools, continuation) => {
+      states.push(continuation?.state);
+      const answer = context.capture.clarifications.find((question) => question.answer)?.answer;
+      if (answer === "retry") throw new Error("Provider unavailable");
+      await call(
+        tools,
+        "save_refinement",
+        outcome(context.capture.id, {
+          clarificationQuestions: answer === "Anna Smith" ? [] : ["Which Anna?"],
+        }),
+      );
+      continuation?.save(`session-${states.length}`);
+    },
+  );
+  const item = f.captures.capture("Ask Anna about the rollout");
+  await f.captures.close();
+  expect(f.store.refinementSession("/profile", item.id)).toBe("session-1");
+  await f.captures.retry(item.id, { resetReferences: false });
+  expect(f.store.refinementSession("/profile", item.id)).toBe("session-2");
+  for (const answer of ["retry", "Anna Smith"]) {
+    const current = f.store.get(item.id);
+    assert(current);
+    f.captures.answer(item.id, {
+      revision: current.revision,
+      answers: [{ id: current.clarifications[0].id, answer }],
+    });
+    expect(f.store.refinementSession("/profile", item.id)).toBe("session-2");
+    await f.captures.retry(item.id, { resetReferences: false });
+  }
+  expect(states).toEqual([null, "session-1", "session-2", "session-2"]);
+  expect(f.store.get(item.id)?.processing).toBe("ready");
+  expect(f.store.refinementSession("/profile", item.id)).toBeNull();
+});
+
+it("discards clarification sessions when the user edits the capture", async () => {
+  const f = setup();
+  const item = f.store.capture("Ask Anna");
+  f.store.saveRefinementSession("/profile", item.id, "old session");
+  f.captures.edit(item.id, { title: "Ask the team" }, item.revision);
+  expect(f.store.refinementSession("/profile", item.id)).toBeNull();
+});
+
 it.each(["manual", "implementation"] as const)(
   "saves %s intent independently of project membership",
   async (execution) => {

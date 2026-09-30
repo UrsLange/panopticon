@@ -164,6 +164,9 @@ export function mockProvider() {
       (tool: { name?: string }) => tool.name === "save_refinement",
     );
     if (refining) {
+      input.input = input.input.slice(
+        input.input.findLastIndex((entry: { role?: string }) => entry.role === "user"),
+      );
       const calls = input.input.filter(
         (entry: { type?: string }) => entry.type === "function_call",
       );
